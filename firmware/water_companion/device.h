@@ -4,7 +4,7 @@
 #include "esp_err.h"
 #include "cJSON.h"
 
-#define FIRMWARE_VERSION "0.4.5"
+#define FIRMWARE_VERSION "0.5.0"
 
 #ifdef __cplusplus
 extern "C" {
@@ -27,6 +27,7 @@ typedef struct {
 void device_snapshot(device_status_t *status);
 cJSON *device_status_json(void);
 cJSON *device_command(const cJSON *json);
+esp_err_t device_save_wifi(const char *ssid, const char *password);
 bool device_authorize(const char *id, const char *authorization);
 esp_err_t device_start(void);
 

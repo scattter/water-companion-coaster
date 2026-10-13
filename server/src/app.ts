@@ -1,21 +1,19 @@
-import { timingSafeEqual } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { randomInt } from 'node:crypto';
+import { isIP } from 'node:net';
 import Fastify, { type FastifyError, type FastifyServerOptions } from 'fastify';
-import { DeviceSetup, SetupError, setupRoutes } from './setup.js';
-import { DeviceControl, controlRoutes } from './control.js';
+import { openDatabase, provisionDevice, hash } from './db.js';
+import { authRoutes, fail } from './auth.js';
 
 export interface AppOptions {
-  deviceToken: string;
+  deviceToken?: string;
   deviceId?: string;
   dbPath?: string;
   timeZone?: string;
   now?: () => Date;
+  appOrigin?: string;
   allowedOrigins?: string[];
   logger?: FastifyServerOptions['logger'];
-  setup?: DeviceSetup;
-  controlFetch?: typeof fetch;
+  trustProxy?: FastifyServerOptions['trustProxy'];
 }
 
 interface DeviceEvent {
@@ -43,6 +41,7 @@ interface Heartbeat {
   clockSynced: boolean;
   error: string | null;
   firmwareVersion: string;
+  commandResult?: { id: string; ok: boolean; message: string };
 }
 
 interface DeviceRow {
@@ -51,11 +50,24 @@ interface DeviceRow {
 }
 
 const uuidPattern = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
+/** 解析可信反代链，例如 `127.0.0.1,::1,172.28.0.0/16`；容器部署需要写明内网网段。 */
+export function parseTrustedProxies(value: string | undefined): string[] {
+  return (value ?? '').split(',').map((item) => item.trim()).filter(Boolean).map((entry) => {
+    const [address, prefix, ...rest] = entry.split('/');
+    const family = isIP(address);
+    if (family === 0 || rest.length > 0) throw new Error(`TRUST_PROXY 含有无效的代理地址：${entry}`);
+    if (prefix === undefined) return address;
+    const bits = Number(prefix);
+    // 不接受 /0：那等于信任任意来源的自报地址，限流和审计都会失效。
+    if (!/^\d{1,3}$/.test(prefix) || bits < 1 || bits > (family === 4 ? 32 : 128)) {
+      throw new Error(`TRUST_PROXY 含有无效的前缀长度：${entry}`);
+    }
+    return `${address}/${bits}`;
+  });
+}
 const dayMs = 86_400_000;
-const localHost = /^(localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/i;
-const localAddresses = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const defaultOrigins = ['localhost', '127.0.0.1', '[::1]']
-  .flatMap((host) => [3001, 5173].map((port) => `http://${host}:${port}`));
+  .flatMap((host) => [80, 3001, 5173].map((port) => `http://${host}:${port}`));
 
 function isDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -81,9 +93,6 @@ function sameEvent(existing: EventRow, event: DeviceEvent): boolean {
 }
 
 export function createApp(options: AppOptions) {
-  if (!options.deviceToken?.trim()) throw new Error('必须显式设置 DEVICE_TOKEN');
-  const deviceId = options.deviceId ?? 'coaster-01';
-  if (!/^[A-Za-z0-9_-]{1,64}$/.test(deviceId)) throw new Error('DEVICE_ID 格式无效');
   const timeZone = options.timeZone ?? 'Asia/Shanghai';
   const dateFormatter = new Intl.DateTimeFormat('en-CA', {
     timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
@@ -94,32 +103,14 @@ export function createApp(options: AppOptions) {
     return `${value('year')}-${value('month')}-${value('day')}`;
   };
   const now = options.now ?? (() => new Date());
-  const control = new DeviceControl({ deviceId, deviceToken: options.deviceToken, now, fetch: options.controlFetch });
-  const dbPath = options.dbPath ?? resolve('data/coaster-hardware.sqlite');
-  if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
-  const db = new DatabaseSync(dbPath);
-  db.exec(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA synchronous = FULL;
-    PRAGMA busy_timeout = 5000;
-    CREATE TABLE IF NOT EXISTS device_events (
-      device_id TEXT NOT NULL,
-      id TEXT NOT NULL,
-      kind TEXT NOT NULL CHECK (kind IN ('drink', 'refill')),
-      amount_ml REAL NOT NULL,
-      before_grams REAL NOT NULL,
-      after_grams REAL NOT NULL,
-      occurred_at TEXT NOT NULL,
-      revoked_at TEXT,
-      PRIMARY KEY (device_id, id)
-    );
-    CREATE INDEX IF NOT EXISTS device_events_occurred_at ON device_events(device_id, occurred_at);
-    CREATE TABLE IF NOT EXISTS device_status (
-      id TEXT PRIMARY KEY,
-      last_seen_at TEXT NOT NULL,
-      payload TEXT NOT NULL
-    );
-  `);
+  const db = openDatabase(options.dbPath);
+  // 旧单机配置只登记一次；后续启动不能覆盖生产设备密钥或归属。
+  if (options.deviceToken) {
+    const id = options.deviceId ?? 'coaster-01';
+    const existing = db.prepare('SELECT token_hash AS tokenHash FROM devices WHERE id = ?').get(id) as { tokenHash: string } | undefined;
+    if (!existing) provisionDevice(db, id, options.deviceToken, now().getTime());
+    else if (existing.tokenHash !== hash(options.deviceToken)) { db.close(); throw new Error('DEVICE_TOKEN 与已登记设备不一致'); }
+  }
   const eventColumns = `id, kind, amount_ml AS amountMl, before_grams AS beforeGrams,
     after_grams AS afterGrams, occurred_at AS occurredAt, revoked_at AS revokedAt`;
   const getEvent = db.prepare(`SELECT ${eventColumns} FROM device_events WHERE device_id = ? AND id = ?`);
@@ -134,46 +125,103 @@ export function createApp(options: AppOptions) {
 
   const app = Fastify({
     logger: options.logger ?? false,
+    trustProxy: options.trustProxy ?? false,
     bodyLimit: 512 * 1024,
     ajv: { customOptions: { coerceTypes: false, removeAdditional: false } },
   });
-  const allowedOrigins = new Set(options.allowedOrigins ?? defaultOrigins);
-  const token = Buffer.from(`Bearer ${options.deviceToken}`);
-
   app.addHook('onClose', async () => { db.close(); });
-  app.addHook('onRequest', async (request, reply) => {
-    if (request.routeOptions.url?.startsWith('/api/device/')) {
-      // 设备经局域网上报；浏览器页面不能利用此入口绕过本机访问限制。
-      if (request.headers.origin !== undefined || request.headers['sec-fetch-site'] === 'cross-site') {
-        return reply.code(403).send({ error: '设备接口不接受浏览器跨域请求' });
-      }
-      const supplied = Buffer.from(request.headers.authorization ?? '');
-      if (supplied.length !== token.length || !timingSafeEqual(supplied, token)
-        || request.headers['x-device-id'] !== deviceId) {
-        return reply.code(401).send({ error: '设备编号或凭证无效' });
-      }
-      return;
-    }
-    if (!localAddresses.has(request.ip) || !localHost.test(request.headers.host ?? '')
-      || (request.headers.origin !== undefined && !allowedOrigins.has(request.headers.origin))
-      || request.headers['sec-fetch-site'] === 'cross-site') {
-      return reply.code(403).send({ error: '网页接口仅允许本机访问' });
-    }
+  const auth = authRoutes(app, db, {
+    now, allowedOrigins: options.allowedOrigins ?? (options.appOrigin ? [new URL(options.appOrigin).origin] : defaultOrigins),
+    secureCookie: options.appOrigin?.startsWith('https://') ?? false,
   });
   app.setErrorHandler<FastifyError>((error, request, reply) => {
-    if (error instanceof SetupError) return reply.code(error.statusCode).send({ error: error.message });
-    if (error.validation || error.statusCode === 400) {
+    if (error.validation || error.code === 'FST_ERR_CTP_INVALID_JSON_BODY') {
       return reply.code(400).send({ error: '请求参数无效' });
     }
     if (error.statusCode === 415) return reply.code(415).send({ error: '请使用 JSON 请求' });
+    if (error.statusCode && (error.statusCode >= 400 && error.statusCode < 500 || error.statusCode === 503)) return reply.code(error.statusCode).send({ error: error.message });
     request.log.error(error);
     return reply.code(500).send({ error: '服务暂时不可用' });
   });
   app.setNotFoundHandler((_request, reply) => reply.code(404).send({ error: '接口不存在' }));
 
   app.get('/api/health', async () => ({ ok: true }));
-  if (options.setup) setupRoutes(app, options.setup);
-  controlRoutes(app, control);
+  function online(deviceId: string, timestamp: number) {
+    const row = getDevice.get(deviceId) as unknown as DeviceRow | undefined;
+    const age = row ? timestamp - Date.parse(row.lastSeenAt) : Infinity;
+    return age >= 0 && age <= 15_000;
+  }
+  function expireCommands(deviceId: string, timestamp: number) {
+    db.prepare(`UPDATE device_commands SET status = 'expired', message = '操作已过期，未在有效期内收到设备确认' WHERE device_id = ? AND status = 'pending' AND expires_at <= ?`)
+      .run(deviceId, timestamp);
+  }
+  const commandColumns = 'id, status, message, expires_at AS expiresAt';
+  const emptyBody = { body: { type: 'object', additionalProperties: false } };
+  app.post('/api/device/binding', { schema: emptyBody }, async (request) => {
+    const deviceId = auth.deviceId(request);
+    auth.limit(`issue-code:${deviceId}`, 10, 60_000);
+    const timestamp = now().getTime();
+    const device = db.prepare('SELECT user_id AS userId FROM devices WHERE id = ?').get(deviceId) as { userId: string | null };
+    if (device.userId) fail('设备已经绑定账号', 409);
+    if (!online(deviceId, timestamp)) fail('请先等待杯垫连接云端', 503);
+    db.prepare('DELETE FROM binding_codes WHERE expires_at <= ?').run(timestamp);
+    let code: string;
+    do { code = randomInt(100_000_000).toString().padStart(8, '0'); }
+    while (db.prepare('SELECT code_hash FROM binding_codes WHERE code_hash = ?').get(hash(code)));
+    const expiresAt = timestamp + 5 * 60_000;
+    db.prepare(`INSERT INTO binding_codes (code_hash, device_id, expires_at) VALUES (?, ?, ?)
+      ON CONFLICT(device_id) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at`)
+      .run(hash(code), deviceId, expiresAt);
+    return { code, expiresAt };
+  });
+  app.post<{ Body: { code: string } }>('/api/devices/bind', {
+    schema: { body: { type: 'object', additionalProperties: false, required: ['code'], properties: { code: { type: 'string', pattern: '^[0-9]{8}$' } } } },
+  }, async (request) => {
+    const user = auth.identity(request);
+    auth.limit(`bind-user:${user.id}`, 10);
+    auth.limit(`bind-ip:${request.ip}`, 40);
+    const timestamp = now().getTime();
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      if (db.prepare('SELECT id FROM devices WHERE user_id = ?').get(user.id)) fail('该账号已经绑定杯垫', 409);
+      const binding = db.prepare(`SELECT b.device_id AS deviceId FROM binding_codes b JOIN devices d ON d.id = b.device_id
+        WHERE b.code_hash = ? AND b.expires_at > ? AND d.user_id IS NULL`).get(hash(request.body.code), timestamp) as { deviceId: string } | undefined;
+      if (!binding) fail('绑定码无效或已过期，请在杯垫配网页刷新绑定码', 400);
+      if (!online(binding.deviceId, timestamp)) fail('杯垫已离线，请等待重新连接后绑定', 409);
+      db.prepare('UPDATE devices SET user_id = ? WHERE id = ? AND user_id IS NULL').run(user.id, binding.deviceId);
+      db.prepare('DELETE FROM binding_codes WHERE device_id = ?').run(binding.deviceId);
+      db.exec('COMMIT');
+      return { deviceId: binding.deviceId };
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+  });
+  app.post<{ Body: { id: string } }>('/api/control/cup', {
+    schema: { body: { type: 'object', additionalProperties: false, required: ['id'], properties: { id: { type: 'string', pattern: uuidPattern } } } },
+  }, async (request) => {
+    const deviceId = auth.deviceId(request);
+    const timestamp = now().getTime();
+    const id = request.body.id.toLowerCase();
+    expireCommands(deviceId, timestamp);
+    const existing = db.prepare(`SELECT ${commandColumns} FROM device_commands WHERE id = ? AND device_id = ?`).get(id, deviceId);
+    if (existing) return { command: existing };
+    if (db.prepare('SELECT id FROM device_commands WHERE id = ?').get(id)) fail('操作不存在', 404);
+    if (!online(deviceId, timestamp)) fail('杯垫已离线，请等待连接后再设置空杯', 409);
+    if (db.prepare(`SELECT id FROM device_commands WHERE device_id = ? AND status = 'pending'`).get(deviceId)) fail('上一项空杯设置尚未完成，请稍后重试', 409);
+    const expiresAt = timestamp + 30_000;
+    db.prepare(`INSERT INTO device_commands (id, device_id, status, message, created_at, expires_at) VALUES (?, ?, 'pending', NULL, ?, ?)`)
+      .run(id, deviceId, timestamp, expiresAt);
+    return { command: { id, status: 'pending', message: null, expiresAt } };
+  });
+  app.get<{ Params: { id: string } }>('/api/control/commands/:id', {
+    schema: { params: { type: 'object', required: ['id'], properties: { id: { type: 'string', pattern: uuidPattern } } } },
+  }, async (request) => {
+    const deviceId = auth.deviceId(request);
+    expireCommands(deviceId, now().getTime());
+    const command = db.prepare(`SELECT ${commandColumns} FROM device_commands WHERE id = ? AND device_id = ?`).get(request.params.id.toLowerCase(), deviceId);
+    if (!command) fail('操作不存在', 404);
+    return { command };
+  });
+
+
 
   app.post<{ Body: Heartbeat }>('/api/device/heartbeat', {
     schema: {
@@ -191,11 +239,15 @@ export function createApp(options: AppOptions) {
           clockSynced: { type: 'boolean' },
           error: { anyOf: [{ type: 'string', minLength: 1, maxLength: 160 }, { type: 'null' }] },
           firmwareVersion: { type: 'string', minLength: 1, maxLength: 32 },
+          commandResult: { type: 'object', additionalProperties: false, required: ['id', 'ok', 'message'], properties: {
+            id: { type: 'string', pattern: uuidPattern }, ok: { type: 'boolean' }, message: { type: 'string', maxLength: 160 },
+          } },
         },
       },
     },
   }, async (request, reply) => {
-    const heartbeat = request.body;
+    const deviceId = auth.deviceId(request);
+    const { commandResult, ...heartbeat } = request.body;
     if (heartbeat.timePendingCount > heartbeat.pendingCount
       || (!heartbeat.calibrated && (heartbeat.weightGrams !== null || heartbeat.stable))
       || (heartbeat.stable && heartbeat.weightGrams === null)) {
@@ -203,8 +255,15 @@ export function createApp(options: AppOptions) {
     }
     const currentTime = now();
     saveDevice.run(deviceId, currentTime.toISOString(), JSON.stringify(heartbeat));
-    control.seen(request.ip);
-    return { ok: true, serverTimeMs: currentTime.getTime() };
+    const timestamp = currentTime.getTime();
+    expireCommands(deviceId, timestamp);
+    if (commandResult) {
+      db.prepare(`UPDATE device_commands SET status = ?, message = ? WHERE id = ? AND device_id = ? AND status = 'pending' AND expires_at > ?`)
+        .run(commandResult.ok ? 'succeeded' : 'failed', commandResult.message || null, commandResult.id.toLowerCase(), deviceId, timestamp);
+    }
+    const command = db.prepare(`SELECT id, expires_at AS expiresAt FROM device_commands WHERE device_id = ? AND status = 'pending'`).get(deviceId);
+    const owner = db.prepare('SELECT user_id AS userId FROM devices WHERE id = ?').get(deviceId) as { userId: string | null };
+    return { ok: true, serverTimeMs: timestamp, bound: owner.userId !== null, command: command ? { ...command, cmd: 'cup' } : null };
   });
 
   app.post<{ Body: { events: DeviceEvent[] } }>('/api/device/events', {
@@ -231,6 +290,7 @@ export function createApp(options: AppOptions) {
       },
     },
   }, async (request, reply) => {
+    const deviceId = auth.deviceId(request);
     for (const event of request.body.events) {
       const difference = event.kind === 'drink'
         ? event.beforeGrams - event.afterGrams : event.afterGrams - event.beforeGrams;
@@ -270,6 +330,7 @@ export function createApp(options: AppOptions) {
       },
     },
   }, async (request, reply) => {
+    const deviceId = auth.deviceId(request);
     const id = request.params.id.toLowerCase();
     if (!getEvent.get(deviceId, id)) return reply.code(404).send({ error: '记录不存在' });
     revokeEvent.run(now().toISOString(), deviceId, id);
@@ -284,6 +345,7 @@ export function createApp(options: AppOptions) {
       },
     },
   }, async (request, reply) => {
+    const deviceId = auth.deviceId(request);
     const date = request.query.date ?? localDate(now());
     if (!isDate(date)) return reply.code(400).send({ error: '日期无效' });
     const week = Array.from({ length: 7 }, (_, index) => ({ date: shiftDate(date, index - 6), drinkMl: 0 }));

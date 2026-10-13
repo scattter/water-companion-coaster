@@ -1,236 +1,180 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
-import { test, type TestContext } from 'node:test';
-import { createApp, type AppOptions } from '../src/app.js';
+import { test } from 'node:test';
+import { createApp } from '../src/app.js';
+import { openDatabase, provisionDevice } from '../src/db.js';
+import { cookieOf, event, fixture, headers, heartbeat } from './cloud.js';
 
-const testRoot = fileURLToPath(new URL('../../data/test-output/', import.meta.url));
-await mkdir(testRoot, { recursive: true });
+test('注册、登录、会话、退出和过期；密码、令牌均不明文存储', async (t) => {
+  const f = await fixture(t);
+  assert.deepEqual((await f.app.inject('/api/auth/session')).json(), { user: null, deviceId: null });
+  assert.equal((await f.app.inject('/api/dashboard')).statusCode, 401);
+  const cookie = await f.register('User_One');
+  const session = (await f.web(cookie, '/api/auth/session')).json();
+  assert.equal(session.user.username, 'user_one');
+  assert.equal(session.deviceId, null);
+  assert.equal((await f.web(cookie, '/api/dashboard')).statusCode, 404);
+  const db = openDatabase(f.dbPath);
+  const account = db.prepare('SELECT * FROM users').get()!;
+  const storedSession = db.prepare('SELECT token_hash FROM sessions').get()!;
+  assert.equal(JSON.stringify(account).includes('password-123'), false);
+  assert.notEqual(storedSession.token_hash, cookie.split('=')[1]);
+  assert.notEqual(db.prepare('SELECT token_hash FROM devices LIMIT 1').get()!.token_hash, 'test-token-coaster-01');
+  db.close();
+  assert.equal((await f.app.inject({ method: 'POST', url: '/api/auth/login', payload: { username: 'user_one', password: 'incorrect' } })).statusCode, 401);
+  const login = await f.app.inject({ method: 'POST', url: '/api/auth/login', payload: { username: 'USER_ONE', password: 'password-123' } });
+  assert.equal(login.statusCode, 200);
+  assert.match(String(login.headers['set-cookie']), /HttpOnly; SameSite=Strict/);
+  const loggedIn = cookieOf(login);
+  await f.web(loggedIn, '/api/auth/logout', {});
+  assert.equal((await f.web(loggedIn, '/api/auth/session')).json().user, null);
+  f.advance(30 * 86_400_000 + 1);
+  assert.equal((await f.web(cookie, '/api/auth/session')).json().user, null);
+});
 
-const auth = { authorization: 'Bearer test-device-token', 'x-device-id': 'coaster-01' };
-const heartbeat = {
-  weightGrams: 450, stable: true, cupPresent: true, source: 'hx711',
-  calibrated: true, emptyCupGrams: 120, pendingCount: 0, timePendingCount: 0,
-  clockSynced: true, error: null, firmwareVersion: '0.2.0',
-};
+test('正式站点同源保护、设备凭证隔离和生产安全Cookie', async (t) => {
+  const f = await fixture(t);
+  for (const extra of [ { host: 'evil.example' }, { origin: 'https://evil.example' }, { origin: 'null' }, { 'sec-fetch-site': 'cross-site' }, { 'sec-fetch-site': 'same-site' } ]) {
+    assert.equal((await f.app.inject({ url: '/api/auth/session', headers: extra })).statusCode, 403);
+  }
+  const cookie = await f.register();
+  assert.equal((await f.app.inject({ url: '/api/auth/session', remoteAddress: '203.0.113.9', headers: { cookie } })).statusCode, 200);
+  for (const extra of [ {}, { authorization: 'Bearer wrong', 'x-device-id': 'coaster-01' }, { ...headers(), 'x-device-id': 'coaster-02' } ]) {
+    assert.equal((await f.app.inject({ method: 'POST', url: '/api/device/heartbeat', headers: extra, payload: heartbeat })).statusCode, 401);
+  }
+  assert.equal((await f.app.inject({ method: 'POST', url: '/api/device/heartbeat', headers: { ...headers(), origin: 'http://localhost:5173' }, payload: heartbeat })).statusCode, 403);
+  assert.equal((await f.app.inject({ url: '/api/dashboard', headers: headers() })).statusCode, 401);
+  const production = createApp({ dbPath: ':memory:', appOrigin: 'https://coaster.example' });
+  t.after(() => production.close());
+  const response = await production.inject({ method: 'POST', url: '/api/auth/register', headers: { host: 'coaster.example', origin: 'https://coaster.example' }, payload: { username: 'secure_user', password: 'password-123' } });
+  assert.equal(response.statusCode, 200);
+  assert.match(String(response.headers['set-cookie']), /; Secure/);
+});
 
-function event(overrides: Record<string, unknown> = {}) {
-  return {
-    id: randomUUID(), kind: 'drink', amountMl: 50, beforeGrams: 500, afterGrams: 450,
-    occurredAt: '2026-10-09T01:00:00.000Z', ...overrides,
-  };
-}
+test('绑定码仅在线设备申请，过期、消费、抢绑和一人多设备均拒绝', async (t) => {
+  const f = await fixture(t);
+  const user = await f.register();
+  const other = await f.register('user_two');
+  assert.equal((await f.app.inject({ method: 'POST', url: '/api/device/binding', headers: headers(), payload: {} })).statusCode, 503);
+  const first = await f.code();
+  assert.match(first.code, /^[0-9]{8}$/);
+  const db = openDatabase(f.dbPath);
+  assert.notEqual(db.prepare('SELECT code_hash FROM binding_codes').get()!.code_hash, first.code);
+  db.close();
+  f.advance(5 * 60_000);
+  await f.report();
+  const expired = await f.web(user, '/api/devices/bind', { code: first.code });
+  assert.equal(expired.statusCode, 400); assert.match(expired.json().error, /绑定码无效或已过期/);
+  const fresh = await f.code();
+  f.advance(15_001);
+  assert.equal((await f.web(user, '/api/devices/bind', { code: fresh.code })).statusCode, 409);
+  await f.report();
+  assert.equal((await f.web(user, '/api/devices/bind', { code: fresh.code })).statusCode, 200);
+  assert.equal((await f.web(other, '/api/devices/bind', { code: fresh.code })).statusCode, 400);
+  assert.equal((await f.app.inject({ method: 'POST', url: '/api/device/binding', headers: headers(), payload: {} })).statusCode, 409);
+  const second = await f.code('coaster-02');
+  assert.equal((await f.web(user, '/api/devices/bind', { code: second.code })).statusCode, 409);
+  assert.equal((await f.web(other, '/api/devices/bind', { code: second.code })).statusCode, 200);
+  assert.equal((await f.web(user, '/api/auth/session')).json().deviceId, 'coaster-01');
+  assert.equal((await f.report()).json().bound, true);
+});
 
-async function fixture(t: TestContext, options: Partial<AppOptions> = {}) {
-  const directory = await mkdtemp(join(testRoot, 'coaster-server-test-'));
-  const app = createApp({
-    deviceToken: 'test-device-token', dbPath: join(directory, 'coaster.sqlite'),
-    now: () => new Date('2026-10-09T02:00:00.000Z'), ...options,
+test('登录和绑定尝试限速', async (t) => {
+  const f = await fixture(t);
+  const cookie = await f.register();
+  for (let i = 0; i < 10; i++) assert.equal((await f.web(cookie, '/api/devices/bind', { code: '00000000' })).statusCode, 400);
+  assert.equal((await f.web(cookie, '/api/devices/bind', { code: '00000000' })).statusCode, 429);
+  for (let i = 0; i < 15; i++) assert.equal((await f.app.inject({ method: 'POST', url: '/api/auth/login', payload: { username: 'user_one', password: 'incorrect' } })).statusCode, 401);
+  assert.equal((await f.app.inject({ method: 'POST', url: '/api/auth/login', payload: { username: 'user_one', password: 'incorrect' } })).statusCode, 429);
+});
+
+test('按上海时区分日、饮水补水分别统计，重传去重和冲突回滚', async (t) => {
+  const f = await fixture(t);
+  const cookie = await f.register(); await f.bind(cookie);
+  const records = [event({ occurredAt: '2026-10-08T15:59:59Z' }), event({ occurredAt: '2026-10-08T16:00:00Z', amountMl: 75, afterGrams: 425 }), event({ kind: 'refill', amountMl: 100, beforeGrams: 425, afterGrams: 525 })];
+  assert.equal((await f.upload(records)).json().inserted, 3);
+  assert.equal((await f.upload(records)).json().inserted, 0);
+  assert.equal((await f.upload([event(), { ...records[1], amountMl: 100, afterGrams: 400 }])).statusCode, 409);
+  const data = (await f.web(cookie, '/api/dashboard')).json();
+  assert.deepEqual(data.totals, { drinkMl: 75, refillMl: 100, drinkCount: 1 });
+  assert.equal(data.events.length, 2);
+  assert.equal(data.week.length, 7);
+  assert.equal(data.week[5].drinkMl, 50);
+  assert.equal(data.week[6].drinkMl, 75);
+  assert.equal(data.week[0].drinkMl, 0);
+});
+
+test('夏令时两个同名小时均计入同一天', async (t) => {
+  const f = await fixture(t, { timeZone: 'America/New_York' });
+  const cookie = await f.register(); await f.bind(cookie);
+  await f.upload([event({ occurredAt: '2026-11-01T01:30:00-04:00' }), event({ occurredAt: '2026-11-01T01:30:00-05:00' })]);
+  assert.equal((await f.web(cookie, '/api/dashboard?date=2026-11-01')).json().totals.drinkMl, 100);
+});
+
+test('账号只能读取并撤销自己设备记录；撤销幂等且重传不恢复', async (t) => {
+  const f = await fixture(t);
+  const one = await f.register(); await f.bind(one);
+  const two = await f.register('user_two'); await f.bind(two, 'coaster-02');
+  const record = event(); await f.upload([record]);
+  assert.equal((await f.web(two, '/api/dashboard')).json().totals.drinkMl, 0);
+  assert.equal((await f.web(two, `/api/events/${record.id}/revoke`, {})).statusCode, 404);
+  for (let i = 0; i < 2; i++) assert.equal((await f.web(one, `/api/events/${record.id}/revoke`, {})).statusCode, 200);
+  assert.equal((await f.upload([record])).json().inserted, 0);
+  const data = (await f.web(one, '/api/dashboard')).json();
+  assert.equal(data.totals.drinkMl, 0);
+  assert.ok(data.events[0].revokedAt);
+  assert.equal((await f.web(one, `/api/events/${randomUUID()}/revoke`, {})).statusCode, 404);
+});
+
+test('拒绝无效事件、日期和矛盾心跳；重量为空不虚构数值', async (t) => {
+  const f = await fixture(t);
+  const cookie = await f.register(); await f.bind(cookie);
+  for (const item of [event({ id: 'invalid' }), event({ amountMl: 49 }), event({ kind: 'refill' }), event({ afterGrams: -1 }), event({ occurredAt: '2026-02-30T01:00:00Z' }), event({ amountMl: '50' }), event({ extra: true })]) assert.equal((await f.upload([item])).statusCode, 400);
+  for (const date of ['2026-02-30', '2026-13-01', 'bad']) assert.equal((await f.web(cookie, `/api/dashboard?date=${date}`)).statusCode, 400);
+  const uncalibrated = { ...heartbeat, weightGrams: null, stable: false, calibrated: false, emptyCupGrams: null, pendingCount: 2, timePendingCount: 1, error: '请联系售后检查出厂标定' };
+  assert.equal((await f.report('coaster-01', uncalibrated)).statusCode, 200);
+  assert.equal((await f.web(cookie, '/api/dashboard')).json().device.weightGrams, null);
+  for (const payload of [{ ...uncalibrated, stable: true }, { ...uncalibrated, weightGrams: 1 }, { ...heartbeat, timePendingCount: 1 }]) assert.equal((await f.report('coaster-01', payload)).statusCode, 400);
+});
+
+test('数据库重开与Wi-Fi地址变化保留账号归属、事件、撤销和最后状态', async (t) => {
+  const f = await fixture(t);
+  const cookie = await f.register(); await f.bind(cookie);
+  const record = event(); await f.upload([record, event()]);
+  await f.web(cookie, `/api/events/${record.id}/revoke`, {});
+  await f.app.close();
+  const app = createApp({ dbPath: f.dbPath, now: f.now });
+  try {
+    const read = () => app.inject({ url: '/api/dashboard', headers: { cookie } });
+    assert.equal((await read()).json().totals.drinkMl, 50);
+    f.advance(15_001);
+    assert.equal((await read()).json().device.online, false);
+    assert.equal((await app.inject({ method: 'POST', url: '/api/device/heartbeat', remoteAddress: '203.0.113.50', headers: headers(), payload: heartbeat })).json().bound, true);
+    assert.equal((await read()).json().device.online, true);
+    assert.equal((await read()).json().events.length, 2);
+  } finally { await app.close(); }
+});
+
+test('已有设备兼容旧配置，重复登记不旋转凭证且禁止共享密钥', async (t) => {
+  const f = await fixture(t);
+  const db = openDatabase(f.dbPath);
+  assert.throws(() => provisionDevice(db, 'coaster-01'), /已存在/);
+  assert.throws(() => provisionDevice(db, 'coaster-03', 'test-token-coaster-01'), /独立凭证/);
+  db.close();
+  const migrated = createApp({ dbPath: f.dbPath, deviceId: 'coaster-01', deviceToken: 'test-token-coaster-01' });
+  await migrated.close();
+  assert.throws(() => createApp({ dbPath: f.dbPath, deviceId: 'coaster-01', deviceToken: 'changed-token' }), /不一致/);
+});
+
+
+test('只信任本机反代的客户端地址，公网伪造转发头不能绕过限速', async (t) => {
+  const f = await fixture(t, { trustProxy: ['127.0.0.1', '::1'] });
+  const register = (index: number, remoteAddress: string) => f.app.inject({
+    method: 'POST', url: '/api/auth/register', remoteAddress,
+    headers: { 'x-forwarded-for': `198.51.100.${index + 1}` },
+    payload: { username: `proxy_user_${index}`, password: 'password-123' },
   });
-  t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }); });
-  await app.ready();
-  return app;
-}
-
-test('拒绝缺失配置，设备上报需要正确凭证，本机读取不暴露凭证', async (t) => {
-  assert.throws(() => createApp({ deviceToken: '', dbPath: ':memory:' }), /DEVICE_TOKEN/);
-  assert.throws(() => createApp({ deviceToken: 'test', timeZone: 'Not/AZone' }), RangeError);
-  const app = await fixture(t);
-  for (const headers of [{}, { authorization: 'Bearer wrong-token' }]) {
-    const result = await app.inject({ method: 'POST', url: '/api/device/heartbeat', headers, payload: heartbeat });
-    assert.equal(result.statusCode, 401);
-    const events = await app.inject({ method: 'POST', url: '/api/device/events', headers, payload: { events: [event()] } });
-    assert.equal(events.statusCode, 401);
-  }
-  assert.equal((await app.inject({ method: 'POST', url: '/api/device/heartbeat', headers: auth, payload: heartbeat })).statusCode, 200);
-  const result = await app.inject('/api/dashboard');
-  assert.equal(result.statusCode, 200);
-  assert.equal(result.json().device.online, true);
-  assert.equal(result.json().device.weightGrams, 450);
-  assert.equal(result.body.includes('test-device-token'), false);
-});
-
-test('拒绝外部 Origin、DNS 重绑定和跨站请求，允许本地代理', async (t) => {
-  const app = await fixture(t);
-  for (const headers of [
-    { host: 'attacker.example:3001' }, { origin: 'https://attacker.example' },
-    { origin: 'null' }, { 'sec-fetch-site': 'cross-site' },
-  ]) {
-    assert.equal((await app.inject({ url: '/api/dashboard', headers })).statusCode, 403);
-  }
-  assert.equal((await app.inject({ url: '/api/dashboard', remoteAddress: '192.168.1.20' })).statusCode, 403);
-  assert.equal((await app.inject({ url: '/api/dashboard', headers: { origin: 'http://127.0.0.1:5173' } })).statusCode, 200);
-});
-
-test('按上海时区跨日统计，七天补零，饮水和补水分开累计', async (t) => {
-  const app = await fixture(t);
-  const events = [
-    event({ occurredAt: '2026-10-08T15:59:59.000Z' }),
-    event({ occurredAt: '2026-10-08T16:00:00.000Z', amountMl: 75, afterGrams: 425 }),
-    event({ occurredAt: '2026-10-09T01:00:00+08:00', kind: 'refill', amountMl: 100, beforeGrams: 425, afterGrams: 525 }),
-    event({ occurredAt: '2026-10-02T15:59:59.000Z' }),
-  ];
-  const saved = await app.inject({ method: 'POST', url: '/api/device/events', headers: auth, payload: { events } });
-  assert.equal(saved.statusCode, 200);
-  const dashboard = (await app.inject('/api/dashboard')).json();
-  assert.equal(dashboard.date, '2026-10-09');
-  assert.equal(dashboard.timeZone, 'Asia/Shanghai');
-  assert.deepEqual(dashboard.totals, { drinkMl: 75, refillMl: 100, drinkCount: 1 });
-  assert.equal(dashboard.events.length, 2);
-  assert.equal(dashboard.events[0].kind, 'refill');
-  assert.deepEqual(dashboard.week, [
-    { date: '2026-10-03', drinkMl: 0 }, { date: '2026-10-04', drinkMl: 0 },
-    { date: '2026-10-05', drinkMl: 0 }, { date: '2026-10-06', drinkMl: 0 },
-    { date: '2026-10-07', drinkMl: 0 }, { date: '2026-10-08', drinkMl: 50 },
-    { date: '2026-10-09', drinkMl: 75 },
-  ]);
-  assert.deepEqual((await app.inject('/api/dashboard?date=2026-10-08')).json().totals,
-    { drinkMl: 50, refillMl: 0, drinkCount: 1 });
-});
-
-test('夏令时回拨的两个同名小时都归入同一天', async (t) => {
-  const app = await fixture(t, { timeZone: 'America/New_York' });
-  const events = [
-    event({ occurredAt: '2026-11-01T01:30:00-04:00' }),
-    event({ occurredAt: '2026-11-01T01:30:00-05:00' }),
-  ];
-  await app.inject({ method: 'POST', url: '/api/device/events', headers: auth, payload: { events } });
-  assert.deepEqual((await app.inject('/api/dashboard?date=2026-11-01')).json().totals,
-    { drinkMl: 100, refillMl: 0, drinkCount: 2 });
-});
-
-test('相同事件重传不重复累计，冲突批次整体回滚', async (t) => {
-  const app = await fixture(t);
-  const original = event();
-  const submit = (events: ReturnType<typeof event>[]) => app.inject({
-    method: 'POST', url: '/api/device/events', headers: auth, payload: { events },
-  });
-  assert.deepEqual((await submit([original, original])).json(), { acknowledged: [original.id], inserted: 1 });
-  assert.deepEqual((await submit([original])).json(), { acknowledged: [original.id], inserted: 0 });
-  const conflict = { ...original, amountMl: 60, afterGrams: 440 };
-  assert.equal((await submit([event(), conflict])).statusCode, 409);
-  assert.deepEqual((await app.inject('/api/dashboard')).json().totals, { drinkMl: 50, refillMl: 0, drinkCount: 1 });
-});
-
-test('撤销幂等，重传不恢复已撤销记录，撤销记录仍可查看', async (t) => {
-  const app = await fixture(t);
-  const original = event();
-  await app.inject({ method: 'POST', url: '/api/device/events', headers: auth, payload: { events: [original] } });
-  for (let index = 0; index < 2; index += 1) {
-    assert.equal((await app.inject({ method: 'POST', url: `/api/events/${original.id}/revoke` })).statusCode, 200);
-  }
-  assert.equal((await app.inject({ method: 'POST', url: `/api/events/${randomUUID()}/revoke` })).statusCode, 404);
-  const retry = await app.inject({ method: 'POST', url: '/api/device/events', headers: auth, payload: { events: [original] } });
-  assert.equal(retry.json().inserted, 0);
-  const dashboard = (await app.inject('/api/dashboard')).json();
-  assert.deepEqual(dashboard.totals, { drinkMl: 0, refillMl: 0, drinkCount: 0 });
-  assert.equal(dashboard.events[0].revokedAt, '2026-10-09T02:00:00.000Z');
-  assert.equal(dashboard.week[6].drinkMl, 0);
-});
-
-test('日期、时区、事件方向、重量范围和字段类型验证', async (t) => {
-  const app = await fixture(t);
-  for (const invalid of [
-    event({ id: 'not-a-uuid' }), event({ amountMl: 49 }), event({ kind: 'refill' }),
-    event({ beforeGrams: 45, afterGrams: -5 }), event({ occurredAt: '2026-10-09T01:00:00' }),
-    event({ occurredAt: '2026-02-30T01:00:00Z' }), event({ amountMl: '50' }),
-    event({ kind: 'other' }), event({ extra: true }),
-  ]) {
-    const result = await app.inject({ method: 'POST', url: '/api/device/events', headers: auth, payload: { events: [invalid] } });
-    assert.equal(result.statusCode, 400, JSON.stringify(invalid));
-  }
-  for (const date of ['2026-02-30', '2026-13-01', 'invalid']) {
-    assert.equal((await app.inject(`/api/dashboard?date=${date}`)).statusCode, 400);
-  }
-  assert.equal((await app.inject({ method: 'POST', url: '/api/device/heartbeat', headers: auth,
-    payload: { ...heartbeat, stable: 'true' } })).statusCode, 400);
-  assert.deepEqual((await app.inject('/api/dashboard')).json().totals, { drinkMl: 0, refillMl: 0, drinkCount: 0 });
-});
-
-test('数据库重开后保留事件、撤销和最后心跳，心跳超时显示离线', async (t) => {
-  const directory = await mkdtemp(join(testRoot, 'coaster-server-reopen-'));
-  const config = { deviceToken: 'test-device-token', dbPath: join(directory, 'coaster.sqlite') };
-  let currentTime = new Date('2026-10-09T02:00:00.000Z');
-  const original = event();
-  const app = createApp({ ...config, now: () => currentTime });
-  await app.inject({ method: 'POST', url: '/api/device/events', headers: auth, payload: { events: [original, event()] } });
-  await app.inject({ method: 'POST', url: `/api/events/${original.id}/revoke` });
-  await app.inject({ method: 'POST', url: '/api/device/heartbeat', headers: auth, payload: heartbeat });
-  await app.close();
-  const reopened = createApp({ ...config, now: () => currentTime });
-  t.after(async () => { await reopened.close(); await rm(directory, { recursive: true, force: true }); });
-  const dashboard = (await reopened.inject('/api/dashboard')).json();
-  assert.deepEqual(dashboard.totals, { drinkMl: 50, refillMl: 0, drinkCount: 1 });
-  assert.equal(dashboard.events.length, 2);
-  assert.equal(dashboard.device.online, true);
-  assert.equal(dashboard.device.lastSeenAt, currentTime.toISOString());
-  currentTime = new Date(currentTime.getTime() + 15_001);
-  const offline = (await reopened.inject('/api/dashboard')).json().device;
-  assert.equal(offline.online, false);
-  assert.equal(offline.weightGrams, 450);
-});
-
-test('真实设备可从局域网上报，凭证不能开放网页查询或撤销', async (t) => {
-  const app = await fixture(t);
-  const remoteAddress = '192.168.1.30';
-  const headers = { ...auth, host: '192.168.1.10:3001' };
-  const result = await app.inject({ method: 'POST', url: '/api/device/heartbeat', remoteAddress, headers, payload: heartbeat });
-  assert.equal(result.statusCode, 200);
-  assert.equal(result.json().serverTimeMs, Date.parse('2026-10-09T02:00:00.000Z'));
-  const original = event();
-  const post = await app.inject({ method: 'POST', url: '/api/device/events', remoteAddress, headers, payload: { events: [original] } });
-  assert.equal(post.statusCode, 200);
-  assert.equal((await app.inject({ url: '/api/dashboard', remoteAddress, headers })).statusCode, 403);
-  assert.equal((await app.inject({ method: 'POST', url: `/api/events/${original.id}/revoke`, remoteAddress, headers })).statusCode, 403);
-  for (const extra of [{ origin: 'http://127.0.0.1:5173' }, { 'sec-fetch-site': 'cross-site' }]) {
-    assert.equal((await app.inject({ method: 'POST', url: '/api/device/heartbeat', remoteAddress,
-      headers: { ...headers, ...extra }, payload: heartbeat })).statusCode, 403);
-  }
-  for (const identity of [{}, { 'x-device-id': 'coaster-02' }]) {
-    assert.equal((await app.inject({ method: 'POST', url: '/api/device/heartbeat', remoteAddress,
-      headers: { authorization: auth.authorization, ...identity }, payload: heartbeat })).statusCode, 401);
-  }
-});
-
-test('未连接或未校准不会显示虚构重量，错误和待校时计数被保留', async (t) => {
-  const app = await fixture(t);
-  const initial = (await app.inject('/api/dashboard')).json().device;
-  assert.equal(initial.online, false);
-  assert.equal(initial.weightGrams, null);
-  assert.equal(initial.emptyCupGrams, null);
-  assert.equal(initial.calibrated, false);
-  const uncalibrated = { ...heartbeat, weightGrams: null, calibrated: false, stable: false,
-    cupPresent: false, emptyCupGrams: null, pendingCount: 2, timePendingCount: 1,
-    clockSynced: false, error: '请先完成称重校准' };
-  assert.equal((await app.inject({ method: 'POST', url: '/api/device/heartbeat', headers: auth, payload: uncalibrated })).statusCode, 200);
-  const device = (await app.inject('/api/dashboard')).json().device;
-  assert.equal(device.weightGrams, null);
-  assert.equal(device.error, uncalibrated.error);
-  assert.equal(device.timePendingCount, 1);
-  for (const payload of [
-    { ...uncalibrated, weightGrams: 450 }, { ...uncalibrated, stable: true },
-    { ...heartbeat, source: 'unknown' }, { ...heartbeat, timePendingCount: 1 },
-  ]) {
-    assert.equal((await app.inject({ method: 'POST', url: '/api/device/heartbeat', headers: auth, payload })).statusCode, 400);
-  }
-});
-
-test('真实空杯重量不再固定为 120 g，重启和不同设备的统计互不混淆', async (t) => {
-  const directory = await mkdtemp(join(testRoot, 'coaster-device-isolation-'));
-  const config = { deviceToken: 'test-device-token', dbPath: join(directory, 'hardware.sqlite'),
-    now: () => new Date('2026-10-09T02:00:00.000Z') };
-  const first = createApp(config);
-  const record = event({ beforeGrams: 100, afterGrams: 50 });
-  assert.equal((await first.inject({ method: 'POST', url: '/api/device/events', headers: auth,
-    payload: { events: [record] } })).statusCode, 200);
-  await first.close();
-  const second = createApp({ ...config, deviceId: 'coaster-02' });
-  t.after(async () => { await second.close(); await rm(directory, { recursive: true, force: true }); });
-  assert.deepEqual((await second.inject('/api/dashboard')).json().totals, { drinkMl: 0, refillMl: 0, drinkCount: 0 });
-  assert.equal((await second.inject({ method: 'POST', url: `/api/events/${record.id}/revoke` })).statusCode, 404);
-  assert.equal((await second.inject({ method: 'POST', url: '/api/device/events',
-    headers: { ...auth, 'x-device-id': 'coaster-02' }, payload: { events: [record] } })).statusCode, 200);
-  assert.equal((await second.inject('/api/dashboard')).json().totals.drinkMl, 50);
+  for (let index = 0; index < 11; index++) assert.equal((await register(index, '127.0.0.1')).statusCode, 200);
+  for (let index = 20; index < 30; index++) assert.equal((await register(index, '203.0.113.8')).statusCode, 200);
+  assert.equal((await register(30, '203.0.113.8')).statusCode, 429);
 });

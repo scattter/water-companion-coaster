@@ -11,6 +11,7 @@ const initial = () => ({
   timePendingCount: 0, clockSynced: true, wifiConfigured: false, wifiConnected: false,
   serverConfigured: false, serverConnected: false, error: null,
   wifiSsid: '', wifiReason: 0, restartRequired: false, ip: '',
+  bound: false, bindingCode: null, bindingExpiresAt: 0, cloudUrl: '', wifiTrial: false, wifiRollback: false,
 });
 
 async function page(scanned = [], status = {}) {
@@ -95,7 +96,7 @@ test('再次访问直接显著显示实际连接的网络，断开后撤去成�
   assert.equal(p.get('network').textContent, '已经成功连接 客厅 <Wi-Fi>');
   assert.equal(p.get('network-status').attributes['data-connected'], true);
   assert.equal(p.get('next-step').hidden, false);
-  assert.match(p.get('next-step').textContent, /192.168.1.35/);
+  assert.match(p.get('next-step').textContent, /切回正常网络/);
   assert.equal(p.get('notice').hidden, true);
   p.state.wifiConnected = false;
   p.state.wifiReason = 202;
@@ -200,12 +201,11 @@ test('无路由器连接也能显示实时重量，更新空杯只发送 cup', a
   const p = await page();
   assert.equal(p.get('weight').textContent, '500.0');
   assert.equal(p.get('cup').disabled, false);
-  assert.equal(p.get('first-setup').open, false);
   await p.get('cup').onclick();
   assert.deepEqual(p.calls.filter((call) => call.body), [{ path: '/api/command', body: { cmd: 'cup' } }]);
 });
 
-test('未校准不妨碍配网，称重设置保持折叠并保留校准操作', async () => {
+test('出厂标定异常提示售后，用户仍能配网但不能设置空杯', async () => {
   const p = await page();
   p.state.calibrated = false;
   p.state.weightGrams = null;
@@ -213,10 +213,9 @@ test('未校准不妨碍配网，称重设置保持折叠并保留校准操作',
   assert.equal(p.get('cup').disabled, true);
   assert.equal(p.get('weight').textContent, '—');
   assert.equal(p.get('wifi').disabled, false);
-  assert.equal(p.get('control-panel').open, false);
-  assert.equal(p.get('first-setup').open, false);
-  await p.run("act(() => command('calibrate', { grams: 120 }))");
-  assert.deepEqual(p.calls.find((call) => call.body)?.body, { cmd: 'calibrate', grams: 120 });
+  assert.match(p.get('reading').textContent, /出厂标定异常.*售后/);
+  assert.equal(p.get('calibrate'), undefined);
+  assert.equal(p.get('tare'), undefined);
 });
 
 test('配置保存和重启中不报配网成功，实际连接目标 Wi-Fi 后才确认', async () => {
@@ -240,7 +239,7 @@ test('配置保存和重启中不报配网成功，实际连接目标 Wi-Fi 后�
   assert.equal(p.get('network').textContent, '已经成功连接 新网络');
   assert.equal(p.get('network-status').attributes['data-connected'], true);
   assert.equal(p.get('next-step').hidden, false);
-  assert.match(p.get('next-step').textContent, /192.168.1.35/);
+  assert.match(p.get('next-step').textContent, /切回正常网络/);
   assert.match(p.get('notice-text').textContent, /已经成功连接 新网络/);
   p.get('notice-close').onclick();
   await p.run('poll()');
@@ -338,4 +337,37 @@ test('最近取放区分饮水、补水与尚未保存的记录', async () => {
   p.state.lastEvent = { kind: 'refill', amountMl: 100, beforeGrams: 450, afterGrams: 550, saved: false };
   await p.run('poll()');
   assert.match(p.get('last-event').textContent, /补水 100.0 ml.*保存失败，请勿断电/);
+});
+
+test('云端绑定码可申请，过期及绑定后隐藏，网站入口不含设备凭证', async () => {
+  const p = await page([], { serverConfigured: true, serverConnected: true,
+    cloudUrl: 'https://water.example', bindingCode: '12345678', bindingExpiresAt: Date.now() + 300000 });
+  assert.equal(p.get('binding-code').textContent, '12345678');
+  assert.equal(p.get('cloud-link').href, 'https://water.example');
+  await p.get('binding').onclick();
+  assert.equal(p.calls.filter((call) => call.path === '/api/binding').length, 1);
+  p.state.bindingExpiresAt = Date.now() - 1;
+  await p.run('poll()');
+  assert.equal(p.get('binding-code').textContent, '');
+  assert.equal(p.get('binding').disabled, false);
+  p.state.bindingExpiresAt = Date.now() + 300000;
+  p.state.bound = true;
+  await p.run('poll()');
+  assert.equal(p.get('binding-code').textContent, '');
+  assert.equal(p.get('binding').disabled, true);
+  assert.match(p.get('binding-state').textContent, /已绑定账号/);
+});
+
+test('未完成出厂身份配置明确提示售后，新Wi-Fi验证期间不能提前报成功', async () => {
+  const p = await page([], { wifiConnected: true, wifiConfigured: true, wifiSsid: '新网络', wifiTrial: true });
+  assert.match(p.get('binding-state').textContent, /出厂设置.*售后/);
+  assert.equal(p.get('binding').disabled, true);
+  assert.equal(p.get('network-status').attributes['data-connected'], false);
+  p.state.wifiTrial = false;
+  p.state.wifiRollback = true;
+  p.state.wifiConnected = false;
+  p.state.wifiSsid = '旧网络';
+  await p.run('poll()');
+  assert.match(p.get('network').textContent, /保留原网络/);
+  assert.equal(p.get('wifi').disabled, false);
 });

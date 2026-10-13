@@ -12,10 +12,6 @@ if (Number(process.versions.node.split('.')[0]) !== 24) {
   process.exit(1);
 }
 if (existsSync('.env')) process.loadEnvFile('.env');
-if (!process.env.DEVICE_TOKEN?.trim()) {
-  console.error('请先复制 .env.example 为 .env 并设置固定 DEVICE_TOKEN，与串口写入杯垫的凭证保持一致。');
-  process.exit(1);
-}
 
 const children = [];
 let stopping = false;
@@ -34,8 +30,6 @@ process.on('SIGTERM', () => stop());
 
 const env = {
   ...process.env,
-  DEVICE_TOKEN: process.env.DEVICE_TOKEN,
-  DEVICE_ID: process.env.DEVICE_ID || 'coaster-01',
   HOST: process.env.HOST || '0.0.0.0',
   DB_PATH: resolve(process.env.DB_PATH || 'data/coaster-hardware.sqlite'),
   APP_TIMEZONE: process.env.APP_TIMEZONE || 'Asia/Shanghai',
@@ -83,7 +77,7 @@ try {
   const { DEVICE_TOKEN, ...webEnv } = env;
   start('网页', [resolve('node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', '5173', '--strictPort'], resolve('web'), webEnv);
   await waitReady('http://127.0.0.1:5173');
-  console.log('\n饮水陪伴杯垫已启动：http://127.0.0.1:5173\n模式：ESP32-S3 / HX711 真实称重 · Ctrl+C 停止全部服务\n');
+  console.log('\n饮水陪伴杯垫已启动：http://127.0.0.1:5173\n模式：账号登录 / 绑定码 / 云端设备通信 · Ctrl+C 停止全部服务\n');
 } catch (error) {
   console.error(error.message);
   stop(1);

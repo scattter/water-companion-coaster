@@ -1,0 +1,63 @@
+# 饮水陪伴杯垫：生产编排（网页 + API + 持久 SQLite）
+#
+#   cd deploy
+#   cp .env.example .env && vi .env      # 至少填 APP_ORIGIN
+#   docker compose up -d --build
+#
+# 只在单个 Docker 主机上运行：后端用 SQLite、限流在进程内存里，不能横向扩容。
+
+name: coaster
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: api
+    image: coaster-api:latest
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      APP_ORIGIN: "${APP_ORIGIN:?请复制 deploy/.env.example 为 deploy/.env 并填写正式域名}"
+      # 容器内部需要监听所有网卡，网页容器才连得上；端口不对宿主机发布，外部访问不到。
+      HOST: 0.0.0.0
+      PORT: "3001"
+      DB_PATH: /data/coaster.sqlite
+      APP_TIMEZONE: "${APP_TIMEZONE:-Asia/Shanghai}"
+      TRUST_PROXY: "${TRUST_PROXY:-127.0.0.1,::1,172.16.0.0/12}"
+    volumes:
+      - coaster-data:/data
+    networks:
+      - coaster
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  web:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: web
+    image: coaster-web:latest
+    restart: unless-stopped
+    init: true
+    ports:
+      # 默认只监听回环：由宿主机上的 Nginx/Caddy 终止 TLS 后再转发到 8080。
+      - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - coaster
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  coaster:
+
+volumes:
+  # 数据库放在命名卷里：重新部署、重建容器都不会丢账号、归属和设备凭证。
+  coaster-data:

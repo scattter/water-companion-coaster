@@ -32,8 +32,15 @@ static const char PAGE[] = R"HTML(<!doctype html>
 <button id="scan" type="button" disabled>重新扫描</button><p id="scan-state" class="hint" role="status">连接杯垫后自动扫描附近网络。</p>
 <div id="manual-network" hidden><label for="ssid">Wi-Fi 名称</label><input id="ssid" maxlength="32" autocomplete="off" placeholder="输入完整的 Wi-Fi 名称"></div>
 <label for="password">Wi-Fi 密码</label><div class="password-field"><input id="password" type="password" maxlength="63" autocomplete="off" placeholder="输入该网络的密码，开放网络留空"><button id="show-password" type="button" aria-controls="password" aria-pressed="false">显示密码</button></div><button id="wifi" class="primary" disabled>保存并连接 Wi-Fi</button></form>
-<p class="hint">杯垫重启时热点会暂时断开。重新连接 Water- 热点后，本页会自动检查结果；热点密码仍是 12345678。</p>
+<p class="hint">杯垫重启时热点会暂时断开。重新连接 Water- 热点后，本页会自动检查结果；热点密码见杯垫屏幕。新网络连接失败时自动恢复原网络。</p>
 <button id="reboot" hidden disabled>重启杯垫以应用配置</button>
+</section>
+<section class="card" aria-labelledby="binding-title">
+<h2 id="binding-title">绑定你的账号</h2><p id="binding-state" role="status">等待连接云服务…</p>
+<p id="binding-code" class="weight"></p><p id="binding-expiry" class="hint"></p>
+<p><a id="cloud-link" hidden target="_blank" rel="noopener noreferrer">打开水伴网站</a></p>
+<button id="binding" type="button" disabled>获取 / 刷新绑定码</button>
+<p class="hint">记下绑定码，切回手机正常网络后打开网站，注册或登录，再输入绑定码。换 Wi-Fi 保留原账号和记录，无需重复绑定。</p>
 </section>
 <details id="control-panel">
 <summary>空杯与称重设置</summary>
@@ -49,17 +56,8 @@ static const char PAGE[] = R"HTML(<!doctype html>
 <p id="queue" class="hint">正在读取记录状态…</p>
 <p class="hint">关闭手机页面后杯垫继续记录。减少记为估算饮水，增加记为补水；倒水也会计入减少量。</p>
 </section>
-<details id="first-setup">
-<summary>首次设置 · 重量校准</summary>
-<p class="hint">只需在首次使用或更换传感器后操作。已知重量可以用另一台秤称准的空杯，不必专门准备砝码；校准后会保存在杯垫中。</p>
-<ol>
-<li>移走杯子和其他物品，保留承重盘，静置 3 秒。归零会清除旧校准和空杯重量。<button id="tare" disabled>空载归零</button></li>
-<li>放上已知重量的物品，静置 3 秒。<form id="calibration-form"><label for="grams">已知重量（g）</label><input id="grams" type="number" min="50" max="2000" step="0.1" value="500" required><button id="calibrate" disabled>保存重量校准</button></form></li>
-<li>放上日常使用的空杯，静置 3 秒，点击上方“更新空杯重量”。</li>
-</ol>
-</details>
 <p id="server" class="hint"></p>
-<p class="hint">Wi-Fi 连接成功后，电脑统计仍需电脑后端运行。后端地址和凭证沿用已有设置，可在电脑网页通过 USB 配置。</p>
+
 </details>
 <p class="hint">配网热点没有互联网，提示时选择继续连接。若页面没有自动打开，在浏览器地址栏输入 http://192.168.4.1。</p>
 </main>
@@ -67,9 +65,9 @@ static const char PAGE[] = R"HTML(<!doctype html>
 <script>
 const $ = (id) => document.getElementById(id);
 let device = null, busy = false, polling = null, pendingWifi = '', scanStarted = false, networks = [];
-const commands = ['cup', 'tare', 'calibrate', 'wifi', 'reboot', 'scan'];
+const commands = ['cup', 'binding', 'wifi', 'reboot', 'scan'];
 function enable() {
-  for (const id of commands) $(id).disabled = busy || !device || (id === 'cup' && !device.calibrated);
+  for (const id of commands) $(id).disabled = busy || !device || (id === 'cup' && !device.calibrated) || (id === 'binding' && (!device?.serverConnected || device?.bound));
   $('wifi-list').disabled = busy || !device;
 }
 function notice(message, error = false) {
@@ -105,16 +103,16 @@ function render(value) {
   device = value;
   $('connection').textContent = `${value.apSsid} · 热点已连接 · 固件 ${value.firmwareVersion}`;
   $('weight').textContent = value.weightGrams === null ? '—' : value.weightGrams.toFixed(1);
-  $('reading').textContent = value.calibrated ? (value.stable ? '读数稳定' : '等待稳定') : '首次使用，请展开下方“首次设置”';
+  $('reading').textContent = value.calibrated ? (value.stable ? '读数稳定' : '等待稳定') : '出厂标定异常，请联系售后';
   $('device-error').textContent = value.error || '';
   $('cup-weight').textContent = value.emptyCupGrams >= 5 ? `${value.emptyCupGrams.toFixed(1)} g` : '未设置';
   const event = value.lastEvent;
   $('last-event').textContent = event ? `${event.kind === 'drink' ? '估算饮水' : '补水'} ${event.amountMl.toFixed(1)} ml · ${event.beforeGrams.toFixed(1)} → ${event.afterGrams.toFixed(1)} g${event.saved ? ' · 已保存' : ' · 保存失败，请勿断电'}` : '尚无记录';
   $('queue').textContent = `待上传 ${value.pendingCount} 条${value.timePendingCount ? `，其中 ${value.timePendingCount} 条时间待确认` : ''}。${value.clockSynced ? '已校时' : '尚未校时'}`;
-  const applied = !value.restartRequired && (!pendingWifi || value.wifiSsid === pendingWifi);
-  const connected = applied && value.wifiConnected;
+  const applied = !value.restartRequired && !value.wifiTrial && (!pendingWifi || value.wifiSsid === pendingWifi);
+  const connected = applied && value.wifiConnected && !value.wifiRollback && !value.wifiSaveError;
   let wifi = '尚未配网，请选择 Wi-Fi 并输入密码。';
-  if (!applied) wifi = '正在应用 Wi-Fi 配置，等待杯垫重启后验证连接。';
+  if (!applied) wifi = value.wifiTrial ? '正在验证新 Wi-Fi，失败时保留原网络，请稍候…' : '正在应用 Wi-Fi 配置，等待杯垫重启后验证连接。';
   else if (connected) wifi = `已经成功连接 ${value.wifiSsid || 'Wi-Fi'}`;
   else if (value.wifiConfigured) {
     const reasons = { 201: '未找到网络，请确认名称、距离和 2.4 GHz 设置', 202: '认证失败，请检查 Wi-Fi 密码',
@@ -122,14 +120,26 @@ function render(value) {
     wifi = value.wifiReason ? `连接失败：${reasons[value.wifiReason] || `请检查网络（原因 ${value.wifiReason}）`}，可修改后重新保存。`
       : `正在连接 ${value.wifiSsid || 'Wi-Fi'}，请稍候…`;
   }
+  if (value.wifiRollback) { wifi = '新 Wi-Fi 未连接成功，已保留原网络。请检查密码、2.4 GHz 设置后重试。'; pendingWifi = ''; }
+  if (value.wifiSaveError) wifi += ' Wi-Fi 状态保存失败，请保持供电，设备正在重试；持续失败请联系售后。';
   $('network').textContent = wifi;
   $('network-status').toggleAttribute('data-connected', connected);
   $('next-step').hidden = !connected;
-  if (connected) $('next-step').textContent = `杯垫地址 ${value.ip}。可以将手机或 Mac 切回该 Wi-Fi，杯垫以后上电会自动连接。`;
+  if (connected) $('next-step').textContent = 'Wi-Fi 已连接。待云服务连接后记下绑定码，再将手机切回正常网络打开网站；杯垫以后自动连接。';
   $('reboot').hidden = !value.restartRequired;
   if (pendingWifi && connected) { pendingWifi = ''; notice(`${wifi}。可以将手机或 Mac 切回该 Wi-Fi。`); }
   const server = value.serverConnected ? '已连接' : (value.serverConfigured ? `未连接${value.httpStatus ? `（HTTP ${value.httpStatus}）` : ''}` : '未配置');
-  $('server').textContent = `电脑后端${server}。`;
+  $('server').textContent = `云服务${server}。`;
+  const code = !value.bound && value.bindingCode && value.bindingExpiresAt > Date.now() ? value.bindingCode : '';
+  $('binding-code').textContent = code;
+  $('binding-expiry').textContent = code ? '绑定码 5 分钟内有效，仅限一次使用。' : '';
+  $('binding-state').textContent = !value.serverConfigured || !value.cloudUrl ? '设备尚未完成出厂设置，请联系售后。'
+    : value.bound ? '已绑定账号，切回正常网络后登录网站查看。'
+    : !value.serverConnected ? '等待云服务连接，请先完成 Wi-Fi 配网。'
+    : code ? '请在网站登录后输入以下绑定码。' : '点击下方按钮获取绑定码，过期后可重新获取。';
+  const url = /^https?:\/\/[^/?#@]+\/?$/.test(value.cloudUrl || '') ? value.cloudUrl : '';
+  $('cloud-link').hidden = !url;
+  if (url) { $('cloud-link').href = url; $('cloud-link').textContent = `打开水伴网站：${url}`; }
   enable();
 }
 function disconnected(error) {
@@ -203,8 +213,7 @@ $('wifi-list').onchange = () => {
   $('ssid').required = manual;
   $('manual-network').hidden = !manual;
 };
-$('tare').onclick = () => act(() => command('tare'));
-$('calibration-form').onsubmit = (event) => { event.preventDefault(); void act(() => command('calibrate', { grams: Number($('grams').value) })); };
+$('binding').onclick = () => act(async () => { await api('/api/binding', {}); notice('正在申请绑定码，请等待页面更新。'); });
 $('wifi-form').onsubmit = (event) => { event.preventDefault(); void act(async () => {
   const ssid = $('ssid').value;
   await command('wifi', { ssid, password: $('password').value });
@@ -258,24 +267,9 @@ static bool allowed(httpd_req_t *request)
     return true;
 }
 
-static bool lan_allowed(httpd_req_t *request)
+static bool user_command(const char *name)
 {
-    network_status_t status;
-    network_snapshot(&status);
-    if (!status.wifi_connected || !local_address_is(request, status.ip)
-        || httpd_req_get_hdr_value_len(request, "Origin")
-        || httpd_req_get_hdr_value_len(request, "Sec-Fetch-Site")) return false;
-    char id[65], authorization[136];
-    if (httpd_req_get_hdr_value_str(request, "X-Device-ID", id, sizeof(id)) != ESP_OK
-        || httpd_req_get_hdr_value_str(request, "Authorization", authorization, sizeof(authorization)) != ESP_OK) return false;
-    bool valid = device_authorize(id, authorization);
-    memset(authorization, 0, sizeof(authorization));
-    return valid;
-}
-
-static bool calibration_command(const char *name)
-{
-    return !strcmp(name, "cup") || !strcmp(name, "tare") || !strcmp(name, "calibrate");
+    return !strcmp(name, "cup") || !strcmp(name, "wifi") || !strcmp(name, "reboot");
 }
 
 static esp_err_t send_error(httpd_req_t *request, const char *status, const char *message)
@@ -329,12 +323,9 @@ static esp_err_t handle(httpd_req_t *request)
     httpd_resp_set_hdr(request, "Cache-Control", "no-store");
     httpd_resp_set_hdr(request, "X-Content-Type-Options", "nosniff");
     httpd_resp_set_hdr(request, "X-Frame-Options", "DENY");
-    bool lan = !strcmp(request->uri, "/api/control/status") || !strcmp(request->uri, "/api/control/calibrate");
-    if (lan) {
-        if (!lan_allowed(request)) return send_error(request, "401 Unauthorized", "设备编号或凭证无效");
-    } else if (!allowed(request)) return send_error(request, "403 Forbidden", "请先连接 Water- 热点，再在浏览器地址栏输入 http://192.168.4.1");
+    if (!allowed(request)) return send_error(request, "403 Forbidden", "请先连接 Water- 热点，再在浏览器地址栏输入 http://192.168.4.1");
     if (request->method == HTTP_GET) {
-        if (lan || !strncmp(request->uri, "/api/status", strlen("/api/status"))) return send_json(request, device_status_json());
+        if (!strncmp(request->uri, "/api/status", strlen("/api/status"))) return send_json(request, device_status_json());
         if (!strncmp(request->uri, "/api/wifi-scan", strlen("/api/wifi-scan"))) return scan_networks(request);
         httpd_resp_set_type(request, "text/html; charset=utf-8");
         return httpd_resp_send(request, PAGE, sizeof(PAGE) - 1);
@@ -360,7 +351,12 @@ static esp_err_t handle(httpd_req_t *request)
         return send_error(request, "400 Bad Request", "请求内容无效");
     }
     cJSON *response = nullptr;
-    if (!strcmp(request->uri, "/api/time")) {
+    if (!strcmp(request->uri, "/api/binding")) {
+        bool valid = network_request_binding() == ESP_OK;
+        response = cJSON_CreateObject();
+        cJSON_AddBoolToObject(response, "ok", valid);
+        if (!valid) cJSON_AddStringToObject(response, "error", "请等待云服务连接；已绑定设备无需再次绑定");
+    } else if (!strcmp(request->uri, "/api/time")) {
         const cJSON *epoch = cJSON_GetObjectItemCaseSensitive(json, "epochMs");
         bool valid = cJSON_IsNumber(epoch) && std::isfinite(epoch->valuedouble)
             && epoch->valuedouble >= 1704067200000.0 && epoch->valuedouble < 4102444800000.0
@@ -371,7 +367,7 @@ static esp_err_t handle(httpd_req_t *request)
     } else {
         const cJSON *cmd = cJSON_GetObjectItemCaseSensitive(json, "cmd");
         const char *name = cJSON_IsString(cmd) ? cmd->valuestring : "";
-        if (calibration_command(name) || (!lan && (!strcmp(name, "wifi") || !strcmp(name, "reboot")))) response = device_command(json);
+        if (user_command(name)) response = device_command(json);
         else {
             response = cJSON_CreateObject();
             cJSON_AddBoolToObject(response, "ok", false);
@@ -382,10 +378,6 @@ static esp_err_t handle(httpd_req_t *request)
     cJSON_Delete(json);
     if (response && cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(response, "ok")))
         httpd_resp_set_status(request, "400 Bad Request");
-    if (lan && response && cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(response, "ok"))) {
-        cJSON *status = device_status_json();
-        if (status) cJSON_AddItemToObject(response, "device", status);
-    }
     return send_json(request, response);
 }
 
@@ -400,11 +392,11 @@ esp_err_t control_start(void)
     httpd_handle_t server = nullptr;
     esp_err_t result = httpd_start(&server, &config);
     if (result != ESP_OK) return result;
-    const char *paths[] = { "/", "/api/status", "/api/wifi-scan", "/api/command", "/api/time", "/api/control/status", "/api/control/calibrate" };
+    const char *paths[] = { "/", "/api/status", "/api/wifi-scan", "/api/command", "/api/time", "/api/binding" };
     for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
         httpd_uri_t route = {};
         route.uri = paths[i];
-        route.method = i < 3 || i == 5 ? HTTP_GET : HTTP_POST;
+        route.method = i < 3 ? HTTP_GET : HTTP_POST;
         route.handler = handle;
         result = httpd_register_uri_handler(server, &route);
         if (result != ESP_OK) { httpd_stop(server); return result; }

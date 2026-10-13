@@ -1,0 +1,32 @@
+# 可选叠加文件：由 Caddy 申请并自动续期 HTTPS 证书。
+# 适合没有宿主机 Nginx/Caddy 的服务器；设备固件要求有效证书的 HTTPS，这一步不能省。
+#
+#   cd deploy
+#   docker compose -f compose.yaml -f compose.caddy.yaml up -d --build
+#
+# 前置条件：域名已解析到本机，且 80/443 端口可从公网访问（Caddy 用 80 完成 ACME 校验）。
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    init: true
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_HOST: "${APP_HOST:?使用 Caddy 时请在 deploy/.env 中设置 APP_HOST（只写域名）}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - web
+    networks:
+      - coaster
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  caddy-data:
+  caddy-config:

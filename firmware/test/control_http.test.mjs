@@ -5,17 +5,14 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
-test('HTTP 兼容双栈热点连接，局域网校准校验凭证和来源，错误使用 UTF-8', () => {
+test('HTTP 兼容双栈热点连接，拒绝局域网访问与工厂校准命令，错误使用 UTF-8', () => {
   const source = readFileSync(new URL('../water_companion/control.cpp', import.meta.url), 'utf8');
   const network = readFileSync(new URL('../water_companion/network.h', import.meta.url), 'utf8');
   const allowed = source.match(/static bool allowed\([\s\S]*?\n\}/)?.[0];
   const localAddress = source.match(/static bool local_address_is\([\s\S]*?\n\}/)?.[0];
-  const lanAllowed = source.match(/static bool lan_allowed\([\s\S]*?\n\}/)?.[0];
-  const calibrationCommand = source.match(/static bool calibration_command\([\s\S]*?\n\}/)?.[0];
-  const device = readFileSync(new URL('../water_companion/coaster.c', import.meta.url), 'utf8');
-  const authorize = device.match(/bool device_authorize\([\s\S]*?\n\}/)?.[0];
+  const userCommand = source.match(/static bool user_command\([\s\S]*?\n\}/)?.[0];
   const error = source.match(/static esp_err_t send_error\([\s\S]*?\n\}/)?.[0];
-  assert.ok(allowed && localAddress && lanAllowed && authorize && calibrationCommand && error, '读取实际固件处理函数');
+  assert.ok(allowed && localAddress && userCommand && error, '读取实际固件处理函数');
   const root = fileURLToPath(new URL('../../data/test-output/', import.meta.url));
   mkdirSync(root, { recursive: true });
   const directory = mkdtempSync(join(root, 'control-http-'));
@@ -71,18 +68,9 @@ static int httpd_req_get_hdr_value_str(httpd_req_t *r, const char *name, char *b
 static void httpd_resp_set_status(httpd_req_t *r, const char *value) { r->status = value; }
 static void httpd_resp_set_type(httpd_req_t *r, const char *value) { r->type = value; }
 static int httpd_resp_send(httpd_req_t *r, const char *value, int) { r->body = value; return ESP_OK; }
-static int state_lock = 0, portMAX_DELAY = 0;
-static void xSemaphoreTake(int, int) {}
-static void xSemaphoreGive(int) {}
-static struct { char device_id[65]; char token[129]; } config = {"coaster-01", "test-control-token"};
-struct network_status_t { bool wifi_connected; char ip[16]; };
-static network_status_t network_status = {true, "192.168.1.20"};
-static void network_snapshot(network_status_t *status) { *status = network_status; }
-${authorize}
 ${localAddress}
 ${allowed}
-${lanAllowed}
-${calibrationCommand}
+${userCommand}
 ${error}
 int main() {
     httpd_req_t page;
@@ -127,44 +115,13 @@ int main() {
     assert(page.type == "text/plain; charset=utf-8");
     assert(page.status == "403 Forbidden");
     assert(page.body == message);
-    page.uri = "/api/control/status";
-    local_ip = "192.168.1.20";
-    page.headers.clear();
-    assert(!lan_allowed(&page));
-    page.headers["X-Device-ID"] = "coaster-01";
-    page.headers["Authorization"] = "Bearer test-control-token";
-    assert(lan_allowed(&page));
-    local_family = AF_INET6;
-    local_ip = "::ffff:192.168.1.20";
-    assert(lan_allowed(&page));
-    local_ip = "::ffff:" CONTROL_IP;
-    assert(!lan_allowed(&page));
-    local_ip = "::ffff:192.168.1.20";
-    page.headers["Origin"] = "http://192.168.1.20";
-    assert(!lan_allowed(&page));
-    page.headers.erase("Origin");
-    page.headers["Sec-Fetch-Site"] = "same-origin";
-    assert(!lan_allowed(&page));
-    page.headers.erase("Sec-Fetch-Site");
-    page.headers["Authorization"] = "Bearer test-control-tokeN";
-    assert(!lan_allowed(&page));
-    page.headers["Authorization"] = "Bearer test-control-token";
-    page.headers["X-Device-ID"] = "coaster-02";
-    assert(!lan_allowed(&page));
-    page.headers["X-Device-ID"] = "coaster-01";
-    network_status.wifi_connected = false;
-    assert(!lan_allowed(&page));
-    assert(!device_authorize(nullptr, nullptr));
-    assert(!device_authorize("coaster-01", "Bearer "));
-    assert(!device_authorize("coaster-01", "Basic test-control-token"));
-    config.token[0] = 0;
-    assert(!device_authorize("coaster-01", "Bearer "));
-    assert(calibration_command("tare"));
-    assert(calibration_command("calibrate"));
-    assert(calibration_command("cup"));
-    assert(!calibration_command("wifi"));
-    assert(!calibration_command("server"));
-    assert(!calibration_command("reboot"));
+    assert(!user_command("tare"));
+    assert(!user_command("calibrate"));
+    assert(user_command("cup"));
+    assert(user_command("wifi"));
+    assert(user_command("reboot"));
+    assert(!user_command("server"));
+
 }
 `;
     const filename = join(directory, 'http-test.cpp');

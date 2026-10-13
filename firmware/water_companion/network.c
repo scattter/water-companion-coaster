@@ -16,6 +16,7 @@
 #include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
+#include "nvs.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -31,6 +32,13 @@ static portMUX_TYPE status_lock = portMUX_INITIALIZER_UNLOCKED;
 static network_status_t network_status;
 static uint32_t connection_generation;
 static int64_t last_confirmed_ms;
+static cloud_command_t cloud_command;
+static bool binding_requested, binding_attempted, provision_requested;
+static bool wifi_trial;
+static char previous_ssid[33], previous_password[65];
+static int64_t trial_started_ms, ap_until_ms, next_cleanup_ms;
+static bool wifi_cleanup_pending;
+
 
 typedef struct {
     char data[2048];
@@ -66,6 +74,10 @@ void network_snapshot(network_status_t *status)
     portEXIT_CRITICAL(&status_lock);
     status->server_connected = status->server_connected && status->wifi_connected
         && esp_timer_get_time() / 1000 - confirmed <= 15000;
+    if (status->bound || !network_has_time() || status->binding_expires_at <= network_epoch_ms()) {
+        status->binding_code[0] = 0;
+        status->binding_expires_at = 0;
+    }
     status->waiting_for_time = status->server_configured
         && strncmp(settings.server_url, "https://", 8) == 0 && !network_has_time();
 }
@@ -124,6 +136,77 @@ static esp_err_t post(const char *path, const cJSON *body, cJSON **reply, int *h
     return ESP_ERR_INVALID_RESPONSE;
 }
 
+void network_provision(void)
+{
+    portENTER_CRITICAL(&status_lock);
+    provision_requested = true;
+    portEXIT_CRITICAL(&status_lock);
+}
+
+esp_err_t network_request_binding(void)
+{
+    network_status_t status;
+    network_snapshot(&status);
+    if (!status.server_connected || status.bound) return ESP_ERR_INVALID_STATE;
+    portENTER_CRITICAL(&status_lock);
+    binding_requested = true;
+    portEXIT_CRITICAL(&status_lock);
+    return ESP_OK;
+}
+
+static void request_binding(void)
+{
+    cJSON *body = cJSON_CreateObject(), *reply = NULL;
+    if (!body) return;
+    int http_status;
+    esp_err_t result = post("/api/device/binding", body, &reply, &http_status);
+    const cJSON *code = cJSON_GetObjectItemCaseSensitive(reply, "code");
+    const cJSON *expires = cJSON_GetObjectItemCaseSensitive(reply, "expiresAt");
+    bool valid = result == ESP_OK && cJSON_IsString(code) && strlen(code->valuestring) == 8
+        && strspn(code->valuestring, "0123456789") == 8 && cJSON_IsNumber(expires)
+        && isfinite(expires->valuedouble) && expires->valuedouble > network_epoch_ms()
+        && expires->valuedouble <= network_epoch_ms() + 301000;
+    portENTER_CRITICAL(&status_lock);
+    if (http_status == 409) {
+        network_status.bound = true;
+        network_status.binding_code[0] = 0;
+        network_status.binding_expires_at = 0;
+    } else if (valid) {
+        strcpy(network_status.binding_code, code->valuestring);
+        network_status.binding_expires_at = (int64_t)expires->valuedouble;
+    }
+    portEXIT_CRITICAL(&status_lock);
+    if (!valid && http_status != 409) ESP_LOGW(TAG, "绑定码未取得，请在配网页重试");
+    cJSON_Delete(reply);
+    cJSON_Delete(body);
+}
+
+static void execute_cup(bool *ok, char *message, unsigned capacity)
+{
+    cJSON *command = cJSON_CreateObject();
+    if (!command) { *ok = false; snprintf(message, capacity, "设备内存不足，请重试"); return; }
+    cJSON_AddStringToObject(command, "cmd", "cup");
+    cJSON *reply = device_command(command);
+    *ok = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reply, "ok"));
+    const cJSON *text = cJSON_GetObjectItemCaseSensitive(reply, *ok ? "message" : "error");
+    snprintf(message, capacity, "%s", cJSON_IsString(text) ? text->valuestring : "设备操作失败，请重试");
+    cJSON_Delete(reply);
+    cJSON_Delete(command);
+}
+
+static void receive_command(const cJSON *reply)
+{
+    const cJSON *command = cJSON_GetObjectItemCaseSensitive(reply, "command");
+    const cJSON *id = cJSON_GetObjectItemCaseSensitive(command, "id");
+    const cJSON *name = cJSON_GetObjectItemCaseSensitive(command, "cmd");
+    const cJSON *expires = cJSON_GetObjectItemCaseSensitive(command, "expiresAt");
+    if (!cJSON_IsObject(command) || !cJSON_IsString(id) || !cJSON_IsString(name)
+        || !cJSON_IsNumber(expires) || !isfinite(expires->valuedouble)
+        || expires->valuedouble < 1704067200000.0 || expires->valuedouble >= 4102444800000.0) return;
+    cloud_command_receive(&cloud_command, id->valuestring, name->valuestring,
+        (int64_t)expires->valuedouble, network_epoch_ms(), storage_save_command, execute_cup);
+}
+
 static void heartbeat(void)
 {
     portENTER_CRITICAL(&status_lock);
@@ -151,6 +234,13 @@ static void heartbeat(void)
     if (status.error) cJSON_AddStringToObject(body, "error", status.error);
     else cJSON_AddNullToObject(body, "error");
     cJSON_AddStringToObject(body, "firmwareVersion", FIRMWARE_VERSION);
+    bool sent_result = cloud_command.pending;
+    if (sent_result) {
+        cJSON *result = cJSON_AddObjectToObject(body, "commandResult");
+        cJSON_AddStringToObject(result, "id", cloud_command.id);
+        cJSON_AddBoolToObject(result, "ok", cloud_command.ok);
+        cJSON_AddStringToObject(result, "message", cloud_command.message);
+    }
     int http_status;
     esp_err_t result = post("/api/device/heartbeat", body, &reply, &http_status);
     bool confirmed = result == ESP_OK && cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reply, "ok"));
@@ -171,6 +261,21 @@ static void heartbeat(void)
             && server_time->valuedouble >= 1704067200000.0 && server_time->valuedouble < 4102444800000.0) {
             network_set_time((int64_t)server_time->valuedouble);
         }
+        const cJSON *bound = cJSON_GetObjectItemCaseSensitive(reply, "bound");
+        if (cJSON_IsBool(bound)) {
+            portENTER_CRITICAL(&status_lock);
+            network_status.bound = cJSON_IsTrue(bound);
+            if (network_status.bound) {
+                network_status.binding_code[0] = 0;
+                network_status.binding_expires_at = 0;
+            } else if (!binding_attempted) {
+                binding_requested = true;
+                binding_attempted = true;
+            }
+            portEXIT_CRITICAL(&status_lock);
+        }
+        if (sent_result) cloud_command_ack(&cloud_command, storage_save_command);
+        receive_command(reply);
     } else ESP_LOGW(TAG, "心跳未确认：%s", esp_err_to_name(result));
     cJSON_Delete(reply);
     cJSON_Delete(body);
@@ -274,6 +379,79 @@ esp_err_t network_scan(wifi_ap_record_t *records, uint16_t *count)
     return result;
 }
 
+static void clear_wifi_candidate(int64_t now)
+{
+    esp_err_t result = storage_clear_wifi();
+    wifi_cleanup_pending = result != ESP_OK;
+    next_cleanup_ms = now + 5000;
+    portENTER_CRITICAL(&status_lock);
+    network_status.wifi_error = result;
+    portEXIT_CRITICAL(&status_lock);
+}
+
+static void update_provisioning(int64_t now)
+{
+    portENTER_CRITICAL(&status_lock);
+    bool requested = provision_requested;
+    provision_requested = false;
+    portEXIT_CRITICAL(&status_lock);
+    if (requested) {
+        xSemaphoreTake(wifi_lock, portMAX_DELAY);
+        esp_err_t result = esp_wifi_set_mode(WIFI_MODE_APSTA);
+        xSemaphoreGive(wifi_lock);
+        if (result == ESP_OK) ap_until_ms = now + 600000;
+    }
+    if (ap_until_ms && now >= ap_until_ms && !wifi_trial) {
+        xSemaphoreTake(wifi_lock, portMAX_DELAY);
+        esp_err_t result = esp_wifi_set_mode(WIFI_MODE_STA);
+        xSemaphoreGive(wifi_lock);
+        if (result == ESP_OK) ap_until_ms = 0;
+    }
+    if (wifi_cleanup_pending && now >= next_cleanup_ms) clear_wifi_candidate(now);
+    if (!wifi_trial) return;
+    if (xEventGroupGetBits(wifi_state) & CONNECTED) {
+        esp_err_t result = device_save_wifi(settings.ssid, settings.password);
+        if (result == ESP_OK) {
+            clear_wifi_candidate(now);
+            wifi_trial = false;
+            portENTER_CRITICAL(&status_lock);
+            network_status.wifi_trial = false;
+            portEXIT_CRITICAL(&status_lock);
+            return;
+        }
+    }
+    if (now - trial_started_ms < 45000) return;
+    // 新网络未验证时主配置从未改变；失败回到原网络，不动身份、标定或事件分区。
+    clear_wifi_candidate(now);
+    wifi_trial = false;
+    strcpy(settings.ssid, previous_ssid);
+    strcpy(settings.password, previous_password);
+    wifi_config_t wifi = {0};
+    memcpy(wifi.sta.ssid, settings.ssid, strlen(settings.ssid));
+    memcpy(wifi.sta.password, settings.password, strlen(settings.password));
+    xSemaphoreTake(wifi_lock, portMAX_DELAY);
+    xEventGroupClearBits(wifi_state, CONNECTED);
+    portENTER_CRITICAL(&status_lock);
+    ++connection_generation;
+    network_status.wifi_connected = false;
+    network_status.server_connected = false;
+    network_status.ip[0] = 0;
+    network_status.wifi_reason = 0;
+    network_status.http_status = 0;
+    network_status.server_error = ESP_OK;
+    portEXIT_CRITICAL(&status_lock);
+    esp_wifi_disconnect();
+    esp_wifi_set_config(WIFI_IF_STA, &wifi);
+    if (settings.ssid[0]) esp_wifi_connect();
+    xSemaphoreGive(wifi_lock);
+    portENTER_CRITICAL(&status_lock);
+    network_status.wifi_trial = false;
+    network_status.wifi_rollback = true;
+    network_status.wifi_configured = settings.ssid[0] != 0;
+    strcpy(network_status.wifi_ssid, settings.ssid);
+    portEXIT_CRITICAL(&status_lock);
+}
+
 static void network_task(void *arg)
 {
     (void)arg;
@@ -281,6 +459,7 @@ static void network_task(void *arg)
     unsigned backoff_ms = 1000;
     for (;;) {
         int64_t now = esp_timer_get_time() / 1000;
+        update_provisioning(now);
         if (network_has_time()) storage_resolve_time(network_epoch_ms() - now);
         if (settings.ssid[0] && !(xEventGroupGetBits(wifi_state) & CONNECTED)) {
             if ((last_connect < 0 || now - last_connect >= 30000)
@@ -295,6 +474,11 @@ static void network_task(void *arg)
                 heartbeat();
                 last_heartbeat = now;
             }
+            portENTER_CRITICAL(&status_lock);
+            bool get_binding = binding_requested;
+            binding_requested = false;
+            portEXIT_CRITICAL(&status_lock);
+            if (get_binding) request_binding();
             if (now >= next_upload) {
                 esp_err_t result = upload_one();
                 if (result == ESP_OK) backoff_ms = 1000;
@@ -338,14 +522,16 @@ static esp_err_t start_wifi(void)
     snprintf(ssid, sizeof(ssid), "Water-%02X%02X%02X", mac[3], mac[4], mac[5]);
     wifi_config_t hotspot = {0};
     strcpy((char *)hotspot.ap.ssid, ssid);
-    strcpy((char *)hotspot.ap.password, CONTROL_PASSWORD);
+    char password[13];
+    ESP_RETURN_ON_ERROR(storage_ap_password(password), TAG, "读取热点密码失败");
+    strcpy((char *)hotspot.ap.password, password);
     hotspot.ap.ssid_len = strlen(ssid);
     hotspot.ap.channel = 1;
     hotspot.ap.max_connection = 2;
     hotspot.ap.authmode = WIFI_AUTH_WPA2_PSK;
     portENTER_CRITICAL(&status_lock);
     strcpy(network_status.ap_ssid, ssid);
-    strcpy(network_status.ap_password, CONTROL_PASSWORD);
+    strcpy(network_status.ap_password, password);
     portEXIT_CRITICAL(&status_lock);
     wifi_config_t wifi = {0};
     memcpy(wifi.sta.ssid, settings.ssid, strlen(settings.ssid));
@@ -356,6 +542,11 @@ static esp_err_t start_wifi(void)
     ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &hotspot), TAG, "设置热点失败");
     if (settings.ssid[0])
         ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &wifi), TAG, "设置 Wi-Fi 参数失败");
+    bool provisioning = !settings.ssid[0] || wifi_trial;
+    if (!provisioning)
+        ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "设置日常联网模式失败");
+    ap_until_ms = provisioning ? esp_timer_get_time() / 1000 + 600000 : 0;
+    trial_started_ms = esp_timer_get_time() / 1000;
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "启动 Wi-Fi 失败");
     esp_err_t control_result = control_start();
     portENTER_CRITICAL(&status_lock);
@@ -373,12 +564,37 @@ static esp_err_t start_wifi(void)
 void network_start(const device_config_t *config)
 {
     settings = *config;
+    esp_err_t result = storage_load_command(&cloud_command);
+    if (result != ESP_OK) {
+        portENTER_CRITICAL(&status_lock);
+        network_status.wifi_error = result;
+        portEXIT_CRITICAL(&status_lock);
+        return;
+    }
+    strcpy(previous_ssid, settings.ssid);
+    strcpy(previous_password, settings.password);
+    char candidate_ssid[33], candidate_password[65];
+    result = storage_load_wifi(candidate_ssid, candidate_password);
+    if (result == ESP_OK) {
+        strcpy(settings.ssid, candidate_ssid);
+        strcpy(settings.password, candidate_password);
+        wifi_trial = true;
+    } else if (result != ESP_ERR_NVS_NOT_FOUND) {
+        portENTER_CRITICAL(&status_lock);
+        network_status.wifi_error = result;
+        portEXIT_CRITICAL(&status_lock);
+        return;
+    }
     portENTER_CRITICAL(&status_lock);
+    network_status.wifi_trial = wifi_trial;
+    snprintf(network_status.cloud_url, sizeof(network_status.cloud_url), "%s", settings.server_url);
+    char *path = strstr(network_status.cloud_url, "://");
+    if (path) { path = strchr(path + 3, '/'); if (path) *path = 0; }
     network_status.wifi_configured = settings.ssid[0] != '\0';
     strcpy(network_status.wifi_ssid, settings.ssid);
     network_status.server_configured = settings.server_url[0] && settings.token[0];
     portEXIT_CRITICAL(&status_lock);
-    esp_err_t result = start_wifi();
+    result = start_wifi();
     portENTER_CRITICAL(&status_lock);
     network_status.wifi_error = result;
     portEXIT_CRITICAL(&status_lock);
@@ -387,6 +603,6 @@ void network_start(const device_config_t *config)
         snprintf(message, sizeof(message), "联网初始化失败：%s；请查看屏幕或串口。", esp_err_to_name(result));
         console_println(message);
     } else {
-        console_println("手机连接屏幕上的 Water- 热点，浏览器打开 http://" CONTROL_IP "；无路由器也可控制和记录。");
+        console_println("配网时连接屏幕上的 Water- 热点，浏览器打开 http://" CONTROL_IP "；换网请在启动后长按 BOOT 3 秒。");
     }
 }

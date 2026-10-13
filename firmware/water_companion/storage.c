@@ -9,6 +9,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "nvs.h"
+#include "esp_mac.h"
+#include "esp_random.h"
 #include "nvs_flash.h"
 
 typedef struct {
@@ -87,7 +89,11 @@ esp_err_t storage_init(device_config_t *config, uint64_t *boot_id)
     result = nvs_get_blob(settings, "config", config, &size);
     if (result == ESP_ERR_NVS_NOT_FOUND) {
         config->version = CONFIG_VERSION;
-        strcpy(config->device_id, "coaster-01");
+        uint8_t mac[6];
+        result = esp_read_mac(mac, ESP_MAC_WIFI_STA);
+        if (result != ESP_OK) return result;
+        snprintf(config->device_id, sizeof(config->device_id), "coaster-%02x%02x%02x%02x%02x%02x",
+            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     } else if (result != ESP_OK) return result;
     else if (size != sizeof(*config) || config->version != CONFIG_VERSION
         || !memchr(config->ssid, 0, sizeof(config->ssid))
@@ -267,4 +273,75 @@ void storage_dump_pending_time(void)
         console_println(message);
     }
     xSemaphoreGive(lock);
+}
+
+static esp_err_t save_setting(const char *key, const void *data, size_t size)
+{
+    xSemaphoreTake(lock, portMAX_DELAY);
+    esp_err_t result = nvs_set_blob(settings, key, data, size);
+    if (result == ESP_OK) result = nvs_commit(settings);
+    xSemaphoreGive(lock);
+    return result;
+}
+
+esp_err_t storage_load_command(cloud_command_t *state)
+{
+    memset(state, 0, sizeof(*state));
+    size_t size = sizeof(*state);
+    esp_err_t result = nvs_get_blob(settings, "command", state, &size);
+    if (result == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+    if (result != ESP_OK) return result;
+    return size == sizeof(*state) && state->version == 1
+        && memchr(state->id, 0, sizeof(state->id)) && memchr(state->message, 0, sizeof(state->message))
+        ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
+}
+
+esp_err_t storage_save_command(const cloud_command_t *state)
+{
+    return save_setting("command", state, sizeof(*state));
+}
+
+esp_err_t storage_stage_wifi(const char *ssid, const char *password)
+{
+    char candidate[98] = {0};
+    snprintf(candidate, 33, "%s", ssid);
+    snprintf(candidate + 33, 65, "%s", password);
+    return save_setting("wifi_candidate", candidate, sizeof(candidate));
+}
+
+esp_err_t storage_load_wifi(char ssid[33], char password[65])
+{
+    char candidate[98];
+    size_t size = sizeof(candidate);
+    esp_err_t result = nvs_get_blob(settings, "wifi_candidate", candidate, &size);
+    if (result != ESP_OK) return result;
+    if (size != sizeof(candidate) || !candidate[0] || !memchr(candidate, 0, 33)
+        || !memchr(candidate + 33, 0, 65)) return ESP_ERR_INVALID_RESPONSE;
+    memcpy(ssid, candidate, 33);
+    memcpy(password, candidate + 33, 65);
+    return ESP_OK;
+}
+
+esp_err_t storage_clear_wifi(void)
+{
+    xSemaphoreTake(lock, portMAX_DELAY);
+    esp_err_t result = nvs_erase_key(settings, "wifi_candidate");
+    if (result == ESP_ERR_NVS_NOT_FOUND) result = ESP_OK;
+    if (result == ESP_OK) result = nvs_commit(settings);
+    xSemaphoreGive(lock);
+    return result;
+}
+
+esp_err_t storage_ap_password(char password[13])
+{
+    size_t size = 13;
+    esp_err_t result = nvs_get_blob(settings, "ap_password", password, &size);
+    if (result == ESP_OK) return size == 13 && password[12] == 0 ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
+    if (result != ESP_ERR_NVS_NOT_FOUND) return result;
+    uint8_t random[12];
+    esp_fill_random(random, sizeof(random));
+    const char alphabet[] = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+    for (unsigned i = 0; i < 12; ++i) password[i] = alphabet[random[i] % (sizeof(alphabet) - 1)];
+    password[12] = 0;
+    return save_setting("ap_password", password, 13);
 }

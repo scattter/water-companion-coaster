@@ -21,7 +21,21 @@ try {
     if (run.error) throw run.error;
     process.exitCode = run.status ?? 1;
     if (process.exitCode === 0) {
-      const page = spawnSync(process.execPath, ['--test', 'firmware/test/control_page.test.mjs', 'firmware/test/control_http.test.mjs', 'firmware/test/network_scan.test.mjs'], { cwd: root, stdio: 'inherit' });
+      const cloudExecutable = join(directory, 'cloud-command-test');
+      const cloudCompile = spawnSync(process.env.CC || 'cc', [
+        '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic', '-Ifirmware/water_companion',
+        'firmware/water_companion/cloud_command.c', 'firmware/test/cloud_command_test.c', '-o', cloudExecutable,
+      ], { cwd: root, stdio: 'inherit', env: { ...process.env, TMPDIR: directory } });
+      if (cloudCompile.error) throw cloudCompile.error;
+      if (cloudCompile.status !== 0) process.exitCode = cloudCompile.status || 1;
+      else {
+        const cloudRun = spawnSync(cloudExecutable, [], { stdio: 'inherit' });
+        if (cloudRun.error) throw cloudRun.error;
+        process.exitCode = cloudRun.status ?? 1;
+      }
+    }
+    if (process.exitCode === 0) {
+      const page = spawnSync(process.execPath, ['--test', 'firmware/test/control_page.test.mjs', 'firmware/test/control_http.test.mjs', 'firmware/test/network_scan.test.mjs', 'firmware/test/provisioning.test.mjs'], { cwd: root, stdio: 'inherit' });
       if (page.error) throw page.error;
       process.exitCode = page.status ?? 1;
     }

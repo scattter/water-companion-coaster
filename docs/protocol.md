@@ -1,133 +1,129 @@
-# 真实称重设备联调协议
+# 云端设备与用户协议
 
-版本：2026-10-12。当前支持一台已配置的 ESP32-S3/HX711；设备编号默认 `coaster-01`，由服务器 `DEVICE_ID` 与设备串口设置共同确定。时区默认 `Asia/Shanghai`。
+版本：2026-10-13。当前产品链路为 ESP32-S3 主动连接服务端、浏览器同源访问用户 API。开发用受控局域网 HTTP，生产使用 HTTPS 与证书校验。设备编号是公开标识，不能作为登录或绑定凭据。
 
-## 访问方式
+## 账号与归属
 
-- 电脑网页 5173，只监听本机，`/api` 代理到后端 3001。
-- 0.4.3 配网页由杯垫热点的 `http://192.168.4.1` 提供，与电脑后端独立；空杯与称重设置在折叠区。
-- 0.4.4 新增由电脑后端访问的局域网校准接口，用户留在 5173 完成校准；设备凭证只在后端与杯垫之间传递。
-- 后端默认监听 `0.0.0.0:3001`。设备使用电脑实际局域网 IP。
-- 设备 POST 需同时携带 `Authorization: Bearer <DEVICE_TOKEN>` 与 `X-Device-ID: <DEVICE_ID>`，缺失／不匹配返回 401。
-- 设备接口拒绝带 Origin 或跨站浏览器标记的请求。网页读取、撤销和健康检查保持本机 IP、Host、Origin 校验。
-- 联调 HTTP 只用于受控局域网，不作为公网账号系统。HTTPS 固件启用证书包校验；正式服务部署另行完成。
+| 接口 | 请求 | 响应 |
+|---|---|---|
+| `GET /api/auth/session` | 无 | `{user:null或{id,username},deviceId:null或string}` |
+| `POST /api/auth/register` | `{username,password}` | 会话及设备归属，并设置 Cookie |
+| `POST /api/auth/login` | `{username,password}` | 同上 |
+| `POST /api/auth/logout` | `{}` | `{ok:true}`，撤销会话 |
+| `POST /api/devices/bind` | `{code:"8位数字"}` | `{deviceId}` |
 
-## 设备心跳
+账号名 3–32 位中文、字母、数字或下划线，英文字母大小写不敏感；密码 8–128 字符。密码使用独立盐的 scrypt，Cookie 会话令牌在数据库中仅存摘要，设定有效期；Cookie 为 HttpOnly、SameSite，生产启用 Secure。登录、注册和绑定限制尝试频率。用户接口不再以“本机地址”代替登录，所有记录和控制检查归属。
 
-`POST /api/device/heartbeat`：
+首版每用户一台设备、每设备一个用户。绑定要求设备刚有有效心跳、码未过期且未使用；数据库事务与唯一约束避免并发抢绑。修改 Wi-Fi 不改变云端归属。当前没有解绑或转让 API。
+
+## 设备认证与注册
+
+每台设备预先登记独立 ID 与随机密钥，所有 `/api/device/` 请求同时携带：
+
+```text
+Authorization: Bearer <该设备密钥>
+X-Device-ID: <该设备编号>
+Content-Type: application/json
+```
+
+设备请求不接受浏览器 Origin／跨站访问，设备密钥不进入网页响应。工厂通过 `npm run provision -- --id ... --url https://...` 向 API 使用的 SQLite 登记设备，并将输出的 `server` JSON 经 USB 写入设备。生产 HTTPS 校验服务器证书，不能通过关闭校验解决时钟或连接失败。
+
+已有 `DEVICE_ID`／`DEVICE_TOKEN` 只用于首次迁移旧联调设备，已登记的凭证不被覆盖。现有 `device_events` 与 `device_status` 数据保留；新增账号、会话、设备归属、绑定码及命令存储。
+
+## 绑定码
+
+设备联网后调用 `POST /api/device/binding`，正文 `{}`，返回：
 
 ```json
+{"code":"12345678","expiresAt":1791859500000}
+```
+
+以上只是格式示例。码为随机 8 位数字，五分钟有效，服务端仅存摘要；重新申请使旧码失效，已绑定设备拒绝申请。杯垫屏幕／本地配网页显示码，用户回到正常互联网后登录网站输入。仅知道 ID、同处一个局域网、或重新设置 Wi-Fi，都不能领取已绑定设备。
+
+## 心跳与空杯命令
+
+`POST /api/device/heartbeat` 保留以下字段：
+
+```ts
 {
-  "weightGrams": 450,
-  "stable": true,
-  "cupPresent": true,
-  "source": "hx711",
-  "calibrated": true,
-  "emptyCupGrams": 120,
-  "pendingCount": 0,
-  "timePendingCount": 0,
-  "clockSynced": true,
-  "error": null,
-  "firmwareVersion": "0.4.4"
+  weightGrams: number | null,
+  stable: boolean,
+  cupPresent: boolean,
+  source: 'hx711',
+  calibrated: boolean,
+  emptyCupGrams: number | null,
+  pendingCount: number,
+  timePendingCount: number,
+  clockSynced: boolean,
+  error: string | null,
+  firmwareVersion: string,
+  commandResult?: { id: string, ok: boolean, message: string }
 }
 ```
 
-所有字段必填。重量与空杯值来自实物，上例只是协议字段示意，不是初始数据。未校准或传感器不可用时 `weightGrams=null`、`stable=false`；空杯未登记为 `null`。异常通过 `error` 报告。
+未标定／传感器不可用时重量为 `null`，不能捏造读数。空杯未登记为 `null`。设备约五秒心跳，超过十五秒未收到有效心跳视为离线。响应：
 
-返回 `{ ok: true, serverTimeMs: number }`。固件约每五秒心跳，服务器超过十五秒未收到即视为离线。本地 HTTP 可以用可信电脑时间建立设备初始时钟，HTTPS 首次握手需先由 SNTP 或手机建立时钟。
+```ts
+{
+  ok: true,
+  serverTimeMs: number,
+  bound: boolean,
+  command: null | {id:string,cmd:'cup',expiresAt:number}
+}
+```
 
-## 设备事件
+服务端只下发当前设备的未过期命令；`bound` 用于清除设备显示的旧绑定码。控制不再由云端直连用户私网地址。
+
+用户在杯垫上放空杯、静置三秒后：
+
+1. 浏览器生成 UUID 并保留，以 `POST /api/control/cup` 提交 `{id}`。
+2. 服务端确认设备归属与新鲜在线状态，创建约三十秒有效的待执行命令；同一编号重试返回原命令，不重复创建。每台同时最多一条待执行命令。
+3. 返回 `{command:{id,status,message,expiresAt}}`；`status` 为 `pending`、`succeeded`、`failed` 或 `expired`。请求已接收不等于空杯设置成功。
+4. 杯垫通过心跳领取命令，检查 ID、有效期和 `cup` 白名单，保存执行占位后执行，持久保存结果并在后续心跳回执。重启或重传不会自动再次获取杯重；执行中断时明确报告未确认结果。
+5. 浏览器调用 `GET /api/control/commands/:id` 查询，只有 `succeeded` 才显示成功。POST 响应丢失仍可用已保存的 ID 查询，不自动重发写操作。
+
+网页和热点均无 `tare`／`calibrate` 入口；工厂通过 USB 标定。空杯命令依赖稳定重量、已有标定及配置落盘成功。设备上报命令失败不会被服务端改写为成功；已过期命令的迟到回执也不当作及时成功。
+
+## 事件上报与统计
 
 `POST /api/device/events`：
 
 ```ts
-{
-  events: [{
-    id: string,             // UUID，重传保持不变
-    kind: 'drink' | 'refill',
-    amountMl: number,
-    beforeGrams: number,
-    afterGrams: number,
-    occurredAt: string      // 带时区的 ISO 8601，固件使用 UTC
-  }]
-}
+{events:[{
+  id:string, // UUID；重传不变
+  kind:'drink'|'refill',
+  amountMl:number,
+  beforeGrams:number,
+  afterGrams:number,
+  occurredAt:string // 带时区 ISO 8601；设备使用 UTC
+}]}
 ```
 
-返回 `{ acknowledged: string[], inserted: number }`。后端按设备编号与 UUID 去重；同编号载荷冲突返回 409 并回滚批次。只有事务落盘后才确认，设备只删除已确认的本地记录。固件每次发送一条，接口最多接收 1000 条。
+响应 `{acknowledged:string[],inserted:number}`。按设备 ID 与事件 UUID 去重，冲突内容返回 409 并回滚批次；事务落盘后才确认。固件只删除已确认本地事件，单批最多 1000 条，现有固件逐条发送。变化至少 5 g，前后重量 0–2000 g，方向和差值必须一致。空杯值不能用于否定换杯前的历史记录。
 
-事件差值与方向必须一致；至少 5 g、取放重量在 0–2000 g 内。空杯值由硬件校准配置决定，后端不再固定 120 g，也不用当前空杯值否定更换杯子前的历史记录。清水 1 g ≈ 1 ml。
+- `GET /api/dashboard?date=YYYY-MM-DD`：返回 `{date,timeZone,totals,week,events,device}`，只查询登录用户绑定的设备；未绑定时 404。
+- `totals`：`{drinkMl,refillMl,drinkCount}`；`week` 为截至所选日期的七天统计。
+- `events` 含原始事件字段与 `revokedAt`。
+- `device` 含最后心跳字段、`id`、`lastSeenAt`、`online`；离线不代表实时重量。
+- `POST /api/events/:id/revoke`：只撤销本人设备的记录，幂等且不删除原始数据；统计排除已撤销记录。
 
-设备未校时的记录先保存在 Flash，不发送不可信日期。同次启动联网后可回填；跨断电未校时记录保留为待人工确认，`pendingCount` 包含它们，`timePendingCount` 是其中时间未确定的条数。
+未校时事件先保存在 Flash。同次启动校时后可以回填，跨断电且从未校时的记录保留待人工确认，不归入恢复联网的当天。
 
-## 网页接口
+## 热点与换网
 
-- `GET /api/health` → `{ ok: true }`
-- `GET /api/dashboard?date=YYYY-MM-DD` → `{ date, timeZone, totals, week, events, device }`
-- `totals` 为 `{ drinkMl, refillMl, drinkCount }`，`week` 为七天 `{ date, drinkMl }`。
-- `events` 包含原事件字段及 `revokedAt: string | null`，包括当天已撤销事件。
-- `device` 包含最后心跳字段、`id`、`lastSeenAt` 和 `online`；未连接时重量／空杯／固件版本为 `null`，不会产生默认重量。
-- `POST /api/events/:id/revoke` → `{ ok: true }`。只影响当前配置设备，幂等撤销，不删除原始事件。
+首次无 Wi-Fi 自动开启热点；正常启动后长按 BOOT 三秒也可进入十分钟配网窗口。每台使用独立、持久保存的 WPA2 密码。普通断线自动重连，不无限期开放热点。配网页自包含，手机连接热点后访问 `http://192.168.4.1`，无需互联网。
 
-所有统计排除已撤销记录，补水单独计数。最后心跳只代表上次设备状态，离线不表示实时读数。
+热点 API 只接受热点接口地址、合法 Host 和同源请求，兼容 IPv4 映射 IPv6：
 
-## 手机热点控制接口
-
-0.4.3 上电开启 WPA2 热点 `Water-XXXXXX`，密码固定为 `12345678`，屏幕显示密码与地址；旧版随机密码不再读取。手机与 Mac 均可连接并使用同一配网页。使用 AP+STA；未配置路由器时 STA 只用于扫描，不主动连接；配网成功后保留热点。
-
-本节接口仅接受目标为热点地址的连接，兼容 IPv4 和双栈服务的 IPv4 映射 IPv6 地址，并校验 Host。静态首页 `GET /`（含查询参数）允许从聊天链接进入；热点 API 继续校验 Origin 和 Sec-Fetch-Site，不向路由器接口开放，也不启用跨域访问。0.4.4 的局域网校准使用下节独立鉴权入口。
-
-| 接口 | 请求／响应 |
+| 接口 | 用途 |
 |---|---|
-| `GET /` | 固件内置配网页，无外部资源依赖；空杯和首次校准默认折叠 |
-| `GET /api/status` | 与串口 status 共用快照；包含 `apReady`、`apSsid`、`apIp`、`wifiConfigured`、`wifiSsid`、`serverConfigured`、`lastEvent` |
-| `GET /api/wifi-scan` | 扫描附近 2.4 GHz 网络，返回 `{networks:[{ssid,rssi}]}`，最多 20 条 AP 记录；隐藏名称不返回，页面按信号排序并合并同名项 |
-| `POST /api/command` | JSON；允许 `cup`、`tare`、`calibrate`（含 grams）、`wifi`（含 ssid/password）、`reboot`；复用串口的校准、稳定性与持久化逻辑，返回 `{ok,message}` 或 `{ok:false,error}` |
-| `POST /api/time` | `{epochMs}`；只在设备尚未校时时设置初始日期，合法范围 2024–2099 年，不覆盖已建立的时钟，返回 `{ok}` |
+| `GET /` | 本地配网与绑定说明 |
+| `GET /api/status` | 网络、称重、队列、绑定码及云端入口；不含路由器密码或设备密钥 |
+| `GET /api/wifi-scan` | 扫描普通 2.4 GHz 网络 |
+| `POST /api/command` | 用户命令白名单：Wi-Fi、重启、空杯 |
+| `POST /api/binding` | 请求设备向云端申请／刷新绑定码 |
+| `POST /api/time` | 手机协助尚未校时的设备建立初始时间 |
 
-`lastEvent` 是本次开机内最近一次识别到的 `{kind,amountMl,beforeGrams,afterGrams,saved}`，未发生为 `null`。`saved=false` 表示尚未成功写入 Flash，不能当作已保存；它不是完整历史列表。待上传队列仍持久化，上传确认后才移除。
+Wi-Fi 候选配置独立保存；重启尝试新网络，连上后才更新主配置，约 45 秒失败则回退旧网络。只改网络凭据，原有身份、服务器配置、标定及事件保留。页面必须区分保存候选配置、连接 Wi-Fi、连接云端；手机仍连热点时不保证能直接跳转线上网站，需明确提示切回正常网络。
 
-所有 POST 需 `Content-Type: application/json`，正文最多 767 字节。HTTP 访问或正文校验失败返回 `text/plain; charset=utf-8`，命令执行结果返回 `application/json; charset=utf-8`；页面同时识别两种错误响应。状态不返回密码或凭证；手机不允许 `server`、`watch`、导出或任意串口命令。重启先确认请求，约一秒后执行，同时暂停新事件识别。有未保存事件时拒绝修改设置和重启。
-
-`wifiSsid` 为本次启动实际使用的 Wi-Fi 名称，尚未配置时为空字符串。页面先确认 `wifi` 保存成功，再请求 `reboot`；只有重启配置已生效且 `wifiConnected=true`，才显示配网成功。同一页面提交后还会核对 `wifiSsid` 与刚提交的名称，避免旧网络连接被当作新配置成功；不要求传感器已校准。
-
-0.4.3 页面支持切换当前输入密码的明文显示；保存成功或更换网络后恢复隐藏。操作确认与错误使用可关闭浮窗；联网状态在页首持续显示，重新访问也会按实时状态突出“已经成功连接 XXX”，断线后撤去成功样式。此调整不改变 Wi-Fi 保存或设备状态协议。
-
-页面首次读取设备成功后扫描一次，之后由“重新扫描”触发；隐藏网络可手动输入。扫描与自动连接请求通过互斥锁协调；已有连接不主动断开，驱动仍在连接时返回 `503` 和中文重试提示。扫描结果读取后释放驱动列表，超时停止扫描并清理；无结果返回空数组，与扫描失败区分。
-
-手机首次打开或检测到设备重启后，若尚未校时会发送手机日期；网络任务回填同次启动的待定事件并写回 Flash，不需要服务器可用。跨断电未校时记录仍保留，不擅自归入当天。
-
-## 电脑网页 Wi-Fi 校准接口
-
-0.4.4 以上固件支持以下接口。网页请求后端 3001，沿用本机 IP、Host、Origin 校验；后端只使用已通过鉴权的有效心跳来源 IPv4，要求私有地址且心跳在 15 秒内。后端重启后需收到新心跳，地址变化随新心跳更新，不接受浏览器指定设备地址或凭证。
-
-| 后端接口 | 请求／响应 |
-|---|---|
-| `GET /api/control/status` | `{device}`，返回清理后的最新设备状态，与 USB 状态字段一致 |
-| `POST /api/control/calibrate` | `{cmd:"tare"}`、`{cmd:"calibrate",grams:500}` 或 `{cmd:"cup"}`；确认成功返回 `{message,device}` |
-
-后端访问杯垫相同路径，携带 `Authorization: Bearer <DEVICE_TOKEN>` 和 `X-Device-ID`。固件校验目标是当前路由器接口地址、编号与凭证，拒绝 Origin、Sec-Fetch-Site 浏览器请求；局域网只开放读状态和三种校准命令，不能修改 Wi-Fi、服务器凭证或重启。热点接口限制保持原样。
-
-固件状态返回原有 status 快照；校准返回 `{ok:true,message,device}`，其中 device 是保存后的快照。固件拒绝时返回 `{ok:false,error}`，后端不报成功。读取与写入串行，5 秒超时，不自动重发写入；确认丢失时说明结果尚未确认，确认成功但状态缺失时明确说明已保存。旧固件返回 403／404 时提示升级至 0.4.4。打开网页设置后每两秒读取，关闭设置后停止轮询；首页仍按原有心跳展示在线状态。
-
-## 本机 USB 配置接口
-
-这些接口沿用网页的本机 IP、Host、Origin 限制，不属于 `/api/device/` 上传接口。兼容 0.3.1 及以上固件；由 Node 后端以 115200 波特率访问电脑 USB 串口，不使用 Web Serial。
-
-| 接口 | 请求／响应 |
-|---|---|
-| `GET /api/setup/options` | 返回 `ports: [{path, manufacturer?}]`、本机私有 IPv4 对应的 `serverUrls`、`deviceId`；不返回凭证 |
-| `POST /api/setup/connect` | `{path}`；只接受当前枚举的端口，读取状态并关闭 watch 推送，握手成功返回 `{connected, path, device}` |
-| `GET /api/setup/status` | 返回 USB 连接状态和最新串口快照；未连接时 `device=null`，不虚构读数 |
-| `POST /api/setup/disconnect` | `{}`；关闭串口，返回 `{ok:true}`，不影响 Wi-Fi 上报 |
-| `POST /api/setup/wifi` | `{ssid, password, serverUrl}`；后端依次发送 wifi、server、reboot，每步检查确认；成功返回 `{message}` 并关闭 USB |
-| `POST /api/setup/calibrate` | `{cmd:"tare"}`、`{cmd:"calibrate", grams:500}` 或 `{cmd:"cup"}`；成功返回 `{message, connected, path, device}` |
-
-联网请求只能选择当前电脑的局域网地址，设备编号和凭证来自服务端环境；浏览器不能提交设备凭证或任意串口命令。Wi-Fi 长度按 UTF-8 字节校验，开放网络允许空密码。校准能否成功由固件的有效采样、稳定性和存储结果决定。
-
-串口一次只接受一个操作；写入过程中轮询或其他操作返回 409，前端会先等待当前轮询结束。超时或断线关闭连接，防止迟到确认被后续命令复用。联网多步写入没有事务回滚，部分成功时明确提示重新配置，不能视为全部完成。USB 状态每两秒读取；“设备在线”仍依赖原有 Wi-Fi 心跳。
-
-## 存储与配置
-
-默认数据库为 `data/coaster-hardware.sqlite`，表为 `device_events`、`device_status`，旧演示库不参与读取。固件校准和联网配置在 `settings` NVS 分区，事件在 `events` NVS 分区，容量上限 4096 条。
-
-串口使用单行 JSON：`wifi`、`server`、`tare`、`calibrate`、`cup`、`status`、`watch`、`pending-time`、`reboot`。命令参数与执行顺序见 [固件说明](../firmware/README.md)。联网配置需重启，校准立即生效；配置失败不得作为成功继续操作。
+工厂串口继续支持 `server`、`tare`、`calibrate`、`status`、`watch`、`pending-time` 等调试操作。生产 Node 进程不挂载 USB 路由，也不再挂载旧的局域网标定代理接口。

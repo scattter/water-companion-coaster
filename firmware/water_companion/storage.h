@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "esp_err.h"
 #include "weighing.h"
+#include "cloud_command.h"
 
 #define EVENT_CAPACITY 4096
 #define CONFIG_VERSION 1
@@ -36,6 +37,12 @@ extern "C" {
 #endif
 
 esp_err_t storage_init(device_config_t *config, uint64_t *boot_id);
+esp_err_t storage_load_command(cloud_command_t *state);
+esp_err_t storage_save_command(const cloud_command_t *state);
+esp_err_t storage_stage_wifi(const char *ssid, const char *password);
+esp_err_t storage_load_wifi(char ssid[33], char password[65]);
+esp_err_t storage_clear_wifi(void);
+esp_err_t storage_ap_password(char password[13]);
 esp_err_t storage_save_config(const device_config_t *config);
 esp_err_t storage_resolve_time(int64_t epoch_offset_ms);
 esp_err_t storage_append(const saved_event_t *event);

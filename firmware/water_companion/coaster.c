@@ -66,7 +66,7 @@ void device_snapshot(device_status_t *status)
     if (!fresh) status->error = "HX711 未就绪，请检查接线和供电";
     else if (unsaved_event) status->error = "事件保存失败或缓存已满，已暂停识别";
     else if (restart_required) status->error = "联网设置已保存，请重启设备";
-    else if (!config.calibrated) status->error = "请先在首次设置中完成重量校准";
+    else if (!config.calibrated) status->error = "出厂标定异常，请联系售后";
     else if (config.empty_cup < 5) status->error = "请先登记空杯重量";
     else if (!isfinite(weight) || weight < -2 || weight > WEIGHING_MAX_GRAMS)
         status->error = "重量超出有效范围，请检查承重和校准";
@@ -95,6 +95,14 @@ cJSON *device_status_json(void)
     cJSON_AddBoolToObject(json, "wifiConfigured", network.wifi_configured);
     cJSON_AddStringToObject(json, "wifiSsid", network.wifi_ssid);
     cJSON_AddBoolToObject(json, "serverConfigured", network.server_configured);
+    cJSON_AddBoolToObject(json, "bound", network.bound);
+    if (network.binding_code[0]) cJSON_AddStringToObject(json, "bindingCode", network.binding_code);
+    else cJSON_AddNullToObject(json, "bindingCode");
+    cJSON_AddNumberToObject(json, "bindingExpiresAt", network.binding_expires_at);
+    cJSON_AddStringToObject(json, "cloudUrl", network.cloud_url);
+    cJSON_AddBoolToObject(json, "wifiTrial", network.wifi_trial);
+    cJSON_AddBoolToObject(json, "wifiRollback", network.wifi_rollback);
+    cJSON_AddBoolToObject(json, "wifiSaveError", network.wifi_error != ESP_OK);
     cJSON_AddBoolToObject(json, "restartRequired", status.restart_required);
     if (status.raw_ready) cJSON_AddNumberToObject(json, "raw", status.raw);
     else cJSON_AddNullToObject(json, "raw");
@@ -291,8 +299,14 @@ cJSON *device_command(const cJSON *json)
             || (strlen(password) != 0 && (strlen(password) < 8 || strlen(password) > 63)))
             error = "SSID 需为 1–32 字节；密码为空或 8–63 字节";
         else {
-            strcpy(next.ssid, ssid);
-            strcpy(next.password, password);
+            esp_err_t saved = storage_stage_wifi(ssid, password);
+            if (saved != ESP_OK) error = "Wi-Fi 配置暂存失败，请重试";
+            else {
+                restart_required = true;
+                message = "Wi-Fi 已暂存，重启后验证连接；失败时保留原网络";
+            }
+            xSemaphoreGive(state_lock);
+            return reply(error, message);
         }
     } else if (!strcmp(name, "server")) {
         const char *url = field(json, "url"), *id = field(json, "id"), *token = field(json, "token");
@@ -323,11 +337,9 @@ cJSON *device_command(const cJSON *json)
             else {
                 next.zero = (int32_t)llround(average);
                 next.zero_set = true;
-                next.calibrated = false;
-                next.counts_per_gram = 0;
-                next.empty_cup = 0;
+                // 工厂修正零点不清除已验证的比例和用户空杯设置。
                 reset_weighing = true;
-                message = "零点已保存；放上已知重量的物品并完成重量校准";
+                message = config.calibrated ? "零点已更新，原重量标定与空杯设置已保留" : "零点已保存；放上已知重量物品完成出厂标定";
             }
         } else if (!strcmp(name, "calibrate")) {
             const cJSON *grams = cJSON_GetObjectItemCaseSensitive(json, "grams");
@@ -347,7 +359,7 @@ cJSON *device_command(const cJSON *json)
                     message = "重量校准已保存；放上日常空杯并更新空杯重量";
                 }
             }
-        } else if (!config.calibrated) error = "请先在首次设置中完成重量校准，以后换杯只需更新空杯";
+        } else if (!config.calibrated) error = "出厂标定异常，请联系售后";
         else {
             double grams = (average - config.zero) / config.counts_per_gram;
             if (grams < 5 || grams > 1995 || spread > fabs(config.counts_per_gram))
@@ -370,6 +382,18 @@ cJSON *device_command(const cJSON *json)
     }
     xSemaphoreGive(state_lock);
     return reply(error, message);
+}
+
+esp_err_t device_save_wifi(const char *ssid, const char *password)
+{
+    xSemaphoreTake(state_lock, portMAX_DELAY);
+    device_config_t next = config;
+    snprintf(next.ssid, sizeof(next.ssid), "%s", ssid);
+    snprintf(next.password, sizeof(next.password), "%s", password);
+    esp_err_t result = storage_save_config(&next);
+    if (result == ESP_OK) config = next;
+    xSemaphoreGive(state_lock);
+    return result;
 }
 
 static void serial_task(void *arg)

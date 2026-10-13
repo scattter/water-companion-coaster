@@ -153,9 +153,10 @@ void display_update(esp_err_t startup_result)
         line(2, password, WHITE);
         line(3, CONTROL_IP, GRAY);
     } else {
-        line(1, network.wifi_error != ESP_OK || network.control_error != ESP_OK ? "热点启动失败" : "热点正在启动", AMBER);
-        line(2, "请查看串口错误", GRAY);
-        line(3, "", GRAY);
+        line(0, "长按BOOT 3秒", GRAY);
+        line(1, "开启配网热点", WHITE);
+        line(2, "配网窗口10分钟", GRAY);
+        line(3, network.bound ? "账号已绑定" : "等待账号绑定", network.bound ? GREEN : AMBER);
     }
     const char *wifi = "Wi-Fi 未配置";
     if (network.wifi_connected) wifi = "Wi-Fi 已连接";
@@ -167,7 +168,7 @@ void display_update(esp_err_t startup_result)
             || network.wifi_reason == WIFI_REASON_HANDSHAKE_TIMEOUT) wifi = "Wi-Fi 检查密码";
     }
     line(4, wifi, network.wifi_connected ? GREEN : GRAY);
-    const char *server = "服务器未配置";
+    const char *server = "出厂设置异常";
     if (network.server_connected) server = "服务器已连接";
     else if (network.server_configured) {
         if (!network.wifi_connected) server = "服务器等待Wi-Fi";
@@ -177,12 +178,16 @@ void display_update(esp_err_t startup_result)
     }
     line(5, server, network.server_connected ? GREEN : GRAY);
     line(6, "称重", GRAY);
-    if (!device.sensor_ready) {
+    if (network.binding_code[0]) {
+        line(6, "账号绑定码", GRAY);
+        line(7, network.binding_code, WHITE);
+        line(8, "网站登录后绑定", AMBER);
+    } else if (!device.sensor_ready) {
         line(7, "传感器未就绪", RED);
         line(8, "检查HX711接线供电", GRAY);
     } else if (!device.calibrated) {
-        line(7, "等待校准", AMBER);
-        line(8, "请在手机首次设置", GRAY);
+        line(7, "出厂标定异常", RED);
+        line(8, "请联系售后", GRAY);
     } else if (!isfinite(device.weight) || device.weight < -2 || device.weight > WEIGHING_MAX_GRAMS) {
         line(7, "重量异常", RED);
         line(8, "检查承重和校准", GRAY);
@@ -207,6 +212,6 @@ void display_update(esp_err_t startup_result)
         if (time_pending) {
             snprintf(queue, sizeof(queue), "待定时间 %u 条", time_pending);
             line(10, queue, AMBER);
-        } else line(10, "手机网页更新空杯", GRAY);
+        } else line(10, "网站设置空杯", GRAY);
     }
 }

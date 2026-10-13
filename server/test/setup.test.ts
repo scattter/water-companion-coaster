@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { test, type TestContext } from 'node:test';
 import { SerialPortMock } from 'serialport';
-import { createApp } from '../src/app.js';
 import { DeviceSetup, type SerialConnection } from '../src/setup.js';
 
 const portPath = '/dev/cu.test-coaster';
@@ -208,33 +207,6 @@ test('打开端口超时释放操作锁，迟到的打开回调关闭旧端口',
   assert.equal(ports[0].isOpen, false);
   assert.equal(ports[1].isOpen, true);
   assert.equal((await setup.status()).connected, true);
-});
-
-test('USB 网页接口沿用本机访问限制，禁止任意命令及前端提交凭证', async (t) => {
-  const { setup, ports } = fixture(t);
-  const app = createApp({ deviceToken, dbPath: ':memory:', setup });
-  t.after(() => app.close());
-  for (const options of [
-    { headers: { origin: 'https://attacker.example' } },
-    { headers: { host: 'attacker.example:3001' } },
-    { headers: { 'sec-fetch-site': 'cross-site' } },
-    { remoteAddress: '192.168.1.20' },
-  ]) {
-    assert.equal((await app.inject({ url: '/api/setup/options', ...options })).statusCode, 403);
-    assert.equal((await app.inject({ method: 'POST', url: '/api/setup/connect', payload: { path: portPath }, ...options })).statusCode, 403);
-  }
-  const choices = await app.inject('/api/setup/options');
-  assert.equal(choices.statusCode, 200);
-  assert.equal(choices.body.includes(deviceToken), false);
-  assert.equal(ports.length, 0);
-  const connected = await app.inject({ method: 'POST', url: '/api/setup/connect', payload: { path: portPath } });
-  assert.equal(connected.statusCode, 200);
-  for (const payload of [{ cmd: 'reboot' }, { cmd: 'calibrate' }, { cmd: 'calibrate', grams: 49 }, { cmd: 'tare', token: deviceToken }]) {
-    assert.equal((await app.inject({ method: 'POST', url: '/api/setup/calibrate', payload })).statusCode, 400);
-  }
-  assert.equal((await app.inject({ method: 'POST', url: '/api/setup/wifi', payload: { ...wifi, token: deviceToken } })).statusCode, 400);
-  assert.equal(ports[0].commands.length, 3);
-  assert.equal((await app.inject({ method: 'POST', url: '/api/setup/calibrate', payload: { cmd: 'tare' } })).statusCode, 200);
 });
 
 test('SerialPort 官方模拟驱动能完整握手，验证实际流接口兼容性', async (t) => {

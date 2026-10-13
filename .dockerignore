@@ -1,0 +1,19 @@
+# 构建上下文只保留镜像需要的内容，避免把凭证、开发数据和历史产物打进镜像。
+.git
+.gitignore
+node_modules
+**/node_modules
+web/dist
+server/dist
+data
+output
+.env
+.env.*
+*.log
+*.tsbuildinfo
+.DS_Store
+.playwright-cli
+firmware
+hardware
+docs
+PLAN.md

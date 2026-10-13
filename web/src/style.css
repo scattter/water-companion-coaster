@@ -1473,3 +1473,29 @@ h1 span {
     transition:none;
   }
 }
+
+.account-name { max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#5d7568; font-size:13px; }
+.logout-button { min-height:40px; white-space:nowrap; }
+.welcome-main { display:flex; justify-content:center; padding:54px 0; }
+.account-panel { width:min(100%,440px); }
+.binding-panel { width:min(100%,650px); }
+.setup-description { margin:14px 0 20px; color:#5d7568; font-size:13px; line-height:1.8; }
+.account-form { display:flex; flex-direction:column; gap:14px; }
+.account-form label { display:flex; flex-direction:column; gap:7px; font-size:13px; color:#4d6356; }
+.account-form input { width:100%; min-height:44px; border:1px solid #d8e1d5; border-radius:8px; padding:10px 12px; background:#fff; }
+.account-form .notice { margin:0; }
+.field-help { margin-top:-8px; color:#7b897e; font-size:11px; }
+.account-switch { min-height:36px; align-self:center; }
+.connection-steps { margin:24px 0; padding-left:23px; color:#43745d; }
+.connection-steps li { padding-left:6px; margin:18px 0; }
+.connection-steps p { margin-top:6px; color:#5d7568; font-size:13px; line-height:1.8; }
+.connection-steps a { color:#43745d; text-decoration:underline; text-underline-offset:3px; }
+.device-details dd { overflow-wrap:anywhere; text-align:right; }
+@media(max-width:560px) {
+  .welcome-main { padding:30px 0; }
+  .account-name { max-width:78px; font-size:11px; }
+  .topbar-right { flex-wrap:wrap; justify-content:flex-end; max-width:190px; gap:2px 10px; }
+  .logout-button { font-size:11px; }
+  .settings-button { font-size:11px; padding:7px 9px; }
+  .account-panel,.binding-panel { padding:24px 20px; }
+}
