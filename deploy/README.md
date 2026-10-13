@@ -47,16 +47,42 @@ curl -sS -H 'Host: 你的域名' http://127.0.0.1:8080/api/auth/session
 
 ## 四、登记设备（出厂流程）
 
-`provision` 必须和运行中的服务使用**同一个数据库**，在 api 容器里执行即可（服务不必停）：
+新设备编号使用 `coaster-000001`–`coaster-999999`。本机录入的完整步骤见 [本机出厂登记与上线](../docs/factory-provisioning.md)。**代码部署和设备登记是两件事，更新镜像不会同步本机 SQLite。**
+
+### 本机录入后导入线上
+
+在本机项目根目录完成逐台登记和 USB 身份写入，再导出登记清单。固件 0.5.1 支持另外发送 `{"cmd":"server","url":"https://你的域名"}` 设置正式地址，不需要在登记时指定域名：
+
+```sh
+npm run provision -- --id coaster-000001
+npm run provision -- --export ./output/factory/batch-001.json --id coaster-000001
+```
+
+批量导出时省略 `--id`，工具只导出符合新编号规则的设备。相对输出路径以项目根目录为基准；已有文件不会被覆盖，下一批使用新文件名。清单只含编号、凭证哈希和创建时间，没有原始 token、用户或绑定关系，不能代替原始密钥备份。
+
+先备份线上库并部署包含新版登记工具的镜像，然后通过 SSH/SCP 将清单传到服务器项目的 `output/factory/` 下。在服务器执行：
 
 ```sh
 cd deploy
-docker compose exec api node server/dist/provision.js --id coaster-0001 --url https://你的域名
+docker compose exec -T api node server/dist/provision.js --import - < ../output/factory/batch-001.json
 ```
 
-输出的 `{"cmd":"server",...}` 通过 Arduino 串口发给对应杯垫。该输出含设备密钥，不要截图或外传；数据库只保存哈希，丢了只能重新登记并重烧固件。
+`--import -` 通过标准输入读取清单，避免把受限权限文件复制进容器后的属主问题。
 
-整机标定（`tare` / `calibrate` / `status`）仍走固件串口，不经过容器。
+导入使用容器已有的 `DB_PATH=/data/coaster.sqlite`，服务不必停，导入后立即生效。相同编号、相同哈希重复导入会跳过，并保留已有归属和历史；编号或凭证冲突会整批回滚。不要用本机 SQLite 覆盖生产库，也不要在两边分别对同一编号生成不同密钥。
+
+### 直接在线上登记
+
+如果尚未在本机登记，也可以直接在 API 容器执行：
+
+```sh
+cd deploy
+docker compose exec api node server/dist/provision.js --id coaster-000001 --url https://你的域名
+```
+
+该方式直接写入运行服务使用的数据库，不需要再导入清单。输出的 `{"cmd":"server",...}` 经 Arduino 串口（115200，新行）发给对应杯垫，收到 `ok: true` 后发送 `{"cmd":"reboot"}`。原始输出含设备密钥，应单独受控保管，不截图或外传；数据库哈希不能还原原 token。仅丢失输出不影响已经配置好的设备，正常更新也无需重写设备身份。
+
+整机标定（`tare` / `calibrate` / `status`）仍走固件串口，不经过容器。线上导入后需真机配网，核对 `serverConnected: true`、`httpStatus: 200` 和未绑定状态再交付。
 
 ## 五、备份与恢复
 

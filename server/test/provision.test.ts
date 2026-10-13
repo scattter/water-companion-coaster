@@ -12,18 +12,23 @@ test('出厂CLI从workspace执行仍使用根目录数据库，凭证独立且�
   const run = (id: string, url = 'https://coaster.example') => spawnSync(process.execPath,
     ['--import', 'tsx', 'src/provision.ts', '--id', id, '--url', url],
     { cwd: join(projectRoot, 'server'), env: { ...process.env, DB_PATH: relative(projectRoot, f.dbPath) }, encoding: 'utf8' });
-  const result = run('coaster-factory');
+  const result = run('coaster-000001');
   assert.equal(result.status, 0, result.stderr);
   const config = JSON.parse(result.stdout);
-  assert.equal(config.cmd, 'server'); assert.equal(config.id, 'coaster-factory'); assert.equal(config.url, 'https://coaster.example');
+  assert.equal(config.cmd, 'server'); assert.equal(config.id, 'coaster-000001'); assert.equal(config.url, 'https://coaster.example');
   assert.match(config.token, /^[a-f0-9]{64}$/);
   const db = openDatabase(f.dbPath);
   assert.equal(db.prepare('SELECT token_hash FROM devices WHERE id = ?').get(config.id)!.token_hash, hash(config.token));
   db.close();
-  const repeated = run('coaster-factory');
+  const repeated = run('coaster-000001');
   assert.equal(repeated.status, 1); assert.equal(repeated.stdout, ''); assert.match(repeated.stderr, /已存在/);
-  for (const url of ['http://example.com', 'http://10.evil.com', 'http://127.0.0.1', 'http://localhost']) assert.equal(run('coaster-invalid-http', url).status, 1);
-  assert.equal(run('coaster-private-http', 'http://192.168.1.10:3001').status, 0);
+  for (const url of ['', 'http://example.com', 'http://10.evil.com', 'http://127.0.0.1', 'http://localhost', 'https://coaster.example/api', 'https://coaster.example?test=1', 'https://user:password@coaster.example']) assert.equal(run('coaster-000002', url).status, 1);
+  for (const [id, url] of [['coaster-000003', 'http://192.168.1.10:3001'], ['coaster-000004', 'http://10.0.0.10:3001'], ['coaster-000005', 'http://172.16.0.10:3001']]) {
+    const local = run(id, url);
+    assert.equal(local.status, 0, local.stderr);
+    assert.equal(JSON.parse(local.stdout).url, url);
+  }
+  assert.equal(run('coaster-000002', 'https://coaster.example').status, 0);
 });
 
 test('旧版仅事件和状态表迁移后保留记录，首次登记再绑定账号可读取', async (t) => {

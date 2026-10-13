@@ -26,7 +26,13 @@ X-Device-ID: <该设备编号>
 Content-Type: application/json
 ```
 
-设备请求不接受浏览器 Origin／跨站访问，设备密钥不进入网页响应。工厂通过 `npm run provision -- --id ... --url https://...` 向 API 使用的 SQLite 登记设备，并将输出的 `server` JSON 经 USB 写入设备。生产 HTTPS 校验服务器证书，不能通过关闭校验解决时钟或连接失败。
+设备请求不接受浏览器 Origin／跨站访问，设备密钥不进入网页响应。新出厂编号为 `coaster-000001`–`coaster-999999`，每台凭证由 32 字节随机值生成，输出为 64 位十六进制文本；SQLite 仅保存原文的 SHA-256 哈希。已有设备的旧格式编号继续可用，不自动改号。
+
+工厂通过 `npm run provision -- --id coaster-000001` 登记到当前 `DB_PATH` 指向的 SQLite，将输出的身份 `server` JSON 经 USB 写入设备。固件 0.5.1 支持分步配置：`{"cmd":"server","id":"coaster-000001","token":"实际设备密钥"}` 只更新身份；`{"cmd":"server","url":"http://192.168.1.10:3001"}` 只更新服务器地址，其他配置保留。`id`、`token` 必须成对，显式空值和错误类型拒绝；至少提供一组配置，保存后重启生效。两组同时提供的旧命令仍兼容。
+
+登记 CLI 可选 `--url https://...` 生成包含地址的完整命令，不需要 `DEVICE_SERVER_URL`；它不会发起远程登记。本机登记可通过 `--export 文件` 导出仅含 `id`、`tokenHash`、`createdAt` 的版本化清单，再用 `--import 文件` 导入线上 API 使用的数据库；只处理新六位编号，既有凭证相同则跳过、冲突则整批回滚，不复制或覆盖用户归属及业务数据。具体操作见 [出厂流程](factory-provisioning.md)。
+
+生产 HTTPS 校验服务器证书，不能通过关闭校验解决时钟或连接失败。
 
 已有 `DEVICE_ID`／`DEVICE_TOKEN` 只用于首次迁移旧联调设备，已登记的凭证不被覆盖。现有 `device_events` 与 `device_status` 数据保留；新增账号、会话、设备归属、绑定码及命令存储。
 

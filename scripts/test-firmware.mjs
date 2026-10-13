@@ -35,7 +35,7 @@ try {
       }
     }
     if (process.exitCode === 0) {
-      const page = spawnSync(process.execPath, ['--test', 'firmware/test/control_page.test.mjs', 'firmware/test/control_http.test.mjs', 'firmware/test/network_scan.test.mjs', 'firmware/test/provisioning.test.mjs'], { cwd: root, stdio: 'inherit' });
+      const page = spawnSync(process.execPath, ['--test', 'firmware/test/control_page.test.mjs', 'firmware/test/control_http.test.mjs', 'firmware/test/network_scan.test.mjs', 'firmware/test/provisioning.test.mjs', 'firmware/test/server_command.test.mjs'], { cwd: root, stdio: 'inherit' });
       if (page.error) throw page.error;
       process.exitCode = page.status ?? 1;
     }

@@ -24,6 +24,7 @@ int main(void)
     cloud_command_t state = {0};
     assert(!cloud_command_receive(&state, "cmd-1", "tare", now + 1000, now, save, execute));
     assert(!cloud_command_receive(&state, "cmd-1", "calibrate", now + 1000, now, save, execute));
+    assert(!cloud_command_receive(&state, "cmd-1", "server", now + 1000, now, save, execute));
     assert(!cloud_command_receive(&state, "cmd-1", "cup", now, now, save, execute));
     assert(!cloud_command_receive(&state, "cmd-1", "cup", now + 1000, 0, save, execute));
     assert(!cloud_command_receive(&state, "../bad", "cup", now + 1000, now, save, execute));

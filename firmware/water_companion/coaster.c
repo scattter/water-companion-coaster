@@ -309,20 +309,29 @@ cJSON *device_command(const cJSON *json)
             return reply(error, message);
         }
     } else if (!strcmp(name, "server")) {
+        bool has_url = cJSON_GetObjectItemCaseSensitive(json, "url") != NULL;
+        bool has_id = cJSON_GetObjectItemCaseSensitive(json, "id") != NULL;
+        bool has_token = cJSON_GetObjectItemCaseSensitive(json, "token") != NULL;
         const char *url = field(json, "url"), *id = field(json, "id"), *token = field(json, "token");
         bool token_valid = token && strlen(token) >= 16 && strlen(token) <= 128;
         if (token_valid) {
             for (const unsigned char *p = (const unsigned char *)token; *p; ++p)
                 if (*p < 33 || *p > 126) token_valid = false;
         }
-        if (!valid_url(url) || !valid_id(id) || !token_valid)
-            error = "需提供 HTTPS 地址或局域网 IPv4 HTTP 地址、设备编号及 16–128 位凭证；地址不带路径";
+        if ((!has_url && !has_id) || has_id != has_token)
+            error = "至少提供 url 或成对的 id/token";
+        else if ((has_url && !valid_url(url)) || (has_id && (!valid_id(id) || !token_valid)))
+            error = "地址需为不带路径的 HTTPS 或局域网 IPv4 HTTP；设备编号及 16–128 位凭证不可为空";
         else {
-            strcpy(next.server_url, url);
-            size_t length = strlen(next.server_url);
-            if (next.server_url[length - 1] == '/') next.server_url[length - 1] = 0;
-            strcpy(next.device_id, id);
-            strcpy(next.token, token);
+            if (has_url) {
+                strcpy(next.server_url, url);
+                size_t length = strlen(next.server_url);
+                if (next.server_url[length - 1] == '/') next.server_url[length - 1] = 0;
+            }
+            if (has_id) {
+                strcpy(next.device_id, id);
+                strcpy(next.token, token);
+            }
             unsigned pending, time_pending;
             storage_counts(&pending, &time_pending);
             if (pending && strcmp(next.device_id, config.device_id))

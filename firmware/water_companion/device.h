@@ -4,7 +4,7 @@
 #include "esp_err.h"
 #include "cJSON.h"
 
-#define FIRMWARE_VERSION "0.5.0"
+#define FIRMWARE_VERSION "0.5.1"
 
 #ifdef __cplusplus
 extern "C" {
