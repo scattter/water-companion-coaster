@@ -1,20 +1,21 @@
 # 云端设备与用户协议
 
-版本：2026-10-13。当前产品链路为 ESP32-S3 主动连接服务端、浏览器同源访问用户 API。开发用受控局域网 HTTP，生产使用 HTTPS 与证书校验。设备编号是公开标识，不能作为登录或绑定凭据。
+版本：2026-10-14。当前产品链路为 HTTPS 网页通过 BLE 下发签名配网授权、ESP32-S3 主动连接服务端并自动绑定。蓝牙 UUID、分片、签名及管理员 API 见 [BLE 配网 v1](ble-provisioning-v1.md)。设备编号是公开标识，不能作为登录或绑定凭据。旧 USB 私网 HTTP 仅保留受控开发用途。
 
 ## 账号与归属
 
 | 接口 | 请求 | 响应 |
 |---|---|---|
-| `GET /api/auth/session` | 无 | `{user:null或{id,username},deviceId:null或string}` |
+| `GET /api/auth/session` | 无 | `{user:null或{id,username,role},deviceId:null或string,bindingId:null或string}` |
 | `POST /api/auth/register` | `{username,password}` | 会话及设备归属，并设置 Cookie |
 | `POST /api/auth/login` | `{username,password}` | 同上 |
 | `POST /api/auth/logout` | `{}` | `{ok:true}`，撤销会话 |
-| `POST /api/devices/bind` | `{code:"8位数字"}` | `{deviceId}` |
+| `POST /api/devices/bind` | `{code:"8位数字"}` | 兼容入口，返回 `{deviceId,bindingId}` |
+| `POST /api/devices/unbind` | `{}` | `{ok:true}`，仅当前主人 |
 
 账号名 3–32 位中文、字母、数字或下划线，英文字母大小写不敏感；密码 8–128 字符。密码使用独立盐的 scrypt，Cookie 会话令牌在数据库中仅存摘要，设定有效期；Cookie 为 HttpOnly、SameSite，生产启用 Secure。登录、注册和绑定限制尝试频率。用户接口不再以“本机地址”代替登录，所有记录和控制检查归属。
 
-首版每用户一台设备、每设备一个用户。绑定要求设备刚有有效心跳、码未过期且未使用；数据库事务与唯一约束避免并发抢绑。修改 Wi-Fi 不改变云端归属。当前没有解绑或转让 API。
+首版每用户同时一台设备、每设备一个用户。新流程由已登录账号申请签名授权，设备联网后兑换一次性票据；事务中再次检查归属。兼容八位码要求设备刚有有效心跳、码未过期且未使用。修改 Wi-Fi 不改变归属；同账号重配沿用绑定批次。只有原账号可以解绑；解绑撤销旧票据、绑定码及待执行命令，清除当前状态，但保留原用户的历史。转绑要求固件具备绑定批次能力，避免旧协议补传误归属。
 
 ## 设备认证与注册
 
@@ -28,9 +29,11 @@ Content-Type: application/json
 
 设备请求不接受浏览器 Origin／跨站访问，设备密钥不进入网页响应。新出厂编号为 `coaster-000001`–`coaster-999999`，每台凭证由 32 字节随机值生成，输出为 64 位十六进制文本；SQLite 仅保存原文的 SHA-256 哈希。已有设备的旧格式编号继续可用，不自动改号。
 
-工厂通过 `npm run provision -- --id coaster-000001` 登记到当前 `DB_PATH` 指向的 SQLite，将输出的身份 `server` JSON 经 USB 写入设备。固件 0.5.1 支持分步配置：`{"cmd":"server","id":"coaster-000001","token":"实际设备密钥"}` 只更新身份；`{"cmd":"server","url":"http://192.168.1.10:3001"}` 只更新服务器地址，其他配置保留。`id`、`token` 必须成对，显式空值和错误类型拒绝；至少提供一组配置，保存后重启生效。两组同时提供的旧命令仍兼容。
+工厂通过 `npm run provision -- --id coaster-000001` 登记到当前 `DB_PATH` 指向的 SQLite，将输出的身份 `server` JSON 经 USB 写入设备。0.6.0 新机还需写入 `{"cmd":"trust","deploymentId":"UUID","publicKey":"04开头130位hex"}`，以验证网页下发的签名配置；`factory-info` 只读返回身份、凭证指纹、地址和公开信任信息，不返回原始密钥。
 
-登记 CLI 可选 `--url https://...` 生成包含地址的完整命令，不需要 `DEVICE_SERVER_URL`；它不会发起远程登记。本机登记可通过 `--export 文件` 导出仅含 `id`、`tokenHash`、`createdAt` 的版本化清单，再用 `--import 文件` 导入线上 API 使用的数据库；只处理新六位编号，既有凭证相同则跳过、冲突则整批回滚，不复制或覆盖用户归属及业务数据。具体操作见 [出厂流程](factory-provisioning.md)。
+USB 分步配置仍保留：`{"cmd":"server","id":"coaster-000001","token":"实际设备密钥"}` 只更新身份；`{"cmd":"server","url":"http://192.168.1.10:3001"}` 只更新服务器地址，其他配置保留。`id`、`token` 必须成对，显式空值和错误类型拒绝；保存后重启生效。这是受控工厂/调试入口，不通过 BLE 开放。
+
+登记 CLI 可选 `--url https://...` 生成包含地址的完整命令，不会发起远程登记。本机可通过 `--export 文件` 导出仅含 `id`、`tokenHash`、`createdAt` 的版本化清单，再在管理员网页导入；旧 `--import` CLI 同样保留。只处理新六位编号，既有凭证相同则跳过、冲突则整批回滚，不复制或覆盖用户归属及业务数据。具体操作见 [出厂流程](factory-provisioning.md)。
 
 生产 HTTPS 校验服务器证书，不能通过关闭校验解决时钟或连接失败。
 
@@ -63,7 +66,9 @@ Content-Type: application/json
   clockSynced: boolean,
   error: string | null,
   firmwareVersion: string,
-  commandResult?: { id: string, ok: boolean, message: string }
+  provisioningVersion?: 1,
+  bindingId?: string | null,
+  commandResult?: { id: string, ok: boolean, message: string, bindingId?: string | null }
 }
 ```
 
@@ -74,11 +79,12 @@ Content-Type: application/json
   ok: true,
   serverTimeMs: number,
   bound: boolean,
-  command: null | {id:string,cmd:'cup',expiresAt:number}
+  bindingId: string | null,
+  command: null | {id:string,cmd:'cup',expiresAt:number,bindingId:string}
 }
 ```
 
-服务端只下发当前设备的未过期命令；`bound` 用于清除设备显示的旧绑定码。控制不再由云端直连用户私网地址。
+服务端只下发当前绑定批次的未过期命令，迟到的旧批次回执不能影响新归属。设备同步绑定批次后持久保存，新用户批次清除旧空杯基准、保留工厂标定；同账号重新配网不清除。`bound` 用于清除旧绑定码。控制不由云端直连用户私网地址。
 
 用户在杯垫上放空杯、静置三秒后：
 
@@ -101,17 +107,20 @@ Content-Type: application/json
   amountMl:number,
   beforeGrams:number,
   afterGrams:number,
-  occurredAt:string // 带时区 ISO 8601；设备使用 UTC
+  occurredAt:string, // 带时区 ISO 8601；设备使用 UTC
+  bindingId?:string|null // 事件生成时冻结的批次，不用补传时的当前批次替代
 }]}
 ```
 
 响应 `{acknowledged:string[],inserted:number}`。按设备 ID 与事件 UUID 去重，冲突内容返回 409 并回滚批次；事务落盘后才确认。固件只删除已确认本地事件，单批最多 1000 条，现有固件逐条发送。变化至少 5 g，前后重量 0–2000 g，方向和差值必须一致。空杯值不能用于否定换杯前的历史记录。
 
-- `GET /api/dashboard?date=YYYY-MM-DD`：返回 `{date,timeZone,totals,week,events,device}`，只查询登录用户绑定的设备；未绑定时 404。
+- `GET /api/dashboard?date=YYYY-MM-DD`：返回 `{date,timeZone,totals,week,events,device}`，按登录用户拥有过的绑定批次查询；解绑后仍可读取原历史。
 - `totals`：`{drinkMl,refillMl,drinkCount}`；`week` 为截至所选日期的七天统计。
 - `events` 含原始事件字段与 `revokedAt`。
-- `device` 含最后心跳字段、`id`、`lastSeenAt`、`online`；离线不代表实时重量。
-- `POST /api/events/:id/revoke`：只撤销本人设备的记录，幂等且不删除原始数据；统计排除已撤销记录。
+- `device` 为当前设备最新状态；无当前设备时为 `null`，历史仍保留。离线不代表实时重量。
+- `POST /api/events/:id/revoke`：只撤销属于本人批次的记录，幂等且不删除原始数据；统计排除已撤销记录。
+
+缺省 `bindingId` 的旧协议事件只允许映射到旧兼容批次，不会自动移到下一位用户。新固件读取旧 Flash 事件时显式发送 `bindingId:null`，作为无明确归属数据保存隔离，不能绑定到当前主人。若相同 UUID 的事件已保存且业务内容一致，缺省/null 批次重传保留云端原归属并确认，避免升级后丢失 ACK 堵塞队列；不同非空批次或业务内容冲突仍拒绝，不能覆盖原记录。
 
 未校时事件先保存在 Flash。同次启动校时后可以回填，跨断电且从未校时的记录保留待人工确认，不归入恢复联网的当天。
 

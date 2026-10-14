@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ApiError, errorMessage, request } from './api';
+import { commandStorageKey, type Session } from './session';
 
 const props = defineProps<{
   online: boolean;
   deviceId: string;
   userId: string;
+  bindingId: string | null;
   calibrated?: boolean;
   emptyCupGrams?: number | null;
   weightGrams?: number | null;
@@ -17,6 +19,7 @@ interface Command {
   status: 'pending' | 'succeeded' | 'failed' | 'expired';
   message: string | null;
   expiresAt: number;
+  bindingId: string | null;
 }
 const command = ref<Command | null>(null);
 const busy = ref(false);
@@ -24,7 +27,7 @@ const error = ref('');
 const feedback = ref('');
 const uncertain = ref(false);
 const checkingStopped = ref(false);
-const storageKey = `water-cup-command:${props.userId}:${props.deviceId}`;
+const storageKey = commandStorageKey(props.userId, props.deviceId, props.bindingId);
 let timer: ReturnType<typeof setInterval> | undefined;
 let disposed = false;
 const pending = computed(() => command.value?.status === 'pending');
@@ -37,6 +40,11 @@ function rememberCommand(value: Command) {
 }
 
 function applyCommand(value: Command) {
+  if (value.id !== command.value?.id || (value.bindingId ?? null) !== props.bindingId) {
+    checkingStopped.value = true;
+    error.value = '命令不属于当前设备绑定，请刷新账号状态后再操作。';
+    return;
+  }
   command.value = value;
   uncertain.value = false;
   error.value = '';
@@ -55,7 +63,7 @@ function applyCommand(value: Command) {
 }
 
 function accessError(cause: unknown) {
-  if (!(cause instanceof ApiError) || ![401, 403].includes(cause.status)) return false;
+  if (!(cause instanceof ApiError) || cause.status !== 401) return false;
   emit('accessError', cause, props.userId, props.deviceId);
   return true;
 }
@@ -90,6 +98,11 @@ async function submitCommand() {
   feedback.value = '';
   error.value = '';
   try {
+    const session = await request<Session>('/api/auth/session');
+    if (disposed) return;
+    if (session.user?.id !== props.userId || session.deviceId !== props.deviceId || session.bindingId !== props.bindingId) {
+      throw new ApiError('账号或绑定批次已变化，请刷新账号状态。', 403);
+    }
     const result = await request<{ command: Command }>('/api/control/cup', { id });
     if (!disposed) applyCommand(result.command);
   } catch (cause) {
@@ -109,7 +122,7 @@ async function submitCommand() {
 async function setCup() {
   if (!canSetCup.value) return;
   try {
-    rememberCommand({ id: crypto.randomUUID(), status: 'pending', message: null, expiresAt: Date.now() + 120000 });
+    rememberCommand({ id: crypto.randomUUID(), bindingId: props.bindingId, status: 'pending', message: null, expiresAt: Date.now() + 120000 });
   } catch {
     error.value = '浏览器无法保存操作状态。请允许此网站使用会话存储后重试，当前未发送设置请求。';
     return;
@@ -122,7 +135,7 @@ onMounted(() => {
     const stored = sessionStorage.getItem(storageKey);
     if (stored) {
       const value = JSON.parse(stored) as Command;
-      if (typeof value.id === 'string' && /^[0-9a-f-]{36}$/i.test(value.id) && value.status === 'pending' && Number.isFinite(value.expiresAt)) {
+      if (typeof value.id === 'string' && /^[0-9a-f-]{36}$/i.test(value.id) && value.status === 'pending' && value.bindingId === props.bindingId && Number.isFinite(value.expiresAt)) {
         command.value = value;
         uncertain.value = true;
       }
@@ -162,7 +175,7 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer); });
       <div v-if="feedback" class="notice success" role="status">{{ feedback }}</div>
     </section>
     <details class="network-settings">
-      <summary><strong>更换 Wi-Fi</strong></summary>
+      <summary><strong>兼容方式：通过热点更换 Wi-Fi</strong></summary>
       <ol class="setup-tip">
         <li>杯垫启动后，长按 BOOT 配网键 3 秒，热点开放 10 分钟。</li>
         <li>用手机连接屏幕显示的热点，密码也在屏幕上。</li>
@@ -170,6 +183,7 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer); });
         <li>等待杯垫屏幕显示 Wi-Fi 与云服务均已连接，再切回手机正常网络。</li>
       </ol>
       <a class="hotspot-link" href="http://192.168.4.1" target="_blank" rel="noopener noreferrer">连接杯垫热点后，打开配网页 ↗</a>
+      <p class="setup-tip">热点页不能填写服务器地址或修改设备信任根。服务器尚未配置的旧固件需联系管理员通过 USB 设置。若浏览器拦截本地 HTTP 链接，请连接杯垫热点后在地址栏手动输入 192.168.4.1。</p>
       <p class="setup-tip">只更新 Wi-Fi，账号绑定、饮水记录和空杯设置都会保留，不需要重新绑定。新网络连接失败时，杯垫会尝试恢复原 Wi-Fi，你也可以重新进入配网。</p>
     </details>
   </section>

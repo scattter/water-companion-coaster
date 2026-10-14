@@ -1,6 +1,7 @@
 #pragma once
 #include "storage.h"
 #include "esp_wifi.h"
+#include "cJSON.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,6 +34,9 @@ typedef struct {
 #define CONTROL_IP "192.168.4.1"
 
 
+esp_err_t network_provision_request(const char *origin, const char *path, const cJSON *body, cJSON **reply, int *http_status);
+esp_err_t network_use_wifi(const char *ssid, const char *password);
+void network_apply_config(const device_config_t *config);
 void network_start(const device_config_t *config);
 void network_provision(void);
 esp_err_t network_request_binding(void);

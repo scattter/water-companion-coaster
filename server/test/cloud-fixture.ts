@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { TestContext } from 'node:test';
 import { createApp, type AppOptions } from '../src/app.js';
-import { openDatabase, projectRoot, provisionDevice } from '../src/db.js';
+import { openDatabase, provisionDevice } from '../src/db.js';
 
 export const heartbeat = {
   weightGrams: 450, stable: true, cupPresent: true, source: 'hx711', calibrated: true,
@@ -18,9 +19,7 @@ export const event = (overrides: Record<string, unknown> = {}) => ({
 export const headers = (id = 'coaster-01') => ({ authorization: `Bearer test-token-${id}`, 'x-device-id': id });
 export function cookieOf(response: { headers: Record<string, unknown> }) { return String(response.headers['set-cookie']).split(';')[0]; }
 export async function fixture(t: TestContext, options: Partial<AppOptions> = {}) {
-  const root = join(projectRoot, 'data/test-output');
-  await mkdir(root, { recursive: true });
-  const directory = await mkdtemp(join(root, 'cloud-'));
+  const directory = await mkdtemp(join(tmpdir(), 'coaster-cloud-'));
   const dbPath = join(directory, 'coaster.sqlite');
   const db = openDatabase(dbPath);
   for (const id of ['coaster-01', 'coaster-02']) provisionDevice(db, id, `test-token-${id}`);
@@ -48,6 +47,14 @@ export async function fixture(t: TestContext, options: Partial<AppOptions> = {})
     assert.equal(response.statusCode, 200, response.body);
     return binding;
   };
-  const upload = (events: ReturnType<typeof event>[], id = 'coaster-01') => app.inject({ method: 'POST', url: '/api/device/events', headers: headers(id), payload: { events } });
+  const upload = (events: ReturnType<typeof event>[], id = 'coaster-01') => {
+    // Ordinary dashboard tests generate records for the current batch. Tests of
+    // the legacy wire format use raw inject to intentionally omit bindingId.
+    const db = openDatabase(dbPath);
+    const bindingId = db.prepare('SELECT binding_id FROM devices WHERE id = ?').get(id)!.binding_id;
+    db.close();
+    const payload = { events: events.map((item) => Object.hasOwn(item, 'bindingId') ? item : { ...item, bindingId }) };
+    return app.inject({ method: 'POST', url: '/api/device/events', headers: headers(id), payload });
+  };
   return { app, dbPath, now, web, report, register, code, bind, upload, advance: (milliseconds: number) => { timestamp += milliseconds; } };
 }

@@ -3,8 +3,9 @@
 #include <stdint.h>
 #include "esp_err.h"
 #include "cJSON.h"
+#include "storage.h"
 
-#define FIRMWARE_VERSION "0.5.1"
+#define FIRMWARE_VERSION "0.6.0"
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,6 +25,9 @@ typedef struct {
     const char *error;
 } device_status_t;
 
+void device_config_snapshot(device_config_t *config, binding_state_t *binding);
+esp_err_t device_change_binding(const char *binding_id);
+esp_err_t device_commit_provision(const provision_record_t *record, bool rollback);
 void device_snapshot(device_status_t *status);
 cJSON *device_status_json(void);
 cJSON *device_command(const cJSON *json);

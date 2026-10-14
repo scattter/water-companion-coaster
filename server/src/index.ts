@@ -18,6 +18,8 @@ const app = createApp({
   dbPath: process.env.DB_PATH,
   timeZone: process.env.APP_TIMEZONE,
   appOrigin: origin?.origin,
+  signingKeyPath: process.env.PROVISION_SIGNING_KEY_FILE || undefined,
+  deploymentId: process.env.PROVISION_DEPLOYMENT_ID || undefined,
   allowedOrigins: production ? [origin!.origin] : [...new Set([
     ...(origin ? [origin.origin] : []),
     ...['localhost', '127.0.0.1', '[::1]'].flatMap((host) => [port, 5173].map((value) => `http://${host}:${value}`)),

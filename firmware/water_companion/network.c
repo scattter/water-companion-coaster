@@ -2,6 +2,7 @@
 #include "device.h"
 #include "console.h"
 #include "control.h"
+#include "provisioning.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -97,18 +98,18 @@ static esp_err_t on_http(esp_http_client_event_t *event)
     return ESP_OK;
 }
 
-static esp_err_t post(const char *path, const cJSON *body, cJSON **reply, int *http_status)
+static esp_err_t request(const char *origin, const char *path, const cJSON *body, cJSON **reply, int *http_status)
 {
     *reply = NULL;
     if (http_status) *http_status = 0;
-    char url[256], authorization[144];
-    snprintf(url, sizeof(url), "%s%s", settings.server_url, path);
+    char url[320], authorization[144];
+    snprintf(url, sizeof(url), "%s%s", origin, path);
     snprintf(authorization, sizeof(authorization), "Bearer %s", settings.token);
-    char *json = cJSON_PrintUnformatted(body);
-    if (!json) return ESP_ERR_NO_MEM;
+    char *json = body ? cJSON_PrintUnformatted(body) : NULL;
+    if (body && !json) return ESP_ERR_NO_MEM;
     response_buffer_t response = {0};
     esp_http_client_config_t config = {
-        .url = url, .method = HTTP_METHOD_POST, .timeout_ms = 2000,
+        .url = url, .method = body ? HTTP_METHOD_POST : HTTP_METHOD_GET, .timeout_ms = 2000,
         .event_handler = on_http, .user_data = &response,
         .disable_auto_redirect = true, .crt_bundle_attach = esp_crt_bundle_attach,
     };
@@ -117,7 +118,7 @@ static esp_err_t post(const char *path, const cJSON *body, cJSON **reply, int *h
     esp_err_t result = esp_http_client_set_header(client, "Content-Type", "application/json");
     if (result == ESP_OK) result = esp_http_client_set_header(client, "Authorization", authorization);
     if (result == ESP_OK) result = esp_http_client_set_header(client, "X-Device-ID", settings.device_id);
-    if (result == ESP_OK) result = esp_http_client_set_post_field(client, json, strlen(json));
+    if (result == ESP_OK && json) result = esp_http_client_set_post_field(client, json, strlen(json));
     if (result == ESP_OK) result = esp_http_client_perform(client);
     int status = esp_http_client_get_status_code(client);
     if (http_status) *http_status = status;
@@ -134,6 +135,56 @@ static esp_err_t post(const char *path, const cJSON *body, cJSON **reply, int *h
     cJSON_Delete(*reply);
     *reply = NULL;
     return ESP_ERR_INVALID_RESPONSE;
+}
+
+static esp_err_t post(const char *path, const cJSON *body, cJSON **reply, int *http_status)
+{
+    return request(settings.server_url, path, body, reply, http_status);
+}
+
+esp_err_t network_provision_request(const char *origin, const char *path, const cJSON *body, cJSON **reply, int *http_status)
+{
+    // This API is called exclusively by the accepted-operation state machine.
+    if (!provisioning_busy() || !provision_origin(origin) || !network_has_time()) return ESP_ERR_INVALID_STATE;
+    return request(origin, path, body, reply, http_status);
+}
+
+esp_err_t network_use_wifi(const char *ssid, const char *password)
+{
+    wifi_config_t wifi = {0};
+    memcpy(wifi.sta.ssid, ssid, strlen(ssid));
+    memcpy(wifi.sta.password, password, strlen(password));
+    wifi.sta.pmf_cfg.capable = true;
+    xSemaphoreTake(wifi_lock, portMAX_DELAY);
+    esp_wifi_disconnect();
+    xEventGroupClearBits(wifi_state, CONNECTED);
+    esp_err_t result = esp_wifi_set_config(WIFI_IF_STA, &wifi);
+    if (result == ESP_OK && ssid[0]) result = esp_wifi_connect();
+    xSemaphoreGive(wifi_lock);
+    portENTER_CRITICAL(&status_lock);
+    ++connection_generation;
+    network_status.wifi_connected = false;
+    network_status.server_connected = false;
+    network_status.ip[0] = 0;
+    network_status.binding_code[0] = 0;
+    portEXIT_CRITICAL(&status_lock);
+    return result;
+}
+
+void network_apply_config(const device_config_t *config)
+{
+    settings = *config;
+    portENTER_CRITICAL(&status_lock);
+    strcpy(network_status.cloud_url, settings.server_url);
+    strcpy(network_status.wifi_ssid, settings.ssid);
+    network_status.wifi_configured = settings.ssid[0] != 0;
+    network_status.server_configured = settings.server_url[0] && settings.token[0];
+    network_status.server_connected = false;
+    network_status.binding_code[0] = 0;
+    network_status.binding_expires_at = 0;
+    binding_requested = false;
+    binding_attempted = false;
+    portEXIT_CRITICAL(&status_lock);
 }
 
 void network_provision(void)
@@ -203,7 +254,11 @@ static void receive_command(const cJSON *reply)
     if (!cJSON_IsObject(command) || !cJSON_IsString(id) || !cJSON_IsString(name)
         || !cJSON_IsNumber(expires) || !isfinite(expires->valuedouble)
         || expires->valuedouble < 1704067200000.0 || expires->valuedouble >= 4102444800000.0) return;
-    cloud_command_receive(&cloud_command, id->valuestring, name->valuestring,
+    const cJSON *owner = cJSON_GetObjectItemCaseSensitive(command, "bindingId");
+    binding_state_t binding;
+    device_config_snapshot(NULL, &binding);
+    if (!cJSON_IsString(owner) || !provision_uuid(owner->valuestring) || provisioning_busy()) return;
+    cloud_command_receive_bound(&cloud_command, owner->valuestring, binding.binding_id, id->valuestring, name->valuestring,
         (int64_t)expires->valuedouble, network_epoch_ms(), storage_save_command, execute_cup);
 }
 
@@ -234,12 +289,19 @@ static void heartbeat(void)
     if (status.error) cJSON_AddStringToObject(body, "error", status.error);
     else cJSON_AddNullToObject(body, "error");
     cJSON_AddStringToObject(body, "firmwareVersion", FIRMWARE_VERSION);
+    binding_state_t binding;
+    device_config_snapshot(NULL, &binding);
+    cJSON_AddNumberToObject(body, "provisioningVersion", 1);
+    if (binding.binding_id[0]) cJSON_AddStringToObject(body, "bindingId", binding.binding_id);
+    else cJSON_AddNullToObject(body, "bindingId");
     bool sent_result = cloud_command.pending;
     if (sent_result) {
         cJSON *result = cJSON_AddObjectToObject(body, "commandResult");
         cJSON_AddStringToObject(result, "id", cloud_command.id);
         cJSON_AddBoolToObject(result, "ok", cloud_command.ok);
         cJSON_AddStringToObject(result, "message", cloud_command.message);
+        if (cloud_command.binding_id[0]) cJSON_AddStringToObject(result, "bindingId", cloud_command.binding_id);
+        else cJSON_AddNullToObject(result, "bindingId");
     }
     int http_status;
     esp_err_t result = post("/api/device/heartbeat", body, &reply, &http_status);
@@ -275,7 +337,11 @@ static void heartbeat(void)
             portEXIT_CRITICAL(&status_lock);
         }
         if (sent_result) cloud_command_ack(&cloud_command, storage_save_command);
-        receive_command(reply);
+        const cJSON *owner = cJSON_GetObjectItemCaseSensitive(reply, "bindingId");
+        bool owner_valid = cJSON_IsNull(owner) || (cJSON_IsString(owner) && provision_uuid(owner->valuestring));
+        // No commands or ownership writes from an in-flight response after BLE starts.
+        if (owner_valid && !provisioning_busy()
+            && device_change_binding(cJSON_IsString(owner) ? owner->valuestring : "") == ESP_OK) receive_command(reply);
     } else ESP_LOGW(TAG, "心跳未确认：%s", esp_err_to_name(result));
     cJSON_Delete(reply);
     cJSON_Delete(body);
@@ -303,6 +369,8 @@ static esp_err_t upload_one(void)
     cJSON_AddItemToObject(body, "events", entries);
     cJSON_AddItemToArray(entries, item);
     cJSON_AddStringToObject(item, "id", event.id);
+    if (event.binding_id[0]) cJSON_AddStringToObject(item, "bindingId", event.binding_id);
+    else cJSON_AddNullToObject(item, "bindingId");
     cJSON_AddStringToObject(item, "kind", event.change.drink ? "drink" : "refill");
     cJSON_AddNumberToObject(item, "amountMl", roundf(event.change.amount * 10) / 10);
     cJSON_AddNumberToObject(item, "beforeGrams", roundf(event.change.before * 10) / 10);
@@ -459,6 +527,8 @@ static void network_task(void *arg)
     unsigned backoff_ms = 1000;
     for (;;) {
         int64_t now = esp_timer_get_time() / 1000;
+        provisioning_poll(now, (xEventGroupGetBits(wifi_state) & CONNECTED) != 0);
+        if (provisioning_busy()) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
         update_provisioning(now);
         if (network_has_time()) storage_resolve_time(network_epoch_ms() - now);
         if (settings.ssid[0] && !(xEventGroupGetBits(wifi_state) & CONNECTED)) {
@@ -478,8 +548,8 @@ static void network_task(void *arg)
             bool get_binding = binding_requested;
             binding_requested = false;
             portEXIT_CRITICAL(&status_lock);
-            if (get_binding) request_binding();
-            if (now >= next_upload) {
+            if (get_binding && !provisioning_busy()) request_binding();
+            if (now >= next_upload && !provisioning_busy()) {
                 esp_err_t result = upload_one();
                 if (result == ESP_OK) backoff_ms = 1000;
                 else {
@@ -553,7 +623,8 @@ static esp_err_t start_wifi(void)
     network_status.control_error = control_result;
     portEXIT_CRITICAL(&status_lock);
     if (control_result != ESP_OK) ESP_LOGE(TAG, "手机控制页启动失败：%s", esp_err_to_name(control_result));
-    if (settings.ssid[0]) {
+    {
+        // Start even on an unconfigured device: BLE may join Wi-Fi later without reboot.
         esp_sntp_config_t time_config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
         esp_err_t time_result = esp_netif_sntp_init(&time_config);
         if (time_result != ESP_OK) ESP_LOGW(TAG, "校时服务初始化失败：%s", esp_err_to_name(time_result));
@@ -574,7 +645,7 @@ void network_start(const device_config_t *config)
     strcpy(previous_ssid, settings.ssid);
     strcpy(previous_password, settings.password);
     char candidate_ssid[33], candidate_password[65];
-    result = storage_load_wifi(candidate_ssid, candidate_password);
+    result = provisioning_busy() ? ESP_ERR_NVS_NOT_FOUND : storage_load_wifi(candidate_ssid, candidate_password);
     if (result == ESP_OK) {
         strcpy(settings.ssid, candidate_ssid);
         strcpy(settings.password, candidate_password);

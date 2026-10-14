@@ -33,7 +33,11 @@ static void key_for(uint32_t sequence, char key[16])
 
 static bool valid_event(const saved_event_t *event)
 {
-    if (event->version != EVENT_VERSION || event->id[36] != '\0' || strlen(event->id) != 36
+    if ((event->version != EVENT_VERSION && event->version != 1)
+        || !memchr(event->binding_id, 0, sizeof(event->binding_id))
+        || (event->binding_id[0] && !provision_uuid(event->binding_id))
+        || (event->version == 1 && event->binding_id[0])
+        || event->id[36] != '\0' || strlen(event->id) != 36
         || !event->boot_id || event->uptime_ms < 0 || event->epoch_ms < 0)
         return false;
     for (unsigned i = 0; i < 36; ++i) {
@@ -54,17 +58,41 @@ static esp_err_t read_event(uint32_t sequence, saved_event_t *event)
 {
     char key[16];
     key_for(sequence, key);
-    size_t size = sizeof(*event);
-    esp_err_t result = nvs_get_blob(events, key, event, &size);
+    size_t size = 0;
+    esp_err_t result = nvs_get_blob(events, key, NULL, &size);
     if (result != ESP_OK) return result;
-    return size == sizeof(*event) && valid_event(event) ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
+    memset(event, 0, sizeof(*event));
+    if (size == sizeof(legacy_event_t)) {
+        legacy_event_t old;
+        result = nvs_get_blob(events, key, &old, &size);
+        if (result != ESP_OK) return result;
+        if (old.version != 1) return ESP_ERR_INVALID_RESPONSE;
+        event->version = old.version;
+        memcpy(event->id, old.id, sizeof(event->id));
+        event->boot_id = old.boot_id;
+        event->uptime_ms = old.uptime_ms;
+        event->epoch_ms = old.epoch_ms;
+        event->change = old.change;
+        // Never infer an owner for an old event from today's binding.
+    } else if (size == sizeof(*event)) {
+        result = nvs_get_blob(events, key, event, &size);
+        if (result != ESP_OK) return result;
+        if (event->version != EVENT_VERSION) return ESP_ERR_INVALID_RESPONSE;
+    } else return ESP_ERR_INVALID_RESPONSE;
+    return valid_event(event) ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
 }
 
 static esp_err_t write_event(uint32_t sequence, const saved_event_t *event)
 {
     char key[16];
     key_for(sequence, key);
-    esp_err_t result = nvs_set_blob(events, key, event, sizeof(*event));
+    esp_err_t result;
+    if (event->version == 1) {
+        legacy_event_t old = { .version = 1, .boot_id = event->boot_id,
+            .uptime_ms = event->uptime_ms, .epoch_ms = event->epoch_ms, .change = event->change };
+        memcpy(old.id, event->id, sizeof(old.id));
+        result = nvs_set_blob(events, key, &old, sizeof(old));
+    } else result = nvs_set_blob(events, key, event, sizeof(*event));
     return result == ESP_OK ? nvs_commit(events) : result;
 }
 
@@ -284,16 +312,107 @@ static esp_err_t save_setting(const char *key, const void *data, size_t size)
     return result;
 }
 
+esp_err_t storage_load_trust(provision_trust_t *trust)
+{
+    memset(trust, 0, sizeof(*trust));
+    size_t size = sizeof(*trust);
+    esp_err_t result = nvs_get_blob(settings, "trust_v1", trust, &size);
+    if (result == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+    if (result != ESP_OK) return result;
+    return size == sizeof(*trust) && trust->version == 1 && trust->deployment_id[36] == 0
+        && trust->public_key[130] == 0 && provision_uuid(trust->deployment_id)
+        && provision_public_key(trust->public_key) ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
+}
+
+esp_err_t storage_save_trust(const provision_trust_t *trust)
+{
+    return save_setting("trust_v1", trust, sizeof(*trust));
+}
+
+esp_err_t storage_load_binding(binding_state_t *binding)
+{
+    memset(binding, 0, sizeof(*binding));
+    binding->version = 1;
+    size_t size = sizeof(*binding);
+    esp_err_t result = nvs_get_blob(settings, "binding_v1", binding, &size);
+    if (result == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+    if (result != ESP_OK) return result;
+    return size == sizeof(*binding) && binding->version == 1 && binding->binding_id[36] == 0
+        && (!binding->binding_id[0] || provision_uuid(binding->binding_id)) ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
+}
+
+esp_err_t storage_save_binding(const binding_state_t *binding)
+{
+    return save_setting("binding_v1", binding, sizeof(*binding));
+}
+
+esp_err_t storage_load_provision(provision_record_t *record)
+{
+    memset(record, 0, sizeof(*record));
+    size_t size = sizeof(*record);
+    esp_err_t result = nvs_get_blob(settings, "provision_v1", record, &size);
+    if (result != ESP_OK) return result;
+    if (size != sizeof(*record) || record->version != 1 || record->phase < 1 || record->phase > 4
+        || record->candidate.operation_id[36] || !provision_uuid(record->candidate.operation_id)
+        || !memchr(record->candidate.ssid, 0, sizeof(record->candidate.ssid))
+        || !record->candidate.ssid[0] || !memchr(record->candidate.password, 0, sizeof(record->candidate.password))
+        || !memchr(record->candidate.server_url, 0, sizeof(record->candidate.server_url))
+        || !provision_origin(record->candidate.server_url) || record->candidate.ticket[64]
+        || !provision_hex(record->candidate.ticket, 32, NULL) || record->binding_id[36]
+        || (record->phase >= 2 && record->phase <= 3 && !provision_uuid(record->binding_id))
+        || record->previous.version != CONFIG_VERSION || record->previous_binding.version != 1
+        || record->previous_binding.binding_id[36]
+        || (record->previous_binding.binding_id[0] && !provision_uuid(record->previous_binding.binding_id))
+        || !memchr(record->previous.ssid, 0, sizeof(record->previous.ssid))
+        || !memchr(record->previous.password, 0, sizeof(record->previous.password))
+        || !memchr(record->previous.server_url, 0, sizeof(record->previous.server_url))
+        || !memchr(record->previous.device_id, 0, sizeof(record->previous.device_id))
+        || !memchr(record->previous.token, 0, sizeof(record->previous.token))
+        || !isfinite(record->previous.empty_cup)) return ESP_ERR_INVALID_RESPONSE;
+    return ESP_OK;
+}
+
+esp_err_t storage_save_provision(const provision_record_t *record)
+{
+    return save_setting("provision_v1", record, sizeof(*record));
+}
+
+esp_err_t storage_clear_provision(void)
+{
+    xSemaphoreTake(lock, portMAX_DELAY);
+    esp_err_t result = nvs_erase_key(settings, "provision_v1");
+    if (result == ESP_ERR_NVS_NOT_FOUND) result = ESP_OK;
+    if (result == ESP_OK) result = nvs_commit(settings);
+    xSemaphoreGive(lock);
+    return result;
+}
+
 esp_err_t storage_load_command(cloud_command_t *state)
 {
     memset(state, 0, sizeof(*state));
-    size_t size = sizeof(*state);
-    esp_err_t result = nvs_get_blob(settings, "command", state, &size);
+    size_t size = 0;
+    esp_err_t result = nvs_get_blob(settings, "command", NULL, &size);
     if (result == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
     if (result != ESP_OK) return result;
-    return size == sizeof(*state) && state->version == 1
-        && memchr(state->id, 0, sizeof(state->id)) && memchr(state->message, 0, sizeof(state->message))
-        ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
+    typedef struct { uint32_t version; char id[65]; bool pending, ok; char message[160]; } legacy_command_t;
+    if (size == sizeof(legacy_command_t)) {
+        legacy_command_t old;
+        result = nvs_get_blob(settings, "command", &old, &size);
+        if (result != ESP_OK) return result;
+        if (old.version != 1) return ESP_ERR_INVALID_RESPONSE;
+        state->version = 2;
+        memcpy(state->id, old.id, sizeof(old.id));
+        memcpy(state->message, old.message, sizeof(old.message));
+        state->pending = old.pending;
+        state->ok = old.ok;
+    } else if (size == sizeof(*state)) {
+        result = nvs_get_blob(settings, "command", state, &size);
+        if (result != ESP_OK) return result;
+        if (state->version != 2) return ESP_ERR_INVALID_RESPONSE;
+    } else return ESP_ERR_INVALID_RESPONSE;
+    return memchr(state->id, 0, sizeof(state->id)) && memchr(state->message, 0, sizeof(state->message))
+        && memchr(state->binding_id, 0, sizeof(state->binding_id))
+        && (!state->binding_id[0] || provision_uuid(state->binding_id)) ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
 }
 
 esp_err_t storage_save_command(const cloud_command_t *state)

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -35,7 +35,10 @@ try {
       }
     }
     if (process.exitCode === 0) {
-      const page = spawnSync(process.execPath, ['--test', 'firmware/test/control_page.test.mjs', 'firmware/test/control_http.test.mjs', 'firmware/test/network_scan.test.mjs', 'firmware/test/provisioning.test.mjs', 'firmware/test/server_command.test.mjs'], { cwd: root, stdio: 'inherit' });
+      const testFiles = (await readdir(join(root, 'firmware', 'test')))
+        .filter((name) => name.endsWith('.test.mjs')).sort()
+        .map((name) => join('firmware', 'test', name));
+      const page = spawnSync(process.execPath, ['--test', ...testFiles], { cwd: root, stdio: 'inherit' });
       if (page.error) throw page.error;
       process.exitCode = page.status ?? 1;
     }

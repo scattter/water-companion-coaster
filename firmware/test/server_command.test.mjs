@@ -127,6 +127,7 @@ esp_err_t storage_load_command(cloud_command_t *state) { memset(state, 0, sizeof
 esp_err_t storage_load_wifi(char ssid[33], char password[65]) {
     (void)ssid; (void)password; return ESP_ERR_NVS_NOT_FOUND;
 }
+static bool provisioning_busy(void) { return false; }
 static esp_err_t start_wifi(void) { return ESP_OK; }
 static const char *esp_err_to_name(esp_err_t error) { (void)error; return "test error"; }
 static void console_println(const char *text) { assert(text); }

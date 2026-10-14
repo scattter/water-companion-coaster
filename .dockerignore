@@ -13,6 +13,9 @@ output
 *.tsbuildinfo
 .DS_Store
 .playwright-cli
+.idea
+.zcode
+scripts
 firmware
 hardware
 docs

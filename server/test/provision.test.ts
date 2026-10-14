@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { createApp } from '../src/app.js';
 import { hash, openDatabase, projectRoot } from '../src/db.js';
-import { cookieOf, event, fixture, headers, heartbeat } from './cloud.js';
+import { cookieOf, event, fixture, headers, heartbeat } from './cloud-fixture.js';
 
 test('出厂CLI从workspace执行仍使用根目录数据库，凭证独立且不能重复覆盖', async (t) => {
   const f = await fixture(t);
@@ -31,7 +31,7 @@ test('出厂CLI从workspace执行仍使用根目录数据库，凭证独立且�
   assert.equal(run('coaster-000002', 'https://coaster.example').status, 0);
 });
 
-test('旧版仅事件和状态表迁移后保留记录，首次登记再绑定账号可读取', async (t) => {
+test('旧版无明确归属的事件迁移后保留隔离，首次绑定不会取得历史', async (t) => {
   const f = await fixture(t);
   const path = `${f.dbPath}.legacy`;
   const legacy = new DatabaseSync(path);
@@ -47,9 +47,13 @@ test('旧版仅事件和状态表迁移后保留记录，首次登记再绑定�
   try {
     const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'legacy_user', password: 'password-123' } });
     const cookie = cookieOf(registered);
+    await app.inject({ method: 'POST', url: '/api/device/heartbeat', headers: headers(), payload: heartbeat });
     const code = (await app.inject({ method: 'POST', url: '/api/device/binding', headers: headers(), payload: {} })).json().code;
     assert.equal((await app.inject({ method: 'POST', url: '/api/devices/bind', headers: { cookie }, payload: { code } })).statusCode, 200);
     const dashboard = (await app.inject({ url: '/api/dashboard', headers: { cookie } })).json();
-    assert.equal(dashboard.totals.drinkMl, 50); assert.equal(dashboard.events[0].id, record.id);
+    assert.equal(dashboard.totals.drinkMl, 0); assert.equal(dashboard.events.length, 0);
+    const migrated = openDatabase(path);
+    assert.equal(migrated.prepare('SELECT binding_id FROM device_events WHERE id = ?').get(record.id)!.binding_id, null);
+    migrated.close();
   } finally { await app.close(); }
 });

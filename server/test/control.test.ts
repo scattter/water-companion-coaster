@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
-import { fixture, heartbeat } from './cloud.js';
+import { fixture, heartbeat } from './cloud-fixture.js';
 
 test('空杯命令由设备心跳领取，设备确认前始终pending，同ID重试只返回原命令', async (t) => {
   const f = await fixture(t);

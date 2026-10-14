@@ -25,6 +25,8 @@ services:
       PORT: "3001"
       DB_PATH: /data/coaster.sqlite
       APP_TIMEZONE: "${APP_TIMEZONE:-Asia/Shanghai}"
+      PROVISION_SIGNING_KEY_FILE: "${PROVISION_SIGNING_KEY_FILE:-}"
+      PROVISION_DEPLOYMENT_ID: "${PROVISION_DEPLOYMENT_ID:-}"
       TRUST_PROXY: "${TRUST_PROXY:-127.0.0.1,::1,172.16.0.0/12}"
     volumes:
       - coaster-data:/data

@@ -14,11 +14,15 @@
     "dev": "node scripts/dev.mjs",
     "start": "node --env-file-if-exists=.env --import tsx server/src/index.ts",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspace @coaster/server",
+    "test": "npm run test --workspace @coaster/server && npm run test --workspace @coaster/web",
     "check": "npm run typecheck && npm test",
     "build:web": "npm run build --workspace @coaster/web",
+    "smoke:web": "node --import tsx scripts/smoke-server.mjs",
     "test:firmware": "node scripts/test-firmware.mjs",
-    "provision": "npm run provision --workspace @coaster/server --"
+    "build:firmware": "node scripts/build-firmware.mjs",
+    "provision": "npm run provision --workspace @coaster/server --",
+    "admin": "npm run admin --workspace @coaster/server --",
+    "provisioning-key": "npm run provisioning-key --workspace @coaster/server --"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

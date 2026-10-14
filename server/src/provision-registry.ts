@@ -1,7 +1,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { databasePath, openDatabase, projectRoot } from './db.js';
+import { databasePath, openDatabase, projectRoot, transaction } from './db.js';
+import { fail } from './auth.js';
 
 export interface ProvisionRecord { id: string; tokenHash: string; createdAt: number }
 export interface ProvisionRegistry { version: 1; devices: ProvisionRecord[] }
@@ -69,27 +70,29 @@ export function importProvisionRegistry(dbPath: string | undefined, inputPath: s
   catch { throw new Error('登记清单不是有效 JSON'); }
   const registry = validateProvisionRegistry(value);
   const db = openDatabase(dbPath);
-  try {
+  try { return importRegistryRecords(db, registry); } finally { db.close(); }
+}
+
+/** Shared atomic import for the CLI, HTTP import and manual admin registration. */
+export function importRegistryRecords(db: DatabaseSync, value: unknown): { inserted: number; skipped: number } {
+  const registry = validateProvisionRegistry(value);
+  return transaction(db, () => {
     const findId = db.prepare('SELECT token_hash AS tokenHash FROM devices WHERE id = ?');
     const findHash = db.prepare('SELECT id FROM devices WHERE token_hash = ?');
     const insert = db.prepare('INSERT INTO devices (id, token_hash, created_at) VALUES (?, ?, ?)');
     let inserted = 0;
     let skipped = 0;
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      for (const device of registry.devices) {
-        const existing = findId.get(device.id);
-        if (existing) {
-          if (existing.tokenHash !== device.tokenHash) throw new Error(`设备 ${device.id} 的凭证与目标数据库冲突`);
-          skipped += 1;
-          continue;
-        }
-        if (findHash.get(device.tokenHash)) throw new Error(`设备 ${device.id} 的凭证已被其他设备使用`);
-        insert.run(device.id, device.tokenHash, device.createdAt);
-        inserted += 1;
+    for (const device of registry.devices) {
+      const existing = findId.get(device.id);
+      if (existing) {
+        if (existing.tokenHash !== device.tokenHash) fail(`设备 ${device.id} 的凭证与目标数据库冲突`, 409, 'DEVICE_CREDENTIAL_CONFLICT');
+        skipped += 1;
+        continue;
       }
-      db.exec('COMMIT');
-      return { inserted, skipped };
-    } catch (error) { db.exec('ROLLBACK'); throw error; }
-  } finally { db.close(); }
+      if (findHash.get(device.tokenHash)) fail(`设备 ${device.id} 的凭证已被其他设备使用`, 409, 'DEVICE_CREDENTIAL_CONFLICT');
+      insert.run(device.id, device.tokenHash, device.createdAt);
+      inserted += 1;
+    }
+    return { inserted, skipped };
+  });
 }

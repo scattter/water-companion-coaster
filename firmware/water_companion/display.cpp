@@ -8,6 +8,8 @@
 #include "display_font.h"
 #include "network.h"
 #include "storage.h"
+#include "ble_provision.h"
+#include "provisioning.h"
 
 static const uint16_t WHITE = 0xffff, GRAY = 0x94b2, GREEN = 0x57f4, AMBER = 0xfda8, RED = 0xfaaa;
 static const int ROW_HEIGHT = 20;
@@ -145,8 +147,34 @@ void display_update(esp_err_t startup_result)
     device_status_t device;
     network_snapshot(&network);
     device_snapshot(&device);
-    line(0, "手机直连", GRAY);
-    if (network.ap_ready && network.control_error == ESP_OK) {
+    ble_provision_display_t ble;
+    ble_provision_snapshot(&ble);
+    if (ble.pairing) {
+        char pin[24];
+        snprintf(pin, sizeof(pin), "%06lu", (unsigned long)ble.passkey);
+        line(0, "BLE 配网密码", AMBER);
+        line(1, pin, WHITE);
+        line(2, "手机连接密码", WHITE);
+        line(3, "配网窗口10分钟", GRAY);
+    } else if (provisioning_busy()) {
+        line(0, "正在配网", GRAY);
+        line(1, ble.stage, AMBER);
+        line(2, "请勿断电", WHITE);
+        line(3, "请查看网站", GRAY);
+    } else if (ble.window_open) {
+        line(0, "BLE: Water-Coaster", GREEN);
+        if (network.ap_ready && network.control_error == ESP_OK) {
+            char password[40];
+            snprintf(password, sizeof(password), "密码: %s", network.ap_password);
+            line(1, network.ap_ssid, WHITE);
+            line(2, password, WHITE);
+            line(3, CONTROL_IP, GRAY);
+        } else {
+            line(1, "网站配网", WHITE);
+            line(2, "配网窗口10分钟", GRAY);
+            line(3, ble.stage, GRAY);
+        }
+    } else if (network.ap_ready && network.control_error == ESP_OK) {
         char password[40];
         snprintf(password, sizeof(password), "密码: %s", network.ap_password);
         line(1, network.ap_ssid, GREEN);

@@ -9,7 +9,7 @@ import { test, type TestContext } from 'node:test';
 import { createApp } from '../src/app.js';
 import { hash, openDatabase, projectRoot, provisionDevice } from '../src/db.js';
 import { isProvisionDeviceId, validateProvisionRegistry } from '../src/provision-registry.js';
-import { cookieOf, event, heartbeat } from './cloud.js';
+import { cookieOf, event, heartbeat } from './cloud-fixture.js';
 
 function temporaryDirectory(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'coaster-registry-'));

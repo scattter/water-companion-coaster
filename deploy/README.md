@@ -45,48 +45,45 @@ docker compose restart api
 curl -sS -H 'Host: 你的域名' http://127.0.0.1:8080/api/auth/session
 ```
 
-## 四、登记设备（出厂流程）
+## 四、管理员初始化、签名配置与设备登记
 
-新设备编号使用 `coaster-000001`–`coaster-999999`。本机录入的完整步骤见 [本机出厂登记与上线](../docs/factory-provisioning.md)。**代码部署和设备登记是两件事，更新镜像不会同步本机 SQLite。**
-
-### 本机录入后导入线上
-
-在本机项目根目录完成逐台登记和 USB 身份写入，再导出登记清单。固件 0.5.1 支持另外发送 `{"cmd":"server","url":"https://你的域名"}` 设置正式地址，不需要在登记时指定域名：
-
-```sh
-npm run provision -- --id coaster-000001
-npm run provision -- --export ./output/factory/batch-001.json --id coaster-000001
-```
-
-批量导出时省略 `--id`，工具只导出符合新编号规则的设备。相对输出路径以项目根目录为基准；已有文件不会被覆盖，下一批使用新文件名。清单只含编号、凭证哈希和创建时间，没有原始 token、用户或绑定关系，不能代替原始密钥备份。
-
-先备份线上库并部署包含新版登记工具的镜像，然后通过 SSH/SCP 将清单传到服务器项目的 `output/factory/` 下。在服务器执行：
+网站启动后，先注册要用作管理员的普通账号，再在服务器明确提升该账号。服务本身不会根据注册顺序分配管理员权限：
 
 ```sh
 cd deploy
-docker compose exec -T api node server/dist/provision.js --import - < ../output/factory/batch-001.json
+docker compose exec api node server/dist/admin.js --username 已注册账号
 ```
 
-`--import -` 通过标准输入读取清单，避免把受限权限文件复制进容器后的属主问题。
+重新读取会话后，网站显示管理员入口。管理员无须先绑定杯垫。
 
-导入使用容器已有的 `DB_PATH=/data/coaster.sqlite`，服务不必停，导入后立即生效。相同编号、相同哈希重复导入会跳过，并保留已有归属和历史；编号或凭证冲突会整批回滚。不要用本机 SQLite 覆盖生产库，也不要在两边分别对同一编号生成不同密钥。
-
-### 直接在线上登记
-
-如果尚未在本机登记，也可以直接在 API 容器执行：
+首次启用蓝牙配网前，在持久卷内生成部署专用签名私钥：
 
 ```sh
-cd deploy
-docker compose exec api node server/dist/provision.js --id coaster-000001 --url https://你的域名
+docker compose exec api node server/dist/provisioning-key.js --out /data/provisioning-private.pem
 ```
 
-该方式直接写入运行服务使用的数据库，不需要再导入清单。输出的 `{"cmd":"server",...}` 经 Arduino 串口（115200，新行）发给对应杯垫，收到 `ok: true` 后发送 `{"cmd":"reboot"}`。原始输出含设备密钥，应单独受控保管，不截图或外传；数据库哈希不能还原原 token。仅丢失输出不影响已经配置好的设备，正常更新也无需重写设备身份。
+工具只输出公开的 `deploymentId` 和 `publicKey`；私钥以受限权限保存在指定文件，不覆盖已有文件。把输出的部署 UUID 以及容器内文件路径写入 `deploy/.env`：
 
-整机标定（`tare` / `calibrate` / `status`）仍走固件串口，不经过容器。线上导入后需真机配网，核对 `serverConnected: true`、`httpStatus: 200` 和未绑定状态再交付。
+```dotenv
+PROVISION_SIGNING_KEY_FILE=/data/provisioning-private.pem
+PROVISION_DEPLOYMENT_ID=工具输出的UUID
+```
+
+再执行 `docker compose up -d api` 让新环境生效。部署身份与公钥首次写入数据库后固定；密钥/部署配置不匹配会拒绝启动，不会默默更换设备信任根。未配置签名时旧服务仍可运行，但不能签发新的蓝牙配网授权。
+
+工厂将 `{deploymentId,publicKey}` 包装成 `trust` USB 命令写入设备，原始设备 ID/token 仍逐台独立生成。完整步骤见 [出厂登记与蓝牙配网](../docs/factory-provisioning.md)。
+
+管理员进入网页的设备管理后：
+
+- 上传工厂导出的登记清单，或单台登记编号与 token。数据库只保存哈希；同编号同凭证幂等，冲突拒绝，不覆盖归属。
+- 设置设备服务器 HTTPS origin。首次默认取 HTTPS `APP_ORIGIN`，之后以数据库管理设置为准，服务重启不会恢复成旧环境值。
+- 地址不带 `/api` 路径，必须连接同一套部署、账号和绑定数据。普通用户在下次蓝牙配网时自动收到签名的地址配置。
+
+原 CLI `provision --import` 继续用于运维；新增设备后无需重新部署或重启 API。仅更新镜像不会同步工厂本机数据库，不要用本机库覆盖生产卷。
 
 ## 五、备份与恢复
 
-数据库是命名卷 `coaster-data`，位于 `/data/coaster.sqlite`。SQLite 开了 WAL，**不要只复制主库文件**：
+数据库是命名卷 `coaster-data`，位于 `/data/coaster.sqlite`。SQLite 开了 WAL，**不要只复制主库文件**。还必须受控备份 `/data/provisioning-private.pem` 与 `PROVISION_DEPLOYMENT_ID`；数据库中的部署公钥会校验私钥是否匹配，丢失密钥后不能直接重新生成来恢复已交付设备的信任。
 
 ```sh
 # 备份：VACUUM INTO 会生成一致的副本，包含尚未合并进主库的 WAL 内容
@@ -112,14 +109,13 @@ docker compose start api
 
 ```sh
 cd deploy
-# 1) 先备份（见上）
-docker compose down                    # 全量重建，避免 Nginx 缓存旧的容器地址
+# 1) 先备份数据库、签名私钥及部署UUID（见上）
 git -C .. pull
 docker compose up -d --build
 docker compose ps
 ```
 
-首次启动会自动建表（`CREATE TABLE IF NOT EXISTS`），不需要单独执行迁移；但项目没有版本化迁移，若将来给**已有表**加列或改约束，需要手工迁移后再启动。
+首次启动自动执行事务化版本迁移，保留原账号、凭证和已明确归属的历史。已有设备升级固件时保留分区；旧事件按兼容规则处理，无明确归属的数据不会转给新用户。迁移前必须保留备份；回退旧应用前应恢复相匹配的备份，不能假设旧版本识别新批次结构。
 
 ## 七、HTTPS 的三种接法
 
@@ -146,12 +142,8 @@ docker compose ps
 
 ## 九、本套件的验证状态
 
-已在本机验证（Node 24.17，与容器同版本）：
+本次已验证 TypeScript/Vue 类型检查、临时 SQLite/API 与蓝牙传输替身回归、网页生产构建和后端生产 JS 编译。编译后的密钥/管理员 CLI 通过独立临时目录验证（私钥 0600、不覆盖已有文件、明确账号提升权限）；Compose 示例配置通过 `docker compose config --quiet`。
 
-- `npm run check`：类型检查 + 30 项测试全部通过（含新增的 `server/test/proxy.test.ts` 反代限流用例）。
-- `tsc -p server/tsconfig.build.json` 能把后端编译成 JS，按镜像内目录结构直接运行通过；`docker` 镜像的 `CMD` 就是这条命令。
-- 健康检查用的 `node --input-type=module` 一行命令实测返回 0；Node 的 `fetch` 不允许自定义 `Host`，所以镜像里只能用 `node:http`。
-- `TRUST_PROXY` 按网段生效：同一来源第 11 次注册 429，换一个来源立刻 200。
-- 服务运行中执行 `provision` 可登记设备；重启进程后会话与数据保留。
+浏览器在独立临时数据库验证了管理员登录、单台登记、清单粘贴导入、HTTPS 地址校验与保存、未绑定历史页面，以及手机宽度的添加向导。未连接真实 BLE 杯垫。
 
-**未验证**：本机 Docker 守护进程无法启动，因此 `docker build`/`docker compose up` 没有实际执行过。首次部署时请留意构建日志；若某个 `COPY` 路径或基础镜像标签报错，按报错调整即可，业务代码无需改动。真机、烧录与生产证书验收仍需按[验收边界](../docs/validation.md)执行。
+**未验证**：本机 Docker daemon 未运行，无法执行镜像构建与容器启动；未部署、改动生产数据库、烧录或做真机配对。完整检查结果及硬件边界见 [验收记录](../docs/validation.md)。

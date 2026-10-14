@@ -1,12 +1,14 @@
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly status: number, readonly code?: string) {
     super(message);
     this.name = 'ApiError';
   }
 }
 
 export async function request<T>(path: string, body?: unknown, timeoutMs = 8000): Promise<T> {
+  if (!path.startsWith('/api/') || path.includes('\\')) throw new Error('仅允许同源 API 请求。');
   const response = await fetch(path, {
+    redirect: 'error',
     method: body === undefined ? 'GET' : 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
@@ -18,7 +20,7 @@ export async function request<T>(path: string, body?: unknown, timeoutMs = 8000)
   if (!response.ok) {
     const detail = typeof data?.message === 'string' ? data.message
       : typeof data?.error === 'string' ? data.error : `请求失败（${response.status}）`;
-    throw new ApiError(detail, response.status);
+    throw new ApiError(detail, response.status, typeof data?.code === 'string' ? data.code : undefined);
   }
   return data as T;
 }

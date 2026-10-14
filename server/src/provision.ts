@@ -1,4 +1,4 @@
-import { isIPv4 } from 'node:net';
+import { validateServerOrigin } from './validation.js';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -40,14 +40,7 @@ function main() {
   } else {
     if (!values.id) throw new Error(usage);
     requireProvisionDeviceId(values.id);
-    if (values.url !== undefined) {
-      const url = new URL(values.url);
-      const local = isIPv4(url.hostname) && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(url.hostname);
-      if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
-        throw new Error('服务器地址必须是 HTTPS 源地址；仅本地开发允许局域网 HTTP');
-      }
-      serverUrl = url.origin;
-    }
+    if (values.url !== undefined) serverUrl = validateServerOrigin(values.url, true);
   }
 
   // 显式数据库路径优先于本机 .env。

@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import DeviceSetup from './DeviceSetup.vue';
+import DeviceOnboarding from './DeviceOnboarding.vue';
+import AdminPanel from './AdminPanel.vue';
 import { ApiError, errorMessage, request } from './api';
+import { sameBinding, type Session } from './session';
 
 type EventKind = 'drink' | 'refill';
 interface DrinkEvent {
@@ -34,13 +37,14 @@ interface Dashboard {
     clockSynced: boolean;
     error: string | null;
     firmwareVersion: string | null;
-  };
+    bindingId: string | null;
+  } | null;
 }
-interface Session {
-  user: { id: string; username: string } | null;
-  deviceId: string | null;
-}
-const session = ref<Session>({ user: null, deviceId: null });
+const session = ref<Session>({ user: null, deviceId: null, bindingId: null });
+const page = ref<'dashboard' | 'add' | 'admin'>('dashboard');
+const provisioningBusy = ref(false);
+const unbindBusy = ref(false);
+const unbindConfirm = ref(false);
 const sessionLoading = ref(true);
 const sessionError = ref('');
 const authMode = ref<'login' | 'register'>('login');
@@ -68,17 +72,18 @@ let sessionVersion = 0;
 let disposed = false;
 
 const isToday = computed(() => selectedDate.value === today.value);
-const online = computed(() => Boolean(dashboard.value?.device.online) && !dashboardError.value);
-const needsFactoryService = computed(() => Boolean(dashboard.value?.device.lastSeenAt) && dashboard.value?.device.calibrated === false);
-const needsCup = computed(() => dashboard.value?.device.calibrated && dashboard.value.device.emptyCupGrams === null);
+const online = computed(() => Boolean(dashboard.value?.device?.online) && !dashboardError.value);
+const needsFactoryService = computed(() => Boolean(dashboard.value?.device?.lastSeenAt) && dashboard.value?.device?.calibrated === false);
+const needsCup = computed(() => dashboard.value?.device?.calibrated && dashboard.value.device?.emptyCupGrams === null);
 const maximumMl = computed(() => Math.max(100, ...dashboard.value?.week.map(day => day.drinkMl) ?? []));
 const weightState = computed(() => {
+  if (!session.value.deviceId) return '尚未绑定当前杯垫，历史记录仍可查看';
   if (!online.value) return '等待设备连接云端';
-  if (dashboard.value?.device.error) return dashboard.value.device.error;
-  if (!dashboard.value?.device.calibrated) return '出厂标定未完成，请联系售后';
-  if (dashboard.value.device.emptyCupGrams === null) return '请设置日常使用的空杯';
-  if (!dashboard.value.device.cupPresent) return '杯子已取走';
-  return dashboard.value.device.stable ? '重量已稳定' : '等待重量稳定';
+  if (dashboard.value?.device?.error) return dashboard.value.device?.error;
+  if (!dashboard.value?.device?.calibrated) return '出厂标定未完成，请联系售后';
+  if (dashboard.value.device?.emptyCupGrams === null) return '请设置日常使用的空杯';
+  if (!dashboard.value.device?.cupPresent) return '杯子已取走';
+  return dashboard.value.device?.stable ? '重量已稳定' : '等待重量稳定';
 });
 
 function resetDeviceState() {
@@ -87,6 +92,8 @@ function resetDeviceState() {
   ++requestId;
   settingsDialog.value?.close();
   settingsOpen.value = false;
+  unbindConfirm.value = false;
+  provisioningBusy.value = false;
   dashboard.value = null;
   dashboardError.value = '';
   actionError.value = '';
@@ -101,14 +108,15 @@ function resetDeviceState() {
 
 function invalidateSession(message = '登录已过期，请重新登录。') {
   resetDeviceState();
-  session.value = { user: null, deviceId: null };
+  session.value = { user: null, deviceId: null, bindingId: null };
+  page.value = 'dashboard';
   authError.value = message;
   password.value = '';
 }
 
 function handleAccessError(cause: unknown) {
-  if (!(cause instanceof ApiError) || ![401, 403].includes(cause.status)) return false;
-  invalidateSession(cause.status === 401 ? '登录已过期，请重新登录。' : '当前账号无法访问该设备，请重新登录确认。');
+  if (!(cause instanceof ApiError) || cause.status !== 401) return false;
+  invalidateSession();
   return true;
 }
 
@@ -125,7 +133,8 @@ async function loadSession() {
     if (disposed || version !== sessionVersion) return;
     resetDeviceState();
     session.value = result;
-    if (result.user && result.deviceId) void refresh();
+    page.value = result.user?.role === 'admin' ? 'admin' : 'dashboard';
+    if (result.user) void refresh();
   } catch (cause) {
     if (!disposed && version === sessionVersion) sessionError.value = `无法连接云端：${errorMessage(cause)}`;
   } finally {
@@ -144,14 +153,15 @@ async function authenticate() {
     resetDeviceState();
     session.value = result;
     password.value = '';
-    if (result.deviceId) void refresh();
+    page.value = result.user?.role === 'admin' ? 'admin' : 'dashboard';
+    if (result.user) void refresh();
   } catch (cause) {
     if (!disposed && version === sessionVersion) authError.value = errorMessage(cause);
   } finally { authBusy.value = false; }
 }
 
 async function logout() {
-  if (authBusy.value || bindingBusy.value) return;
+  if (authBusy.value || bindingBusy.value || unbindBusy.value || provisioningBusy.value) return;
   authBusy.value = true;
   actionError.value = '';
   bindingError.value = '';
@@ -161,23 +171,26 @@ async function logout() {
   } catch (cause) {
     if (!handleAccessError(cause)) {
       const message = `退出失败：${errorMessage(cause)}`;
-      if (session.value.deviceId) actionError.value = message;
-      else bindingError.value = message;
+      actionError.value = message;
+      bindingError.value = message;
     }
   } finally { authBusy.value = false; }
 }
 
 async function bindDevice() {
-  if (bindingBusy.value || authBusy.value || !session.value.user) return;
+  if (bindingBusy.value || authBusy.value || provisioningBusy.value || !session.value.user || session.value.deviceId) return;
   bindingBusy.value = true;
   bindingError.value = '';
   const version = sessionVersion;
   const userId = session.value.user.id;
   try {
-    const result = await request<{ deviceId: string }>('/api/devices/bind', { code: bindingCode.value.trim() });
+    const bound = await request<{ deviceId: string }>('/api/devices/bind', { code: bindingCode.value.trim() });
+    const result = await request<Session>('/api/auth/session');
     if (disposed || version !== sessionVersion || session.value.user?.id !== userId) return;
+    if (result.user?.id !== userId || result.deviceId !== bound.deviceId) throw new Error('绑定结果与当前账号不一致，请刷新确认。');
     resetDeviceState();
-    session.value = { ...session.value, deviceId: result.deviceId };
+    session.value = result;
+    page.value = 'dashboard';
     feedback.value = '杯垫已绑定。放上日常空杯并完成空杯设置，即可开始使用。';
     void refresh();
   } catch (cause) {
@@ -193,6 +206,7 @@ async function bindDevice() {
       if (result.deviceId) {
         resetDeviceState();
         session.value = result;
+        page.value = 'dashboard';
         feedback.value = '已确认杯垫绑定成功。放上日常空杯并完成空杯设置，即可开始使用。';
         void refresh();
       }
@@ -201,6 +215,55 @@ async function bindDevice() {
       if (!handleAccessError(recoveryError)) bindingError.value = '暂时无法确认绑定结果，请恢复网络后刷新页面查看。';
     }
   } finally { bindingBusy.value = false; }
+}
+
+function provisioningCompleted(result: Session) {
+  if (!session.value.user || result.user?.id !== session.value.user.id) return;
+  resetDeviceState();
+  session.value = result;
+  page.value = 'dashboard';
+  feedback.value = '杯垫已持久保存配置，配网完成。';
+  void refresh();
+}
+
+async function unbind() {
+  if (!unbindConfirm.value || unbindBusy.value || !session.value.deviceId || !session.value.user) return;
+  const target = { ...session.value };
+  const version = sessionVersion;
+  unbindBusy.value = true;
+  actionError.value = '';
+  let posted = false;
+  try {
+    const before = await request<Session>('/api/auth/session');
+    if (disposed || version !== sessionVersion) return;
+    if (!sameBinding(before, target)) throw new Error('账号或绑定批次已变化，请刷新页面后重新确认。');
+    posted = true;
+    await request('/api/devices/unbind', {});
+    const result = await request<Session>('/api/auth/session');
+    if (disposed || version !== sessionVersion) return;
+    if (result.user?.id !== target.user?.id || result.deviceId !== null) throw new Error('当前绑定状态已变化，请刷新确认。');
+    resetDeviceState();
+    session.value = result;
+    page.value = 'dashboard';
+    feedback.value = '杯垫已解绑。账号仍保持登录，你自己的历史记录会保留。';
+    void refresh();
+  } catch (cause) {
+    if (disposed || version !== sessionVersion || handleAccessError(cause)) return;
+    actionError.value = `解绑${posted ? '结果尚未确认' : '失败'}：${errorMessage(cause)}`;
+    if (posted) {
+      try {
+        const result = await request<Session>('/api/auth/session');
+        if (disposed || version !== sessionVersion) return;
+        if (result.user?.id === target.user?.id && result.deviceId === null) {
+          resetDeviceState();
+          session.value = result;
+          page.value = 'dashboard';
+          feedback.value = '已确认解绑成功，登录和历史记录已保留。';
+          void refresh();
+        }
+      } catch (recovery) { if (version === sessionVersion) handleAccessError(recovery); }
+    }
+  } finally { unbindBusy.value = false; }
 }
 
 function number(value: number | undefined | null) {
@@ -252,15 +315,25 @@ function updateToday() {
 }
 
 async function refreshDashboard() {
-  if (!session.value.user || !session.value.deviceId) return;
+  if (!session.value.user) return;
   const currentRequest = ++requestId;
   const version = sessionVersion;
   const date = selectedDate.value;
   try {
     const result = await request<Dashboard>(date ? `/api/dashboard?date=${encodeURIComponent(date)}` : '/api/dashboard');
     if (disposed || version !== sessionVersion || currentRequest !== requestId || date !== selectedDate.value) return;
-    if (result.device.id !== session.value.deviceId) {
-      invalidateSession('账号或设备已在其他页面变更，请重新登录。');
+    if ((result.device?.id ?? null) !== session.value.deviceId || (result.device?.bindingId ?? null) !== session.value.bindingId) {
+      // Reconcile device/batch changes without treating permission changes as logout.
+      if (provisioningBusy.value || page.value === 'add' || settingsOpen.value) {
+        dashboardError.value = '绑定状态已变化，完成当前操作后请刷新账号状态。';
+        return;
+      }
+      const current = await request<Session>('/api/auth/session');
+      if (disposed || version !== sessionVersion || currentRequest !== requestId) return;
+      if (current.user?.id !== session.value.user?.id) { invalidateSession(); return; }
+      resetDeviceState();
+      session.value = current;
+      void refresh();
       return;
     }
     timeZone.value = result.timeZone;
@@ -277,7 +350,7 @@ async function refreshDashboard() {
 }
 
 async function refresh() {
-  if (!session.value.user || !session.value.deviceId || pollingVersion === sessionVersion) return;
+  if (!session.value.user || page.value === 'admin' || pollingVersion === sessionVersion) return;
   const version = sessionVersion;
   pollingVersion = version;
   updateToday();
@@ -326,8 +399,10 @@ onBeforeUnmount(() => {
       </a>
       <div class="topbar-right">
         <span v-if="session.user" class="account-name">{{ session.user.username }}</span>
-        <button v-if="session.user && session.deviceId" class="settings-button" :disabled="authBusy" @click="openSettings">杯垫设置</button>
-        <button v-if="session.user" class="text-button logout-button" :disabled="authBusy || bindingBusy" @click="logout">{{ authBusy ? '请稍候…' : '退出登录' }}</button>
+        <button v-if="session.user?.role === 'admin'" class="settings-button" :disabled="provisioningBusy || bindingBusy" @click="page = page === 'admin' ? 'dashboard' : 'admin'; refresh()">{{ page === 'admin' ? '饮水记录' : '管理后台' }}</button>
+        <button v-if="session.user && !session.deviceId" class="settings-button" :disabled="bindingBusy" @click="page = page === 'add' ? 'dashboard' : 'add'; refresh()">{{ page === 'add' ? '查看历史' : '添加杯垫' }}</button>
+        <button v-if="session.user && session.deviceId" class="settings-button" :disabled="authBusy || unbindBusy" @click="openSettings">杯垫设置</button>
+        <button v-if="session.user" class="text-button logout-button" :disabled="authBusy || bindingBusy || unbindBusy || provisioningBusy" @click="logout">{{ authBusy ? '请稍候…' : '退出登录' }}</button>
       </div>
     </header>
 
@@ -356,20 +431,28 @@ onBeforeUnmount(() => {
       </section>
     </main>
 
-    <main v-else-if="!session.deviceId" class="welcome-main">
+    <AdminPanel v-else-if="session.user.role === 'admin' && page === 'admin'" :key="session.user.id" @access-error="handleAccessError" />
+
+    <main v-else-if="!session.deviceId && page === 'add'" class="welcome-main">
       <section class="panel binding-panel" aria-labelledby="binding-title">
-        <p class="eyebrow">首次使用</p><h1 id="binding-title">连接你的杯垫</h1>
+        <p class="eyebrow">连接杯垫</p><h1 id="binding-title">开启新的饮水日常</h1>
+        <p class="setup-description">历史记录始终归你所有，<button class="text-button" @click="page = 'dashboard'; refresh()">返回查看自己的历史</button>。</p>
+        <DeviceOnboarding :key="session.user.id" :session="session" @completed="provisioningCompleted" @access-error="handleAccessError" @busy="provisioningBusy = $event" />
+        <details class="legacy-setup">
+        <summary>旧版热点配网与 8 位绑定码</summary>
+        <p class="setup-description">热点页只能更换 Wi-Fi，不能设置服务器地址或设备信任。旧固件若尚未配置服务器，请联系管理员通过 USB 设置；无法通过此网页填入地址。</p>
         <ol class="connection-steps">
           <li><strong>为杯垫连接 Wi-Fi</strong><p>接通电源，连接屏幕显示的杯垫热点，密码也在屏幕上。若未出现热点，在杯垫启动后长按 BOOT 配网键 3 秒。</p><p>连接热点后，用浏览器打开 <a href="http://192.168.4.1" target="_blank" rel="noopener noreferrer">192.168.4.1 ↗</a>，选择家中的 2.4 GHz Wi-Fi 并输入密码。</p></li>
           <li><strong>确认连接云端</strong><p>等待屏幕显示 Wi-Fi 和云服务均已连接。将手机切回正常 Wi-Fi 或移动网络，再回到本网站。</p></li>
           <li><strong>输入屏幕上的绑定码</strong><p>绑定码为 8 位数字，5 分钟内有效。过期后重新连接杯垫热点，在配网页点击“获取/刷新绑定码”；若热点已关闭，长按 BOOT 配网键 3 秒重新开启。</p></li>
         </ol>
         <form class="account-form" @submit.prevent="bindDevice">
-          <label for="binding-code">杯垫绑定码<input id="binding-code" v-model="bindingCode" required inputmode="numeric" pattern="[0-9]{8}" minlength="8" maxlength="8" autocomplete="off" placeholder="8 位数字" :disabled="bindingBusy || authBusy" /></label>
+          <label for="binding-code">杯垫绑定码<input id="binding-code" v-model="bindingCode" required inputmode="numeric" pattern="[0-9]{8}" minlength="8" maxlength="8" autocomplete="off" placeholder="8 位数字" :disabled="bindingBusy || authBusy || provisioningBusy" /></label>
           <div v-if="bindingError" class="notice error" role="alert">{{ bindingError }}</div>
-          <button class="setup-action" :disabled="bindingBusy || authBusy || !/^[0-9]{8}$/.test(bindingCode)">{{ bindingBusy ? '正在绑定…' : '绑定杯垫' }}</button>
+          <button class="setup-action" :disabled="bindingBusy || authBusy || provisioningBusy || !/^[0-9]{8}$/.test(bindingCode)">{{ bindingBusy ? '正在绑定…' : '绑定杯垫' }}</button>
         </form>
         <p class="setup-description">绑定后无需再次连接热点。换 Wi-Fi 只需重新配网，账号绑定与历史记录会保留。</p>
+        </details>
       </section>
     </main>
 
@@ -379,7 +462,11 @@ onBeforeUnmount(() => {
         <div class="date-control"><label for="statistics-date">查看日期</label><input id="statistics-date" :value="selectedDate" aria-label="查看统计日期" type="date" :max="today" :disabled="!today" @change="selectDate" /><button v-if="!isToday" class="text-button" @click="changeDate(today)">回到今天</button></div>
       </section>
 
-      <section v-if="needsFactoryService" class="calibration-prompt" aria-labelledby="factory-prompt-title">
+      <section v-if="!session.deviceId" class="calibration-prompt" aria-labelledby="unbound-title">
+        <div><h2 id="unbound-title">当前没有绑定杯垫</h2><p>你自己的历史饮水记录仍可按日期查看。添加杯垫后继续记录新的饮水日常。</p></div>
+        <button class="setup-action" @click="page = 'add'">添加杯垫</button>
+      </section>
+      <section v-else-if="needsFactoryService" class="calibration-prompt" aria-labelledby="factory-prompt-title">
         <div><h2 id="factory-prompt-title">杯垫尚未完成出厂标定</h2><p>请联系售后处理，暂时无法记录饮水。你无需准备砝码或自行校准。</p></div>
       </section>
       <section v-else-if="needsCup" class="calibration-prompt" aria-labelledby="cup-prompt-title">
@@ -388,7 +475,7 @@ onBeforeUnmount(() => {
       </section>
 
       <div class="estimate-note"><span class="note-icon" aria-hidden="true">i</span><p><strong>饮水量根据真实称重差值估算</strong> · 清水按 1 g ≈ 1 ml 换算，倒水与喝水无法区分，喝完直接补水只记录净变化。</p></div>
-      <div v-if="dashboardError" class="notice error" role="alert">{{ dashboardError }}<span v-if="dashboard"> · 下方保留上次成功同步的数据。</span></div>
+      <div v-if="dashboardError" class="notice error" role="alert">{{ dashboardError }}<span v-if="dashboard"> · 下方保留上次成功同步的数据。</span> <button class="text-button" @click="loadSession">刷新账号状态</button></div>
       <div v-if="actionError" class="notice error" role="alert">{{ actionError }}</div>
       <div v-if="feedback" class="notice success" role="status">{{ feedback }}</div>
 
@@ -433,17 +520,17 @@ onBeforeUnmount(() => {
           <section class="panel device-panel" aria-labelledby="device-title">
             <div class="section-heading"><h2 id="device-title">我的杯垫</h2><span class="connection-badge" :class="{ online }"><i></i>{{ online ? '云端在线' : '离线或未同步' }}</span></div>
             <div class="device-illustration" aria-hidden="true"><div class="cup"><div class="cup-handle"></div><div class="cup-water"></div></div><div class="coaster"><i :class="{ lit: online }"></i></div></div>
-            <div class="weight-reading"><strong data-testid="device-weight">{{ number(online ? dashboard?.device.weightGrams : null) }}</strong><span>g</span></div><p class="weight-state"><i :class="{ stable: online && dashboard?.device.stable && !dashboard?.device.error }"></i>{{ weightState }}</p>
+            <div class="weight-reading"><strong data-testid="device-weight">{{ number(online ? dashboard?.device?.weightGrams : null) }}</strong><span>g</span></div><p class="weight-state"><i :class="{ stable: online && dashboard?.device?.stable && !dashboard?.device?.error }"></i>{{ weightState }}</p>
             <dl class="device-details">
-              <div><dt>设备</dt><dd>{{ dashboard?.device.id ?? '—' }}</dd></div>
-              <div><dt>最后同步</dt><dd>{{ time(dashboard?.device.lastSeenAt, true) }}</dd></div>
+              <div><dt>设备</dt><dd>{{ dashboard?.device?.id ?? '—' }}</dd></div>
+              <div><dt>最后同步</dt><dd>{{ time(dashboard?.device?.lastSeenAt, true) }}</dd></div>
               <div><dt>当前重量</dt><dd>杯子与水的总重</dd></div>
-              <div><dt>空杯重量</dt><dd>{{ number(dashboard?.device.emptyCupGrams) }} g</dd></div>
-              <div><dt>待上传记录</dt><dd>{{ number(dashboard?.device.pendingCount) }}</dd></div>
-              <div><dt>固件版本</dt><dd>{{ dashboard?.device.firmwareVersion ?? '—' }}</dd></div>
+              <div><dt>空杯重量</dt><dd>{{ number(dashboard?.device?.emptyCupGrams) }} g</dd></div>
+              <div><dt>待上传记录</dt><dd>{{ number(dashboard?.device?.pendingCount) }}</dd></div>
+              <div><dt>固件版本</dt><dd>{{ dashboard?.device?.firmwareVersion ?? '—' }}</dd></div>
             </dl>
-            <p v-if="online && !dashboard?.device.clockSynced" class="queue-note">设备正在校时，记录会先保存在杯垫中。</p>
-            <p v-if="dashboard?.device.timePendingCount" class="queue-note">有 {{ dashboard.device.timePendingCount }} 条记录时间待确认；保留在杯垫中，未计入每日统计。</p>
+            <p v-if="online && !dashboard?.device?.clockSynced" class="queue-note">设备正在校时，记录会先保存在杯垫中。</p>
+            <p v-if="dashboard?.device?.timePendingCount" class="queue-note">有 {{ dashboard.device?.timePendingCount }} 条记录时间待确认；保留在杯垫中，未计入每日统计。</p>
           </section>
 
         </aside>
@@ -456,7 +543,31 @@ onBeforeUnmount(() => {
         <div><h2 id="settings-title">杯垫设置</h2><p>设置日常空杯，或为杯垫更换 Wi-Fi。</p></div>
         <button class="settings-close" aria-label="关闭设置" @click="settingsDialog?.close()">✕</button>
       </div>
-      <DeviceSetup :key="`${session.user.id}:${session.deviceId}`" :online="online" :device-id="session.deviceId" :user-id="session.user.id" :calibrated="dashboard?.device.lastSeenAt ? dashboard.device.calibrated : undefined" :empty-cup-grams="dashboard?.device.emptyCupGrams" :weight-grams="dashboard?.device.weightGrams" :active="settingsOpen" @updated="refresh" @access-error="handleSetupAccessError" />
+      <DeviceSetup :key="`${session.user.id}:${session.deviceId}:${session.bindingId}`" :online="online" :device-id="session.deviceId" :user-id="session.user.id" :binding-id="session.bindingId" :calibrated="dashboard?.device?.lastSeenAt ? dashboard.device.calibrated : undefined" :empty-cup-grams="dashboard?.device?.emptyCupGrams" :weight-grams="dashboard?.device?.weightGrams" :active="settingsOpen && !unbindBusy" @updated="refresh" @access-error="handleSetupAccessError" />
+      <div class="settings-section">
+        <DeviceOnboarding :key="`wifi:${session.user.id}:${session.deviceId}:${session.bindingId}`" :session="session" :active="settingsOpen && !unbindBusy" @completed="provisioningCompleted" @access-error="handleAccessError" @busy="provisioningBusy = $event" />
+      </div>
+      <section class="settings-section unbind-section">
+        <h3>解绑杯垫</h3><p class="setup-description">解绑后杯垫可交给其他账号使用，当前配网授权与未完成命令会作废。你的登录和历史饮水记录会保留。</p>
+        <button v-if="!unbindConfirm" class="settings-button" :disabled="provisioningBusy" @click="unbindConfirm = true">解绑我的杯垫</button>
+        <div v-else class="unbind-confirm" role="group" aria-label="确认解绑当前杯垫">
+          <p>确认解绑 {{ session.deviceId }}？</p>
+          <button class="settings-button" :disabled="unbindBusy" @click="unbindConfirm = false">暂不解绑</button>
+          <button class="setup-action" :disabled="unbindBusy || provisioningBusy" @click="unbind">{{ unbindBusy ? '正在确认…' : '确认解绑' }}</button>
+        </div>
+        <p v-if="actionError" class="notice error" role="alert">{{ actionError }}</p>
+      </section>
     </dialog>
   </div>
 </template>
+
+<style scoped>
+.legacy-setup { border-top:1px solid #e5eadf; margin-top:24px; padding-top:20px; }
+.legacy-setup summary { cursor:pointer; color:#43745d; font-weight:600; }
+.settings-section { padding:22px 26px; border-top:1px solid #e5eadf; }
+.unbind-section h3 { font-size:16px; }
+.unbind-confirm { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+.unbind-confirm p { width:100%; }
+.unbind-section .notice { margin-top:15px; }
+@media(max-width:560px) { .settings-section { padding:18px; } }
+</style>

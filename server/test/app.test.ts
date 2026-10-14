@@ -3,17 +3,19 @@ import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { createApp } from '../src/app.js';
 import { openDatabase, provisionDevice } from '../src/db.js';
-import { cookieOf, event, fixture, headers, heartbeat } from './cloud.js';
+import { cookieOf, event, fixture, headers, heartbeat } from './cloud-fixture.js';
 
 test('注册、登录、会话、退出和过期；密码、令牌均不明文存储', async (t) => {
   const f = await fixture(t);
-  assert.deepEqual((await f.app.inject('/api/auth/session')).json(), { user: null, deviceId: null });
+  assert.deepEqual((await f.app.inject('/api/auth/session')).json(), { user: null, deviceId: null, bindingId: null });
   assert.equal((await f.app.inject('/api/dashboard')).statusCode, 401);
   const cookie = await f.register('User_One');
   const session = (await f.web(cookie, '/api/auth/session')).json();
   assert.equal(session.user.username, 'user_one');
   assert.equal(session.deviceId, null);
-  assert.equal((await f.web(cookie, '/api/dashboard')).statusCode, 404);
+  assert.equal(session.user.role, 'user');
+  assert.equal(session.bindingId, null);
+  assert.equal((await f.web(cookie, '/api/dashboard')).json().device, null);
   const db = openDatabase(f.dbPath);
   const account = db.prepare('SELECT * FROM users').get()!;
   const storedSession = db.prepare('SELECT token_hash FROM sessions').get()!;

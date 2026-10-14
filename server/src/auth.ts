@@ -7,9 +7,12 @@ import { hash } from './db.js';
 const deriveKey = promisify(scrypt);
 const sessionMs = 30 * 86_400_000;
 const cookieName = 'coaster_session';
-interface Identity { id: string; username: string; deviceId: string | null }
+export interface Identity { id: string; username: string; role: 'user' | 'admin'; deviceId: string | null; bindingId: string | null }
 interface Account extends Identity { passwordHash: string; passwordSalt: string }
-export function fail(message: string, statusCode: number): never { throw Object.assign(new Error(message), { statusCode }); }
+export function fail(message: string, statusCode: number, code?: string): never {
+  const defaults: Record<number, string> = { 400: 'INVALID_REQUEST', 401: 'UNAUTHORIZED', 403: 'FORBIDDEN', 404: 'NOT_FOUND', 409: 'CONFLICT', 429: 'RATE_LIMITED', 503: 'UNAVAILABLE' };
+  throw Object.assign(new Error(message), { statusCode, code: code ?? defaults[statusCode] ?? 'REQUEST_FAILED' });
+}
 
 export function authRoutes(app: FastifyInstance, db: DatabaseSync, options: {
   now: () => Date; allowedOrigins: string[]; secureCookie: boolean;
@@ -41,10 +44,10 @@ export function authRoutes(app: FastifyInstance, db: DatabaseSync, options: {
     return matches.length === 1 ? matches[0].slice(cookieName.length + 1) : '';
   };
   const cookie = (token: string, age: number) => `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${options.secureCookie ? '; Secure' : ''}`;
-  const findIdentity = db.prepare(`SELECT u.id, u.username, d.id AS deviceId FROM sessions s
+  const findIdentity = db.prepare(`SELECT u.id, u.username, u.role, d.id AS deviceId, d.binding_id AS bindingId FROM sessions s
     JOIN users u ON u.id = s.user_id LEFT JOIN devices d ON d.user_id = u.id
     WHERE s.token_hash = ? AND s.expires_at > ?`);
-  const response = (user?: Identity) => ({ user: user ? { id: user.id, username: user.username } : null, deviceId: user?.deviceId ?? null });
+  const response = (user?: Identity) => ({ user: user ? { id: user.id, username: user.username, role: user.role } : null, deviceId: user?.deviceId ?? null, bindingId: user?.bindingId ?? null });
   const identity = (request: FastifyRequest) => users.get(request)!;
   const deviceId = (request: FastifyRequest) => devices.get(request) ?? identity(request)?.deviceId!;
 
@@ -69,10 +72,9 @@ export function authRoutes(app: FastifyInstance, db: DatabaseSync, options: {
       if (user) users.set(request, user);
     }
     if (path === '/api/health' || path.startsWith('/api/auth/')) return;
-    if (!users.has(request)) return reply.code(401).send({ error: '请先登录账号' });
-    if ((path === '/api/dashboard' || path.startsWith('/api/events/') || path.startsWith('/api/control/')) && !identity(request).deviceId) {
-      return reply.code(404).send({ error: '请先绑定杯垫' });
-    }
+    if (!users.has(request)) fail('请先登录账号', 401, 'LOGIN_REQUIRED');
+    if (path.startsWith('/api/admin/') && identity(request).role !== 'admin') fail('需要管理员权限', 403, 'ADMIN_REQUIRED');
+    if (path.startsWith('/api/control/') && !identity(request).deviceId) fail('请先绑定杯垫', 404, 'NO_BINDING');
   });
 
   const credentialsSchema = { body: { type: 'object', additionalProperties: false, required: ['username', 'password'], properties: {
@@ -96,7 +98,7 @@ export function authRoutes(app: FastifyInstance, db: DatabaseSync, options: {
     const username = request.body.username.toLowerCase();
     const salt = randomBytes(16).toString('hex');
     const passwordHash = (await deriveKey(request.body.password, salt, 32) as Buffer).toString('hex');
-    const user = { id: randomUUID(), username, deviceId: null };
+    const user: Identity = { id: randomUUID(), username, role: 'user', deviceId: null, bindingId: null };
     try {
       db.prepare('INSERT INTO users (id, username, password_hash, password_salt, created_at) VALUES (?, ?, ?, ?, ?)')
         .run(user.id, username, passwordHash, salt, currentMs());
@@ -110,8 +112,8 @@ export function authRoutes(app: FastifyInstance, db: DatabaseSync, options: {
     const username = request.body.username.toLowerCase();
     limit(`login-ip:${request.ip}`, 60);
     limit(`login-name:${hash(username)}`, 15);
-    const user = db.prepare(`SELECT u.id, u.username, u.password_hash AS passwordHash, u.password_salt AS passwordSalt,
-      d.id AS deviceId FROM users u LEFT JOIN devices d ON d.user_id = u.id WHERE u.username = ?`).get(username) as Account | undefined;
+    const user = db.prepare(`SELECT u.id, u.username, u.role, u.password_hash AS passwordHash, u.password_salt AS passwordSalt,
+      d.id AS deviceId, d.binding_id AS bindingId FROM users u LEFT JOIN devices d ON d.user_id = u.id WHERE u.username = ?`).get(username) as Account | undefined;
     const key = await deriveKey(request.body.password, user?.passwordSalt ?? 'unknown-account-salt', 32) as Buffer;
     if (!user || !timingSafeEqual(key, Buffer.from(user.passwordHash, 'hex'))) fail('用户名或密码错误', 401);
     return session(request, reply, user);

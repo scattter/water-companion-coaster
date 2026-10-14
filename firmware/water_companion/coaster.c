@@ -21,9 +21,13 @@
 #include "network.h"
 #include "storage.h"
 #include "weighing.h"
+#include "ble_provision.h"
+#include "provisioning.h"
 
 static SemaphoreHandle_t state_lock;
 static device_config_t config;
+static binding_state_t binding;
+static provision_trust_t trust;
 static weighing_t machine;
 static uint64_t boot_id;
 static int32_t raw_samples[WEIGHING_SAMPLES];
@@ -147,6 +151,7 @@ static void create_event(const weight_change_t *change, int64_t uptime_ms)
         .version = EVENT_VERSION, .boot_id = boot_id, .uptime_ms = uptime_ms,
         .epoch_ms = network_has_time() ? network_epoch_ms() : 0, .change = *change,
     };
+    strcpy(pending_event.binding_id, binding.binding_id);
     uint8_t id[16];
     esp_fill_random(id, sizeof(id));
     id[6] = (id[6] & 0x0f) | 0x40;
@@ -184,7 +189,7 @@ static void sample_task(void *arg)
             if (unsaved_event) {
                 unsaved_event = storage_append(&pending_event) != ESP_OK;
                 weighing_init(&machine, config.empty_cup);
-            } else if (config.calibrated && config.empty_cup >= 5 && !restart_required) {
+            } else if (config.calibrated && config.empty_cup >= 5 && !restart_required && !provisioning_busy()) {
                 weight_change_t change;
                 if (weighing_sample(&machine, weight, now, &change)) create_event(&change, now);
             }
@@ -278,7 +283,7 @@ cJSON *device_command(const cJSON *json)
         xSemaphoreGive(state_lock);
         return response;
     }
-    if (unsaved_event || reboot_at_ms) {
+    if (unsaved_event || reboot_at_ms || provisioning_busy()) {
         xSemaphoreGive(state_lock);
         return reply("存在尚未保存的记录或设备正在重启，当前不可修改设置", NULL);
     }
@@ -405,6 +410,98 @@ esp_err_t device_save_wifi(const char *ssid, const char *password)
     return result;
 }
 
+static cJSON *factory_command(const cJSON *json)
+{
+    const char *name = field(json, "cmd");
+    if (!strcmp(name, "factory-info")) {
+        xSemaphoreTake(state_lock, portMAX_DELAY);
+        cJSON *result = cJSON_CreateObject();
+        cJSON_AddBoolToObject(result, "ok", true);
+        cJSON_AddStringToObject(result, "deviceId", config.device_id);
+        cJSON_AddBoolToObject(result, "identityConfigured", config.token[0] != 0);
+        cJSON_AddStringToObject(result, "serverUrl", config.server_url);
+        cJSON_AddStringToObject(result, "firmwareVersion", FIRMWARE_VERSION);
+        char fingerprint[65];
+        if (config.token[0] && provision_fingerprint(config.token, fingerprint))
+            cJSON_AddStringToObject(result, "tokenFingerprint", fingerprint);
+        else cJSON_AddNullToObject(result, "tokenFingerprint");
+        cJSON_AddBoolToObject(result, "trusted", trust.version == 1);
+        cJSON_AddStringToObject(result, "deploymentId", trust.deployment_id);
+        cJSON_AddStringToObject(result, "publicKey", trust.public_key);
+        xSemaphoreGive(state_lock);
+        return result;
+    }
+    const char *deployment = field(json, "deploymentId"), *key = field(json, "publicKey");
+    if (!provision_uuid(deployment) || !provision_public_key(key))
+        return reply("deploymentId 需为 UUID，publicKey 需为 P-256 未压缩小写 130 位 hex", NULL);
+    xSemaphoreTake(state_lock, portMAX_DELAY);
+    if (provisioning_busy()) {
+        xSemaphoreGive(state_lock);
+        return reply("配网恢复中，请稍后写入信任配置", NULL);
+    }
+    provision_trust_t next = { .version = 1 };
+    strcpy(next.deployment_id, deployment);
+    strcpy(next.public_key, key);
+    esp_err_t result = storage_save_trust(&next);
+    if (result == ESP_OK) { trust = next; restart_required = true; }
+    xSemaphoreGive(state_lock);
+    return reply(result == ESP_OK ? NULL : "信任配置保存失败", "信任配置已保存，请重启");
+}
+
+void device_config_snapshot(device_config_t *output, binding_state_t *owner)
+{
+    xSemaphoreTake(state_lock, portMAX_DELAY);
+    if (output) *output = config;
+    if (owner) *owner = binding;
+    xSemaphoreGive(state_lock);
+}
+
+esp_err_t device_change_binding(const char *id)
+{
+    if (!id || (*id && !provision_uuid(id))) return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(state_lock, portMAX_DELAY);
+    esp_err_t result = ESP_OK;
+    if (strcmp(binding.binding_id, id)) {
+        device_config_t next = config;
+        next.empty_cup = 0;
+        binding_state_t owner = { .version = 1 };
+        strcpy(owner.binding_id, id);
+        // Clear the old cup durably before writing the new owner. A crash can only clear twice.
+        result = storage_save_config(&next);
+        if (result == ESP_OK) {
+            config = next;
+            weighing_init(&machine, 0);
+            result = storage_save_binding(&owner);
+            if (result == ESP_OK) binding = owner;
+        }
+    }
+    xSemaphoreGive(state_lock);
+    return result;
+}
+
+esp_err_t device_commit_provision(const provision_record_t *record, bool rollback)
+{
+    xSemaphoreTake(state_lock, portMAX_DELAY);
+    device_config_t next = record->previous;
+    binding_state_t owner = record->previous_binding;
+    if (!rollback) {
+        strcpy(next.ssid, record->candidate.ssid);
+        strcpy(next.password, record->candidate.password);
+        strcpy(next.server_url, record->candidate.server_url);
+        strcpy(owner.binding_id, record->binding_id);
+        if (strcmp(record->previous_binding.binding_id, owner.binding_id)) next.empty_cup = 0;
+    }
+    esp_err_t result = storage_save_config(&next);
+    if (result == ESP_OK) result = storage_save_binding(&owner);
+    if (result == ESP_OK) {
+        config = next;
+        binding = owner;
+        weighing_init(&machine, next.empty_cup);
+    }
+    xSemaphoreGive(state_lock);
+    return result;
+}
+
 static void serial_task(void *arg)
 {
     (void)arg;
@@ -428,6 +525,7 @@ static void serial_task(void *arg)
                 cJSON *json = cJSON_ParseWithOpts(line, NULL, true);
                 const char *name = field(json, "cmd");
                 if (name && !strcmp(name, "pending-time")) storage_dump_pending_time();
+                else if (name && (!strcmp(name, "trust") || !strcmp(name, "factory-info"))) print_json(factory_command(json));
                 else if (cJSON_IsObject(json)) print_json(device_command(json));
                 else print_json(reply("请输入单行 JSON 命令", NULL));
                 cJSON_Delete(json);
@@ -450,6 +548,12 @@ esp_err_t device_start(void)
     if (!state_lock) return ESP_ERR_NO_MEM;
     esp_err_t result = storage_init(&config, &boot_id);
     if (result != ESP_OK) return result;
+    result = storage_load_binding(&binding);
+    if (result != ESP_OK) return result;
+    result = storage_load_trust(&trust);
+    if (result != ESP_OK) return result;
+    result = provisioning_start();
+    if (result != ESP_OK) return result;
     weighing_init(&machine, config.empty_cup);
     result = hx711_init(HX711_DOUT_PIN, HX711_SCK_PIN);
     if (result != ESP_OK) return result;
@@ -458,6 +562,8 @@ esp_err_t device_start(void)
              "HX711 DOUT=GP%d、SCK=GP%d。", HX711_DOUT_PIN, HX711_SCK_PIN);
     console_println(message);
     console_println("通过 Type-C USB 串口输入 {\"cmd\":\"status\"} 查看真实采样。");
+    result = ble_provision_start(config.device_id, &trust, !config.ssid[0] || !binding.binding_id[0]);
+    if (result != ESP_OK) return result;
     network_start(&config);
     ESP_ERROR_CHECK(xTaskCreate(sample_task, "coaster-sampling", 4096, NULL, 6, NULL) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreate(serial_task, "coaster-serial", 8192, NULL, 5, NULL) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);

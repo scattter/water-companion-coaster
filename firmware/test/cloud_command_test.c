@@ -57,5 +57,19 @@ int main(void)
     assert(cloud_command_ack(&state, save));
     assert(cloud_command_receive(&state, "cmd-3", "cup", now + 1000, now, save, execute));
     assert(executions == 3 && state.ok);
+    assert(cloud_command_ack(&state, save));
+    const char *old_owner = "11111111-1111-4111-8111-111111111111";
+    const char *new_owner = "22222222-2222-4222-8222-222222222222";
+    assert(!cloud_command_receive_bound(&state, old_owner, new_owner, "cmd-old", "cup", now + 1000, now, save, execute));
+    assert(!cloud_command_receive_bound(&state, NULL, new_owner, "cmd-null", "cup", now + 1000, now, save, execute));
+    assert(!cloud_command_receive_bound(&state, "", new_owner, "cmd-empty", "cup", now + 1000, now, save, execute));
+    assert(executions == 3);
+    assert(cloud_command_receive_bound(&state, new_owner, new_owner, "cmd-new", "cup", now + 1000, now, save, execute));
+    assert(executions == 4 && !strcmp(state.binding_id, new_owner));
+    state = disk;
+    assert(cloud_command_receive_bound(&state, new_owner, new_owner, "cmd-new", "cup", now + 1000, now, save, execute));
+    assert(executions == 4);
+    assert(!cloud_command_receive_bound(&state, new_owner, old_owner, "cmd-new", "cup", now + 1000, now, save, execute));
+    assert(executions == 4);
     return 0;
 }

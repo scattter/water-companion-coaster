@@ -5,6 +5,7 @@
 #include "device.h"
 #include "display.h"
 #include "network.h"
+#include "ble_provision.h"
 
 #if ESP_ARDUINO_VERSION_MAJOR != 3
 #error "请在开发板管理器安装 esp32 by Espressif Systems 3.x；本工程按 3.3.11 适配"
@@ -56,9 +57,11 @@ void loop()
         if (!pressed_at) pressed_at = millis();
         if (!handled && millis() - pressed_at >= 3000) {
             network_provision();
+            ble_provision_open();
             handled = true;
         }
     } else { pressed_at = 0; handled = false; }
+    if (startup_result == ESP_OK) ble_provision_poll();
     display_update(startup_result);
     delay(100);
 }
