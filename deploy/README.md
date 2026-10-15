@@ -14,7 +14,7 @@
 
 - Docker 与 Compose v2；能拉取 `node:24-bookworm-slim`、`nginx:stable-alpine`。
 - 域名已解析到本机，80/443 可用（设备固件要求**有效证书**的 HTTPS，不能省）。
-- 服务器时钟同步（`timedatectl set-ntp true`）：事件时间和 15 秒在线判定都依赖它。
+- 服务器时钟同步（`timedatectl set-ntp true`）：事件时间和 90 秒在线判定都依赖它。
 
 ## 二、首次部署
 
@@ -45,45 +45,39 @@ docker compose restart api
 curl -sS -H 'Host: 你的域名' http://127.0.0.1:8080/api/auth/session
 ```
 
-## 四、管理员初始化、签名配置与设备登记
+## 四、自动注册与管理员设置
 
-网站启动后，先注册要用作管理员的普通账号，再在服务器明确提升该账号。服务本身不会根据注册顺序分配管理员权限：
+0.7.0 杯垫在普通用户首次 BLE 配网时自动注册并绑定，设备编号与凭证由服务端生成。新部署不需要初始化签名密钥、逐台登记或通过 USB 写信任配置。设备服务 origin 默认取 `APP_ORIGIN`，生产必须使用有效 HTTPS 证书。
+
+只有需要维护配网地址或查看设备列表时，才把明确的已注册账号设为管理员；不会根据注册顺序自动授权：
 
 ```sh
 cd deploy
 docker compose exec api node server/dist/admin.js --username 已注册账号
 ```
 
-重新读取会话后，网站显示管理员入口。管理员无须先绑定杯垫。
+重新读取会话后显示管理入口，管理员无需先绑定杯垫。已保存的服务地址优先于环境默认值，不带 `/api` 路径。已登记设备的 BLE v2 重配保留原 origin，服务器迁移需保留账号、设备和绑定数据库，并按受控运维流程更新设备地址。
 
-首次启用蓝牙配网前，在持久卷内生成部署专用签名私钥：
+### 旧固件兼容（可选）
+
+仍有已部署的 0.6.x 签名设备时，保留原有签名配置。旧版签名工具继续保留供兼容运维：
 
 ```sh
 docker compose exec api node server/dist/provisioning-key.js --out /data/provisioning-private.pem
 ```
 
-工具只输出公开的 `deploymentId` 和 `publicKey`；私钥以受限权限保存在指定文件，不覆盖已有文件。把输出的部署 UUID 以及容器内文件路径写入 `deploy/.env`：
+工具只公开输出 `deploymentId` / `publicKey`，私钥以受限权限保存且不覆盖已有文件。将容器内路径及部署 UUID 写入 `deploy/.env` 后更新 api 容器环境：
 
 ```dotenv
 PROVISION_SIGNING_KEY_FILE=/data/provisioning-private.pem
 PROVISION_DEPLOYMENT_ID=工具输出的UUID
 ```
 
-再执行 `docker compose up -d api` 让新环境生效。部署身份与公钥首次写入数据库后固定；密钥/部署配置不匹配会拒绝启动，不会默默更换设备信任根。未配置签名时旧服务仍可运行，但不能签发新的蓝牙配网授权。
-
-工厂将 `{deploymentId,publicKey}` 包装成 `trust` USB 命令写入设备，原始设备 ID/token 仍逐台独立生成。完整步骤见 [出厂登记与蓝牙配网](../docs/factory-provisioning.md)。
-
-管理员进入网页的设备管理后：
-
-- 上传工厂导出的登记清单，或单台登记编号与 token。数据库只保存哈希；同编号同凭证幂等，冲突拒绝，不覆盖归属。
-- 设置设备服务器 HTTPS origin。首次默认取 HTTPS `APP_ORIGIN`，之后以数据库管理设置为准，服务重启不会恢复成旧环境值。
-- 地址不带 `/api` 路径，必须连接同一套部署、账号和绑定数据。普通用户在下次蓝牙配网时自动收到签名的地址配置。
-
-原 CLI `provision --import` 继续用于运维；新增设备后无需重新部署或重启 API。仅更新镜像不会同步工厂本机数据库，不要用本机库覆盖生产卷。
+0.7.2 已移除手工登记与清单导入；新设备统一升级后自动注册，已登记旧设备仍可使用原签名流程。签名配置缺失只阻止 v1 授权，不影响 v2 自动注册；固定部署或公钥不匹配仍拒绝启动。详情见 [出厂与兼容运维](../docs/factory-provisioning.md)。
 
 ## 五、备份与恢复
 
-数据库是命名卷 `coaster-data`，位于 `/data/coaster.sqlite`。SQLite 开了 WAL，**不要只复制主库文件**。还必须受控备份 `/data/provisioning-private.pem` 与 `PROVISION_DEPLOYMENT_ID`；数据库中的部署公钥会校验私钥是否匹配，丢失密钥后不能直接重新生成来恢复已交付设备的信任。
+数据库是命名卷 `coaster-data`，位于 `/data/coaster.sqlite`。SQLite 开了 WAL，**不要只复制主库文件**。若启用了旧版签名，还须受控备份 `/data/provisioning-private.pem` 与 `PROVISION_DEPLOYMENT_ID`；数据库中的部署公钥会校验私钥是否匹配，丢失密钥后不能直接重新生成来恢复已交付设备的信任。
 
 ```sh
 # 备份：VACUUM INTO 会生成一致的副本，包含尚未合并进主库的 WAL 内容
@@ -109,7 +103,7 @@ docker compose start api
 
 ```sh
 cd deploy
-# 1) 先备份数据库、签名私钥及部署UUID（见上）
+# 1) 先备份数据库；兼容旧版时也备份签名私钥和部署UUID（见上）
 git -C .. pull
 docker compose up -d --build
 docker compose ps
@@ -142,8 +136,6 @@ docker compose ps
 
 ## 九、本套件的验证状态
 
-本次已验证 TypeScript/Vue 类型检查、临时 SQLite/API 与蓝牙传输替身回归、网页生产构建和后端生产 JS 编译。编译后的密钥/管理员 CLI 通过独立临时目录验证（私钥 0600、不覆盖已有文件、明确账号提升权限）；Compose 示例配置通过 `docker compose config --quiet`。
+0.7.0 自动注册改动已进行 TypeScript/Vue 类型检查、临时数据库/API 测试、网页蓝牙传输替身测试及固件主机测试和目标语法检查。本轮未执行网页/固件完整构建、镜像构建、容器启动、部署或真机配对。
 
-浏览器在独立临时数据库验证了管理员登录、单台登记、清单粘贴导入、HTTPS 地址校验与保存、未绑定历史页面，以及手机宽度的添加向导。未连接真实 BLE 杯垫。
-
-**未验证**：本机 Docker daemon 未运行，无法执行镜像构建与容器启动；未部署、改动生产数据库、烧录或做真机配对。完整检查结果及硬件边界见 [验收记录](../docs/validation.md)。
+旧版部署、网页构建与浏览器验证记录保留在 [验收记录](../docs/validation.md)，不能代替本次改动的容器和硬件验收。

@@ -1,21 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { httpsOrigin, parseRegistry } from '../src/admin.ts';
+import { httpsOrigin } from '../src/admin.ts';
 import { ApiError, request } from '../src/api.ts';
-
-const registry = { version: 1, devices: [{ id: 'coaster-000001', tokenHash: 'a'.repeat(64), createdAt: 1720000000000 }] };
-
-test('admin import validates exported registries and refuses raw tokens, duplicate identities and malformed hashes', () => {
-  assert.deepEqual(parseRegistry(JSON.stringify(registry)), registry);
-  assert.throws(() => parseRegistry('{bad'), /JSON/);
-  assert.throws(() => parseRegistry(JSON.stringify({ ...registry, token: 'raw-secret' })), /清单/);
-  assert.throws(() => parseRegistry(JSON.stringify({ ...registry, devices: [{ ...registry.devices[0], token: 'raw-secret' }] })), /只能包含/);
-  assert.throws(() => parseRegistry(JSON.stringify({ ...registry, devices: [registry.devices[0], registry.devices[0]] })), /重复/);
-  assert.throws(() => parseRegistry(JSON.stringify({ ...registry, devices: [{ ...registry.devices[0], tokenHash: 'A'.repeat(64) }] })), /哈希/);
-});
 
 test('admin origin validation permits HTTPS origins and prevents URLs that change the request destination', () => {
   assert.equal(httpsOrigin(' https://water.example:8443/ '), 'https://water.example:8443');
+  assert.equal(httpsOrigin('http://192.168.1.10:3001', true), 'http://192.168.1.10:3001');
+  assert.throws(() => httpsOrigin('http://192.168.1.10:3001'));
+  for (const bad of ['http://127.0.0.1', 'http://localhost', 'http://8.8.8.8', 'http://172.32.1.1', 'http://192.168.evil.com']) assert.throws(() => httpsOrigin(bad, true));
   for (const bad of ['http://water.example', 'https://water.example/path', 'https://user:pass@water.example', 'https://water.example/?x=1',
     'https://water.example/#fragment', 'https://water.example/?', 'https://water.example/#', 'https://water.example.',
     'https://water_example.com', 'https://[::1]', 'https://water.example:0', 'https://water.example:abc',

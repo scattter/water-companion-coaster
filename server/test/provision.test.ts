@@ -1,35 +1,9 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { join, relative } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { createApp } from '../src/app.js';
-import { hash, openDatabase, projectRoot } from '../src/db.js';
+import { openDatabase } from '../src/db.js';
 import { cookieOf, event, fixture, headers, heartbeat } from './cloud-fixture.js';
-
-test('出厂CLI从workspace执行仍使用根目录数据库，凭证独立且不能重复覆盖', async (t) => {
-  const f = await fixture(t);
-  const run = (id: string, url = 'https://coaster.example') => spawnSync(process.execPath,
-    ['--import', 'tsx', 'src/provision.ts', '--id', id, '--url', url],
-    { cwd: join(projectRoot, 'server'), env: { ...process.env, DB_PATH: relative(projectRoot, f.dbPath) }, encoding: 'utf8' });
-  const result = run('coaster-000001');
-  assert.equal(result.status, 0, result.stderr);
-  const config = JSON.parse(result.stdout);
-  assert.equal(config.cmd, 'server'); assert.equal(config.id, 'coaster-000001'); assert.equal(config.url, 'https://coaster.example');
-  assert.match(config.token, /^[a-f0-9]{64}$/);
-  const db = openDatabase(f.dbPath);
-  assert.equal(db.prepare('SELECT token_hash FROM devices WHERE id = ?').get(config.id)!.token_hash, hash(config.token));
-  db.close();
-  const repeated = run('coaster-000001');
-  assert.equal(repeated.status, 1); assert.equal(repeated.stdout, ''); assert.match(repeated.stderr, /已存在/);
-  for (const url of ['', 'http://example.com', 'http://10.evil.com', 'http://127.0.0.1', 'http://localhost', 'https://coaster.example/api', 'https://coaster.example?test=1', 'https://user:password@coaster.example']) assert.equal(run('coaster-000002', url).status, 1);
-  for (const [id, url] of [['coaster-000003', 'http://192.168.1.10:3001'], ['coaster-000004', 'http://10.0.0.10:3001'], ['coaster-000005', 'http://172.16.0.10:3001']]) {
-    const local = run(id, url);
-    assert.equal(local.status, 0, local.stderr);
-    assert.equal(JSON.parse(local.stdout).url, url);
-  }
-  assert.equal(run('coaster-000002', 'https://coaster.example').status, 0);
-});
 
 test('旧版无明确归属的事件迁移后保留隔离，首次绑定不会取得历史', async (t) => {
   const f = await fixture(t);

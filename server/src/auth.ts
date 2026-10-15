@@ -53,6 +53,10 @@ export function authRoutes(app: FastifyInstance, db: DatabaseSync, options: {
 
   app.addHook('onRequest', async (request, reply) => {
     const path = request.routeOptions.url ?? request.url.split('?')[0];
+    if (path === '/api/enrollment/claim' || path === '/api/enrollment/query') {
+      if (request.headers.origin !== undefined || request.headers['sec-fetch-site'] !== undefined) fail('此接口仅供杯垫连接', 403);
+      return; // These two routes authenticate the short-lived operation ticket themselves.
+    }
     if (path.startsWith('/api/device/')) {
       if (request.headers.origin !== undefined || request.headers['sec-fetch-site'] === 'cross-site') fail('设备接口不接受浏览器跨域请求', 403);
       const id = request.headers['x-device-id'];

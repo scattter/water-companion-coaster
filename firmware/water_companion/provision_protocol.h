@@ -11,6 +11,7 @@
 #define PROVISION_INFO_UUID "7d2a0002-7b9c-4e6a-9f21-531bd67a0c10"
 #define PROVISION_CONFIG_UUID "7d2a0003-7b9c-4e6a-9f21-531bd67a0c10"
 #define PROVISION_STATUS_UUID "7d2a0004-7b9c-4e6a-9f21-531bd67a0c10"
+#define PROVISION_WIFI_UUID "7d2a0005-7b9c-4e6a-9f21-531bd67a0c10"
 
 typedef struct {
     uint32_t version;
@@ -49,6 +50,7 @@ extern "C" {
 bool provision_uuid(const char *value);
 bool provision_hex(const char *value, size_t bytes, uint8_t *output);
 bool provision_origin(const char *value);
+bool enrollment_origin(const char *value);
 bool provision_fresh(int64_t now_ms, int64_t challenge_ms, int64_t window_until_ms);
 void provision_frames_reset(provision_frames_t *frames);
 provision_frame_result_t provision_frame(provision_frames_t *frames, const uint8_t *data, size_t size, int64_t now_ms);
@@ -58,6 +60,7 @@ bool provision_payload(const char *payload, const provision_trust_t *trust, cons
 bool provision_verify_signature(const char *payload, const char *signature, const char *public_key);
 bool provision_public_key(const char *public_key);
 bool provision_fingerprint(const char *text, char output[65]);
+bool provision_identity_proof(const char *token, const char *operation, const char *hardware, const char *ticket, char output[65]);
 #ifdef __cplusplus
 }
 #endif

@@ -15,6 +15,10 @@
 #error "工具菜单：USB Mode 选择 Hardware CDC and JTAG，USB CDC On Boot 选择 Enabled"
 #endif
 
+#if !defined(BOARD_HAS_PSRAM) || !defined(CONFIG_SPIRAM_MODE_OCT)
+#error "工具菜单：PSRAM 选择 OPI PSRAM；事件索引需要板载 8 MB PSRAM"
+#endif
+
 static SemaphoreHandle_t console_lock;
 static esp_err_t startup_result = ESP_OK;
 
@@ -47,14 +51,14 @@ void setup()
 void loop()
 {
     if (startup_result != ESP_OK) {
-        Serial.printf("固件初始化失败：%s。请核对工程内的 partitions.csv 和开发板设置，保留 Flash 数据。\n",
+        Serial.printf("固件初始化失败：%s。发送 {\"cmd\":\"diagnostics\"} 查看启动阶段和内存；检查 OPI PSRAM，保留 Flash 数据。\n",
                       esp_err_to_name(startup_result));
         delay(2000);
     }
     static unsigned long pressed_at = 0;
     static bool handled = false;
     if (startup_result == ESP_OK && digitalRead(PROVISION_BUTTON_PIN) == LOW) {
-        if (!pressed_at) pressed_at = millis();
+        if (!pressed_at) { pressed_at = millis(); device_wake(); }
         if (!handled && millis() - pressed_at >= 3000) {
             network_provision();
             ble_provision_open();

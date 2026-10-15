@@ -16,7 +16,7 @@ export function publicKeyHex(privateKey: KeyObject): string {
 }
 interface Deployment { deploymentId: string; publicKey: string | null }
 interface Settings { serverUrl: string; configVersion: number }
-export function provisioningSigner(db: DatabaseSync, options: { signingKeyPath?: string; deploymentId?: string; serverUrl?: string; appOrigin?: string }) {
+export function provisioningSigner(db: DatabaseSync, options: { signingKeyPath?: string; deploymentId?: string; serverUrl?: string; appOrigin?: string; allowLocalHttp?: boolean }) {
   let privateKey: KeyObject | undefined;
   let publicKey: string | undefined;
   if (options.deploymentId !== undefined && (options.deploymentId.length !== 36 || !new RegExp(uuidPattern).test(options.deploymentId))) {
@@ -41,7 +41,7 @@ export function provisioningSigner(db: DatabaseSync, options: { signingKeyPath?:
     if (stored && !stored.publicKey && publicKey) db.prepare('UPDATE deployment SET public_key = ? WHERE singleton = 1').run(publicKey);
     if (!db.prepare('SELECT singleton FROM settings WHERE singleton = 1').get()) {
       const initial = options.serverUrl ?? (options.appOrigin?.startsWith('https://') ? options.appOrigin : undefined);
-      db.prepare('INSERT INTO settings (singleton, server_url) VALUES (1, ?)').run(initial === undefined ? '' : validateServerOrigin(initial));
+      db.prepare('INSERT INTO settings (singleton, server_url) VALUES (1, ?)').run(initial === undefined ? '' : validateServerOrigin(initial, options.allowLocalHttp));
     }
   });
   const deployment = db.prepare('SELECT deployment_id AS deploymentId, public_key AS publicKey FROM deployment WHERE singleton = 1').get() as unknown as Deployment | undefined;

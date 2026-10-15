@@ -194,7 +194,7 @@ test('新版命令确认要求当前批次，旧批次和旧协议心跳不刷�
   assert.equal((await f.web(user, `/api/control/commands/${id}`)).json().command.status, 'pending');
   await f.report('coaster-01', { ...heartbeat, provisioningVersion: 1, bindingId, commandResult: { id, ok: true, message: '', bindingId } });
   assert.equal((await f.web(user, `/api/control/commands/${id}`)).json().command.status, 'succeeded');
-  f.advance(15_001);
+  f.advance(90_001);
   await f.report();
   assert.equal((await f.web(user, '/api/dashboard')).json().device.online, false);
   assert.equal((await f.web(user, '/api/control/cup', { id: randomUUID() })).json().code, 'DEVICE_OFFLINE');
@@ -253,24 +253,17 @@ test('事件不能偷换批次或借用其他设备批次，冲突整批回滚',
   assert.equal((await f.web(one, '/api/dashboard')).json().events.length, 1);
 });
 
-test('管理员权限与公共注册隔离；HTTP与CLI共享原子登记核心，不返回凭证', async (t) => {
+test('管理员仅查看设备，旧版手工登记和清单导入接口已移除', async (t) => {
   const f = await signedFixture(t);
   const user = await f.register();
   assert.equal((await f.web(user, '/api/admin/devices')).json().code, 'ADMIN_REQUIRED');
   assert.equal((await f.app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'self_admin', password: 'password-123', role: 'admin' } })).statusCode, 400);
   await f.promote(user);
   assert.equal((await f.web(user, '/api/auth/session')).json().user.role, 'admin');
-  const device = { id: 'coaster-000101', token: 'admin-manual-token-123' };
-  assert.deepEqual((await f.web(user, '/api/admin/devices', device)).json(), { inserted: 1, skipped: 0 });
-  assert.deepEqual((await f.web(user, '/api/admin/devices', device)).json(), { inserted: 0, skipped: 1 });
-  assert.equal((await f.web(user, '/api/admin/devices', { ...device, token: 'changed-token-12345' })).json().code, 'DEVICE_CREDENTIAL_CONFLICT');
-  const devices = [{ id: 'coaster-000102', tokenHash: hash('import-new-secret'), createdAt: 100 }, { id: device.id, tokenHash: hash('conflict-secret'), createdAt: 100 }];
-  assert.equal((await f.web(user, '/api/admin/devices/import', { version: 1, devices })).statusCode, 409);
-  assert.equal((await f.web(user, '/api/admin/devices')).body.includes('coaster-000102'), false);
-  assert.equal((await f.web(user, '/api/admin/devices/import', { version: 1, devices: [devices[0], devices[0]] })).json().code, 'INVALID_REGISTRY');
-  assert.deepEqual((await f.web(user, '/api/admin/devices/import', { version: 1, devices: [{ id: device.id, tokenHash: hash(device.token), createdAt: 0 }] })).json(), { inserted: 0, skipped: 1 });
+  assert.equal((await f.web(user, '/api/admin/devices', { id: 'coaster-000101', token: 'removed-token-12345' })).statusCode, 404);
+  assert.equal((await f.web(user, '/api/admin/devices/import', { version: 1, devices: [] })).statusCode, 404);
   const listing = await f.web(user, '/api/admin/devices');
-  for (const value of [device.token, hash(device.token), 'tokenHash', 'token_hash']) assert.equal(listing.body.includes(value), false);
+  for (const value of ['test-token-coaster-01', hash('test-token-coaster-01'), 'tokenHash', 'token_hash']) assert.equal(listing.body.includes(value), false);
   assert.deepEqual(Object.keys(listing.json().devices[0]).sort(), ['bound', 'createdAt', 'id', 'username']);
 });
 
@@ -387,7 +380,7 @@ test('版本化迁移为明确归属生成legacy批次，未归属隔离，重�
   }
   old.close();
   let db = openDatabase(dbPath);
-  assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 3);
+  assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 4);
   const bindingId = db.prepare('SELECT binding_id FROM devices WHERE id = ?').get('owned')!.binding_id;
   assert.ok(bindingId);
   assert.equal(db.prepare('SELECT binding_id FROM device_events WHERE device_id = ?').get('owned')!.binding_id, bindingId);

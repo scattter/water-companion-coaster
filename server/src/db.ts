@@ -99,6 +99,20 @@ const migrations: ((db: DatabaseSync) => void)[] = [
     CREATE INDEX provisioning_user ON provisioning_operations(user_id, created_at);
     CREATE INDEX provisioning_device ON provisioning_operations(device_id, status);
   `),
+  (db) => db.exec(`
+    ALTER TABLE devices ADD COLUMN hardware_id TEXT;
+    CREATE UNIQUE INDEX devices_hardware ON devices(hardware_id) WHERE hardware_id IS NOT NULL;
+    CREATE TABLE enrollment_operations (
+      id TEXT PRIMARY KEY, hardware_id TEXT NOT NULL, device_id TEXT REFERENCES devices(id),
+      user_id TEXT NOT NULL REFERENCES users(id), challenge TEXT NOT NULL, server_url TEXT NOT NULL,
+      ticket_hash TEXT NOT NULL, credential TEXT, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('issued', 'claimed', 'completed', 'failed', 'cancelled', 'expired')),
+      binding_id TEXT REFERENCES device_bindings(id), code TEXT, message TEXT,
+      UNIQUE(hardware_id, challenge)
+    );
+    CREATE INDEX enrollment_device ON enrollment_operations(hardware_id, status);
+    CREATE INDEX enrollment_user ON enrollment_operations(user_id, created_at);
+  `),
 ];
 
 export function openDatabase(path?: string) {

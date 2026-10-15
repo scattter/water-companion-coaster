@@ -381,16 +381,25 @@ static esp_err_t handle(httpd_req_t *request)
     return send_json(request, response);
 }
 
+// Startup hands ownership to network_task; callers must not hold Wi-Fi/status locks.
+static httpd_handle_t server = nullptr;
+static bool routes_ready;
+
 esp_err_t control_start(void)
 {
+    if (server) {
+        if (routes_ready) return ESP_OK;
+        esp_err_t result = control_stop();
+        if (result != ESP_OK) return result;
+    }
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 8192;
     config.max_open_sockets = 4;
     config.lru_purge_enable = true;
     config.recv_wait_timeout = 3;
     config.send_wait_timeout = 3;
-    httpd_handle_t server = nullptr;
-    esp_err_t result = httpd_start(&server, &config);
+    httpd_handle_t started = nullptr;
+    esp_err_t result = httpd_start(&started, &config);
     if (result != ESP_OK) return result;
     const char *paths[] = { "/", "/api/status", "/api/wifi-scan", "/api/command", "/api/time", "/api/binding" };
     for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
@@ -398,8 +407,26 @@ esp_err_t control_start(void)
         route.uri = paths[i];
         route.method = i < 3 ? HTTP_GET : HTTP_POST;
         route.handler = handle;
-        result = httpd_register_uri_handler(server, &route);
-        if (result != ESP_OK) { httpd_stop(server); return result; }
+        result = httpd_register_uri_handler(started, &route);
+        if (result != ESP_OK) {
+            // Keep ownership if cleanup fails; a later start/stop must reclaim it.
+            server = started;
+            esp_err_t stop_result = control_stop();
+            return stop_result == ESP_OK ? result : stop_result;
+        }
     }
+    server = started;
+    routes_ready = true;
     return ESP_OK;
+}
+
+esp_err_t control_stop(void)
+{
+    if (!server) return ESP_OK;
+    esp_err_t result = httpd_stop(server);
+    if (result == ESP_OK) {
+        server = nullptr;
+        routes_ready = false;
+    }
+    return result;
 }

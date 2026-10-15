@@ -1,5 +1,5 @@
 import { ApiError } from './api';
-import type { BleStatus, DeviceInfo, ProvisionConfig } from './ble';
+import type { BleStatus, DeviceInfo, ProvisionConfig, WifiNetwork } from './ble';
 import { validateWifi } from './ble';
 import type { Session } from './session';
 import { sameBinding, uuidPattern } from './session';
@@ -10,9 +10,18 @@ export interface AuthorizationResult {
   expiresAt: number;
   authorization: { payload: string; signature: string };
 }
+export interface EnrollmentResult {
+  operationId: string;
+  hardwareId: string;
+  deviceId: string | null;
+  serverUrl: string;
+  ticket: string;
+  expiresAt: number;
+}
 export interface OperationStatus {
   operationId: string;
-  deviceId: string;
+  deviceId: string | null;
+  hardwareId?: string;
   status: 'issued' | 'claimed' | 'completed' | 'failed' | 'cancelled' | 'expired';
   bindingId: string | null;
   code?: string;
@@ -23,6 +32,8 @@ export interface RememberedOperation {
   deviceId: string;
   deploymentId: string;
   expiresAt: number;
+  protocolVersion?: 1 | 2;
+  hardwareId?: string;
 }
 export interface ProvisionState {
   info: DeviceInfo | null;
@@ -35,6 +46,9 @@ export interface ProvisionState {
   complete: boolean;
   message: string;
   error: string;
+  wifiNetworks: WifiNetwork[];
+  scanning: boolean;
+  scanError: string;
 }
 interface Storage {
   getItem(key: string): string | null;
@@ -46,6 +60,7 @@ export interface ProvisionTransport {
   choose(): Promise<DeviceInfo>;
   reconnect(): Promise<DeviceInfo>;
   readStatus(): Promise<BleStatus>;
+  scanWifi(): Promise<WifiNetwork[]>;
   send(config: ProvisionConfig): Promise<void>;
   disconnect(): void;
 }
@@ -69,7 +84,7 @@ const stages: Record<BleStatus['stage'], string> = {
 const failureCodes: Record<string, string> = {
   INVALID_FRAME: '蓝牙数据帧未完整送达，请重连并查询本次结果。',
   CHALLENGE_EXPIRED: '蓝牙配网会话已过期，请重新开启杯垫配网窗口。',
-  INVALID_AUTHORIZATION: '配网授权校验未通过，请联系管理员检查设备信任与部署配置。',
+  INVALID_AUTHORIZATION: '本次配置与设备或配网会话不符，请重新连接杯垫；已有设备需使用原服务地址。',
   WIFI_FAILED: 'Wi-Fi 连接失败，请检查网络名称和密码。',
   WIFI_CONNECT_FAILED: 'Wi-Fi 连接失败，请检查网络名称和密码。',
   INTERRUPTED: '上次配网在完成前中断，请重新连接杯垫并开始配网。',
@@ -82,6 +97,8 @@ const failureCodes: Record<string, string> = {
   SERVER_URL_NOT_CONFIGURED: '管理员尚未配置配网服务器地址，请联系管理员处理。',
   CONFIG_CHANGED: '管理员已更新服务器配置，本次授权已作废，请重新配网。',
   BINDING_ENDED: '当前绑定已结束，本次配网操作已作废。',
+  DEVICE_MISMATCH: '设备身份与已有记录不一致，请确认连接的是原来的杯垫。',
+  DEVICE_AUTH_FAILED: '设备身份验证失败，请继续查询上次配网结果，或重新连接原设备。',
   OPERATION_EXPIRED: '本次授权已过期，请重新连接杯垫并开始配网。',
 };
 export function provisioningFailure(code?: string) { return code ? failureCodes[code] : undefined; }
@@ -92,11 +109,13 @@ export class ProvisionFlow {
   readonly state: ProvisionState = {
     info: null, operation: null, server: null, ble: null, connected: false, busy: false, paused: false,
     complete: false, message: '', error: '',
+    wifiNetworks: [], scanning: false, scanError: '',
   };
   private version = 0;
+  private scanVersion = 0;
   private disposed = false;
   private polling: number | null = null;
-  private authorization: AuthorizationResult | null = null;
+  private authorization: AuthorizationResult | EnrollmentResult | null = null;
   private authorizationChallenge: string | null = null;
   private issuing = false;
   private sentOnConnection: string | null = null;
@@ -116,9 +135,10 @@ export class ProvisionFlow {
       const raw = deps.storage.getItem(this.key);
       if (raw) {
         const value = JSON.parse(raw) as RememberedOperation;
-        if (!uuidPattern.test(value.operationId) || !uuidPattern.test(value.deploymentId)
+        if (!uuidPattern.test(value.operationId) || (value.protocolVersion === 2 ? !/^[a-f0-9]{12}$/.test(value.hardwareId ?? '') : !uuidPattern.test(value.deploymentId))
           || typeof value.deviceId !== 'string' || !Number.isFinite(value.expiresAt)) throw new Error();
-        this.state.operation = { operationId: value.operationId, deploymentId: value.deploymentId, deviceId: value.deviceId, expiresAt: value.expiresAt };
+        this.state.operation = { operationId: value.operationId, deploymentId: value.deploymentId, deviceId: value.deviceId, expiresAt: value.expiresAt,
+          ...(value.protocolVersion === 2 ? { protocolVersion: 2, hardwareId: value.hardwareId } : {}) };
         this.state.message = '找到上次配网，先查询同一次操作。刷新后无需重新发送密码。';
         this.pollUntil = this.now() + 120000;
       }
@@ -150,6 +170,31 @@ export class ProvisionFlow {
       && this.state.info?.challenge === this.authorizationChallenge && this.now() < (this.authorization?.expiresAt ?? 0);
   }
 
+  get canScanWifi() {
+    return this.state.connected && this.state.info?.wifiScan === true && !this.state.complete && (this.canStart || this.canResend);
+  }
+
+  async scanWifi() {
+    if (!this.canScanWifi || this.state.busy || this.disposed) return;
+    const version = this.version;
+    const scanVersion = ++this.scanVersion;
+    const current = () => this.valid(version) && scanVersion === this.scanVersion && this.state.connected;
+    this.state.scanning = this.state.busy = true;
+    this.state.scanError = '';
+    this.publish();
+    try {
+      const networks = await this.deps.transport.scanWifi();
+      if (current()) this.state.wifiNetworks = networks;
+    } catch (cause) {
+      if (current()) this.state.scanError = cause instanceof Error ? cause.message : '扫描未完成，请稍后重试。';
+    } finally {
+      if (this.valid(version) && scanVersion === this.scanVersion) {
+        this.state.scanning = this.state.busy = false;
+        this.publish();
+      }
+    }
+  }
+
   async connect(reconnect = false) {
     if (this.state.busy || this.disposed) return;
     const version = this.version;
@@ -161,6 +206,10 @@ export class ProvisionFlow {
     }
     this.state.complete = false;
     this.state.busy = true;
+    this.state.connected = false;
+    this.state.info = null;
+    this.state.wifiNetworks = [];
+    this.state.scanError = '';
     this.state.error = '';
     this.state.message = '请按系统提示确认配对，或输入杯垫屏幕上的配对码。';
     this.publish();
@@ -168,10 +217,12 @@ export class ProvisionFlow {
       // choose() is invoked synchronously from the click handler.
       const info = await (reconnect ? this.deps.transport.reconnect() : this.deps.transport.choose());
       if (!this.valid(version)) return;
-      if (!info.trusted) throw new Error('untrusted');
+      if (info.protocolVersion === 1 && !info.trusted) throw new Error('untrusted');
       const target = this.state.operation && !this.canStart ? this.state.operation.deviceId : this.initialSession.deviceId;
-      if (target && info.deviceId !== target) throw new Error('wrong-device');
-      if (this.state.operation && !this.canStart && info.deploymentId !== this.state.operation.deploymentId) throw new Error('wrong-deployment');
+      if (this.state.operation?.protocolVersion === 2 && !this.canStart) {
+        if (info.hardwareId !== this.state.operation.hardwareId) throw new Error('wrong-device');
+      } else if (target && info.deviceId !== target && !(info.protocolVersion === 2 && !info.deviceId)) throw new Error('wrong-device');
+      if (info.protocolVersion === 1 && this.state.operation && !this.canStart && info.deploymentId !== this.state.operation.deploymentId) throw new Error('wrong-deployment');
       if (this.authorizationChallenge && info.challenge !== this.authorizationChallenge) this.authorization = null;
       this.state.info = info;
       this.state.connected = true;
@@ -186,11 +237,12 @@ export class ProvisionFlow {
       const name = cause instanceof Error ? cause.name : '';
       this.state.error = name === 'NotFoundError' || name === 'AbortError' ? '已取消蓝牙选择或配对，可再次选择杯垫。'
         : cause instanceof Error && cause.message === 'wrong-device' ? '所选杯垫不是本次操作或当前账号的设备，请选择同一台杯垫。'
-        : cause instanceof Error && ['untrusted', 'wrong-deployment'].includes(cause.message) ? '设备尚未建立本部署的信任，请联系管理员通过 USB 配置。'
+        : cause instanceof Error && ['untrusted', 'wrong-deployment'].includes(cause.message) ? '当前为旧版配网固件，请升级至 0.7.0 或更新版本以自动注册绑定。'
         : '蓝牙连接失败或超时。请确认蓝牙已打开、杯垫处于配网窗口，并按系统提示完成配对。';
     } finally {
       if (this.valid(version)) { this.state.busy = false; this.publish(); }
     }
+    if (this.valid(version) && this.canScanWifi) await this.scanWifi();
   }
 
   async start(ssid: string, password: string) {
@@ -216,13 +268,16 @@ export class ProvisionFlow {
       this.deps.storage.setItem(this.key, JSON.stringify({ storageCheck: true }));
       this.deps.storage.removeItem(this.key);
       this.state.operation = null;
-      const result = await this.deps.request<AuthorizationResult>('/api/provisioning/operations', {
-        deviceId: info.deviceId, deploymentId: info.deploymentId, challenge: info.challenge,
-      });
+      const result = info.protocolVersion === 2
+        ? await this.deps.request<EnrollmentResult>('/api/enrollment/operations', { hardwareId: info.hardwareId, deviceId: info.deviceId || null, challenge: info.challenge })
+        : await this.deps.request<AuthorizationResult>('/api/provisioning/operations', { deviceId: info.deviceId, deploymentId: info.deploymentId, challenge: info.challenge });
       if (!uuidPattern.test(result.operationId) || !Number.isFinite(result.expiresAt)
-        || !result.authorization || typeof result.authorization.payload !== 'string' || !/^[0-9a-f]{128}$/i.test(result.authorization.signature)) throw new Error('invalid-authorization');
+        || ('ticket' in result ? !/^[a-f0-9]{64}$/.test(result.ticket) || result.hardwareId !== info.hardwareId || typeof result.serverUrl !== 'string'
+          : !result.authorization || typeof result.authorization.payload !== 'string' || !/^[0-9a-f]{128}$/i.test(result.authorization.signature))) throw new Error('invalid-authorization');
       issued = true;
-      const operation = { operationId: result.operationId, deviceId: info.deviceId, deploymentId: info.deploymentId, expiresAt: result.expiresAt };
+      const operation: RememberedOperation = { operationId: result.operationId, deviceId: 'ticket' in result ? result.deviceId ?? '' : info.deviceId,
+        deploymentId: info.deploymentId, expiresAt: result.expiresAt,
+        ...(info.protocolVersion === 2 ? { protocolVersion: 2, hardwareId: info.hardwareId } : {}) };
       if (!this.disposed) this.state.operation = operation;
       // A cancel while HTTP was in flight must still preserve the returned ID, but never send it.
       this.deps.storage.setItem(this.key, JSON.stringify(operation));
@@ -238,7 +293,7 @@ export class ProvisionFlow {
       this.state.message = '正在发送配置。密码不会保存到浏览器。';
       this.publish();
       this.sentOnConnection = result.operationId;
-      await this.deps.transport.send({ protocolVersion: 1, operationId: result.operationId, ssid, password, authorization: result.authorization });
+      await this.deps.transport.send(this.config(result, info.challenge, ssid, password));
       if (!this.valid(version)) return;
       this.state.message = '配置已发送，等待连接云端并持久保存。';
     } catch (cause) {
@@ -253,6 +308,13 @@ export class ProvisionFlow {
     }
   }
 
+  private config(result: AuthorizationResult | EnrollmentResult, challenge: string, ssid: string, password: string): ProvisionConfig {
+    return 'ticket' in result
+      ? { protocolVersion: 2, operationId: result.operationId, hardwareId: result.hardwareId, challenge, ssid, password,
+        serverUrl: result.serverUrl, ticket: result.ticket, expiresAt: result.expiresAt }
+      : { protocolVersion: 1, operationId: result.operationId, ssid, password, authorization: result.authorization };
+  }
+
   async resend(ssid: string, password: string) {
     if (this.state.busy || !this.canResend || !this.authorization || !this.state.operation) return;
     const version = this.version;
@@ -262,7 +324,7 @@ export class ProvisionFlow {
     try {
       validateWifi(ssid, password);
       this.sentOnConnection = this.state.operation.operationId;
-      await this.deps.transport.send({ protocolVersion: 1, operationId: this.state.operation.operationId, ssid, password, authorization: this.authorization.authorization });
+      await this.deps.transport.send(this.config(this.authorization, this.authorizationChallenge!, ssid, password));
       if (this.valid(version)) this.state.message = '已重发同一次配置，等待设备确认。';
     } catch (cause) {
       if (this.valid(version)) this.failure(cause, '重发结果未确认，请继续查询同一次操作。');
@@ -295,6 +357,9 @@ export class ProvisionFlow {
 
   disconnected() {
     if (this.disposed) return;
+    ++this.scanVersion;
+    if (this.state.scanning) this.state.scanning = this.state.busy = false;
+    this.state.wifiNetworks = [];
     this.state.connected = false;
     this.sentOnConnection = null;
     this.state.message = this.state.operation ? '蓝牙已断开；配网可能仍在继续，将查询云端结果。可重连同一台杯垫。' : '蓝牙已断开，请重新连接杯垫。';
@@ -323,10 +388,15 @@ export class ProvisionFlow {
     const failureVersion = this.deviceFailureVersion;
     const current = () => this.valid(version) && this.state.operation?.operationId === operation.operationId;
     try {
-      const status = await this.deps.request<OperationStatus>(`/api/provisioning/operations/${encodeURIComponent(operation.operationId)}`);
+      const status = await this.deps.request<OperationStatus>(`/api/${operation.protocolVersion === 2 ? 'enrollment' : 'provisioning'}/operations/${encodeURIComponent(operation.operationId)}`);
       if (!current()) return;
-      if (status.operationId !== operation.operationId || status.deviceId !== operation.deviceId
+      if (status.operationId !== operation.operationId
+        || (operation.protocolVersion === 2 ? status.hardwareId !== operation.hardwareId || (operation.deviceId && status.deviceId !== operation.deviceId) : status.deviceId !== operation.deviceId)
         || !['issued', 'claimed', 'completed', 'failed', 'cancelled', 'expired'].includes(status.status)) throw new Error('wrong-operation');
+      if (operation.protocolVersion === 2 && status.deviceId && !operation.deviceId) {
+        operation.deviceId = status.deviceId;
+        this.deps.storage.setItem(this.key, JSON.stringify(operation));
+      }
       this.state.server = status;
       this.deviceFailureConfirmed = status.status === 'issued' && this.state.ble?.stage === 'failed'
         && this.rejectedChallenge !== null && failureVersion === this.deviceFailureVersion;
@@ -373,6 +443,9 @@ export class ProvisionFlow {
 
   pause() {
     ++this.version;
+    ++this.scanVersion;
+    this.state.scanning = false;
+    this.state.wifiNetworks = [];
     this.state.busy = false;
     this.state.paused = true;
     this.state.connected = false;

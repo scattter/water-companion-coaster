@@ -1,5 +1,7 @@
 # BLE 配网 v1 实现契约
 
+此文档保留 0.6.x 签名配网兼容协议。0.7.0 默认使用 [自动注册 v2](ble-provisioning-v2.md)，无需逐台登记或写入部署信任配置。v1 固件仍要求 HTTPS；管理员设置响应新增 `allowLocalHttp`，该开关仅用于开发环境 v2。
+
 本次内部跨端契约；实现后同步到用户协议文档。地址均为 HTTPS origin（无路径/查询/凭据/fragment），最长 191 UTF-8 字节，配置在同一部署的数据和信任范围内。
 
 ## 标识与签名
@@ -21,11 +23,11 @@
 
 ## 网页/管理员 API
 
+0.7.2 起手工登记与清单导入接口已移除，新增设备使用 v2 自动注册；本节其余接口继续服务已登记旧设备。
+
 沿用同源JSON/Cookie；错误 `{error,code?}`；Session增加 `user.role:'user'|'admin'`, `bindingId:string|null`。
 
 - GET `/api/admin/devices` -> `{devices:[{id,createdAt,bound:boolean,username:string|null}]}`。
-- POST `/api/admin/devices` `{id,token}` -> `{inserted:number,skipped:number}`；同编号同hash幂等，冲突409，永不返回token。
-- POST `/api/admin/devices/import` `{version:1,devices:[{id,tokenHash,createdAt}]}` -> `{inserted,skipped}`。
 - GET `/api/admin/settings` -> `{serverUrl,configVersion,deploymentId,publicKey,signingReady}`。
 - POST `/api/admin/settings` `{serverUrl}` -> 同GET；生产仅HTTPS origin。签名密钥不通过HTTP配置。
 - POST `/api/provisioning/operations` `{deviceId,deploymentId,challenge}` -> `{operationId,serverUrl,expiresAt,authorization:{payload,signature}}`。授权包含ticket；网页不解析其安全决策。

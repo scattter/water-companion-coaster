@@ -1,13 +1,19 @@
 #include <Arduino.h>
+// ble_hs_stop.h 缺少 C 链接声明，必须先于 Arduino BLE 头文件按 C 接口引入。
+extern "C" {
+#include <host/ble_hs.h>
+#include <host/ble_hs_mbuf.h>
+}
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLESecurity.h>
-#include <host/ble_hs.h>
-#include <host/ble_hs_mbuf.h>
 #include "esp_random.h"
+#include "esp_bt.h"
 #include "esp_timer.h"
 #include "ble_provision.h"
 #include "provisioning.h"
+#include "network.h"
+#include "device.h"
 #include "cJSON.h"
 
 #if !defined(CONFIG_NIMBLE_ENABLED)
@@ -24,17 +30,87 @@ static uint16_t connection_id = BLE_HS_CONN_HANDLE_NONE;
 static bool authenticated, advertising, open_requested, pairing, subscribed;
 static uint32_t passkey;
 static int64_t window_until_ms, challenge_ms;
-static char challenge[65], identity[65];
-static provision_trust_t root;
+static char challenge[65];
+static char hardware_id[13];
 static provision_frames_t frames;
 static struct {
     char operation[37], stage[24], message[120], code[40];
     uint32_t sequence;
 } current = {"", "idle", "Ready", "", 0};
 static uint32_t notified_sequence;
+static int64_t completed_ms, start_retry_ms;
+static bool disconnecting, radio_disabled, host_stopping, host_stopped;
+static ble_hs_stop_listener stop_listener;
+enum class ScanState { Idle, Scanning, Ready, Failed };
+static ScanState scan_state = ScanState::Idle;
+static bool scan_running;
+static uint32_t scan_generation;
+static esp_err_t scan_error;
+static uint8_t scan_count, scan_index;
+static struct {
+    char ssid[33];
+    int8_t rssi;
+    uint8_t channel;
+    bool secure;
+} scan_networks[20];
 
 static int64_t now_ms() { return esp_timer_get_time() / 1000; }
 static bool open_locked() { return now_ms() < window_until_ms; }
+
+static void reset_wifi_scan()
+{
+    ++scan_generation;
+    scan_state = ScanState::Idle;
+    scan_count = scan_index = 0;
+}
+
+static void scan_wifi(void *argument)
+{
+    const uint32_t generation = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(argument));
+    uint16_t count = sizeof(scan_networks) / sizeof(scan_networks[0]);
+    auto *records = static_cast<wifi_ap_record_t *>(calloc(count, sizeof(wifi_ap_record_t)));
+    esp_err_t result = records ? network_scan(records, &count) : ESP_ERR_NO_MEM;
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    // 断开或更换杯垫会话后，旧扫描不能覆盖新会话的结果。
+    if (generation == scan_generation && authenticated && open_locked()) {
+        scan_count = scan_index = 0;
+        scan_error = result;
+        scan_state = result == ESP_OK ? ScanState::Ready : ScanState::Failed;
+        for (uint16_t i = 0; result == ESP_OK && i < count && scan_count < 20; ++i) {
+            records[i].ssid[32] = 0;
+            if (!records[i].ssid[0] || records[i].primary < 1 || records[i].primary > 14) continue;
+            auto &network = scan_networks[scan_count++];
+            strcpy(network.ssid, reinterpret_cast<const char *>(records[i].ssid));
+            network.rssi = records[i].rssi;
+            network.channel = records[i].primary;
+            network.secure = records[i].authmode != WIFI_AUTH_OPEN;
+        }
+    }
+    scan_running = false;
+    xSemaphoreGive(mutex);
+    free(records);
+    vTaskDelete(nullptr);
+}
+
+static void request_wifi_scan()
+{
+    if (scan_running && scan_state == ScanState::Scanning) return;
+    scan_count = scan_index = 0;
+    if (scan_running || provisioning_busy() || frames.active) {
+        scan_state = ScanState::Failed;
+        scan_error = ESP_ERR_WIFI_STATE;
+        return;
+    }
+    scan_state = ScanState::Scanning;
+    scan_running = true;
+    // 阻塞扫描放在短期任务中，避免占住 BLE 回调或屏幕/按键循环。
+    if (xTaskCreate(scan_wifi, "coaster-scan", 4096,
+        reinterpret_cast<void *>(static_cast<uintptr_t>(scan_generation)), 1, nullptr) != pdPASS) {
+        scan_running = false;
+        scan_state = ScanState::Failed;
+        scan_error = ESP_ERR_NO_MEM;
+    }
+}
 
 void ble_provision_status(const char *operation, const char *stage, const char *message, const char *code)
 {
@@ -47,6 +123,7 @@ void ble_provision_status(const char *operation, const char *stage, const char *
         snprintf(current.message, sizeof(current.message), "%s", message);
         snprintf(current.code, sizeof(current.code), "%s", code ? code : "");
         ++current.sequence;
+        if (!strcmp(stage, "completed")) completed_ms = now_ms();
     }
     if (mutex) xSemaphoreGive(mutex);
 }
@@ -68,11 +145,14 @@ class Reads : public BLECharacteristicCallbacks {
         }
         cJSON *json = cJSON_CreateObject();
         if (characteristic == info_characteristic) {
-            cJSON_AddNumberToObject(json, "protocolVersion", 1);
-            cJSON_AddStringToObject(json, "deviceId", identity);
-            cJSON_AddStringToObject(json, "deploymentId", root.deployment_id);
+            device_config_t config;
+            device_config_snapshot(&config, NULL);
+            cJSON_AddNumberToObject(json, "protocolVersion", 2);
+            cJSON_AddStringToObject(json, "deviceId", config.token[0] ? config.device_id : "");
+            cJSON_AddStringToObject(json, "hardwareId", hardware_id);
             cJSON_AddStringToObject(json, "challenge", challenge);
-            cJSON_AddBoolToObject(json, "trusted", root.version == 1);
+            cJSON_AddBoolToObject(json, "wifiScan", true);
+            memset(&config, 0, sizeof(config));
         } else {
             cJSON_AddStringToObject(json, "operationId", current.operation);
             cJSON_AddStringToObject(json, "stage", current.stage);
@@ -96,7 +176,7 @@ class Writes : public BLECharacteristicCallbacks {
         xSemaphoreTake(mutex, portMAX_DELAY);
         bool allowed = authenticated && connection_id == desc->conn_handle && open_locked()
             && desc->sec_state.encrypted && desc->sec_state.authenticated;
-        if (!allowed || provisioning_busy()) {
+        if (!allowed || provisioning_busy() || scan_running) {
             characteristic->setValue("");
             provision_frames_reset(&frames);
             xSemaphoreGive(mutex);
@@ -116,6 +196,48 @@ class Writes : public BLECharacteristicCallbacks {
         xSemaphoreGive(mutex);
         if (result == PROVISION_FRAME_ERROR) ble_provision_status("", "failed", "Invalid or expired frame", "INVALID_FRAME");
         else if (submitted != ESP_OK) ble_provision_status("", "failed", "Reconnect for a fresh authorization", "CHALLENGE_EXPIRED");
+    }
+};
+
+class Wifi : public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *characteristic, ble_gap_conn_desc *desc) override {
+        xSemaphoreTake(mutex, portMAX_DELAY);
+        bool allowed = authenticated && connection_id == desc->conn_handle && open_locked()
+            && desc->sec_state.encrypted && desc->sec_state.authenticated;
+        String data = characteristic->getValue();
+        characteristic->setValue("");
+        if (allowed) {
+            if (data.length() == 1 && data[0] == 1) request_wifi_scan();
+            else if (data.length() == 2 && data[0] == 2 && scan_state == ScanState::Ready
+                && static_cast<uint8_t>(data[1]) < scan_count) scan_index = static_cast<uint8_t>(data[1]);
+        }
+        xSemaphoreGive(mutex);
+    }
+    void onRead(BLECharacteristic *characteristic, ble_gap_conn_desc *desc) override {
+        xSemaphoreTake(mutex, portMAX_DELAY);
+        if (!authenticated || desc->conn_handle != connection_id || !open_locked()) {
+            characteristic->setValue("");
+            xSemaphoreGive(mutex);
+            return;
+        }
+        cJSON *json = cJSON_CreateObject();
+        const char *state = scan_state == ScanState::Scanning ? "scanning" : scan_state == ScanState::Ready ? "ready"
+            : scan_state == ScanState::Failed ? "failed" : "idle";
+        cJSON_AddStringToObject(json, "state", state);
+        cJSON_AddNumberToObject(json, "count", scan_count);
+        if (scan_state == ScanState::Failed)
+            cJSON_AddStringToObject(json, "code", scan_error == ESP_ERR_WIFI_STATE ? "WIFI_BUSY" : "SCAN_FAILED");
+        if (scan_state == ScanState::Ready && scan_index < scan_count) {
+            cJSON_AddNumberToObject(json, "index", scan_index);
+            cJSON *network = cJSON_AddObjectToObject(json, "network");
+            cJSON_AddStringToObject(network, "ssid", scan_networks[scan_index].ssid);
+            cJSON_AddNumberToObject(network, "rssi", scan_networks[scan_index].rssi);
+            cJSON_AddNumberToObject(network, "channel", scan_networks[scan_index].channel);
+            cJSON_AddBoolToObject(network, "secure", scan_networks[scan_index].secure);
+        }
+        // 每次只读一个网络，中文及转义后的名称也不会超过 GATT 的 512 字节上限。
+        characteristic_json(characteristic, json);
+        xSemaphoreGive(mutex);
     }
 };
 
@@ -165,6 +287,7 @@ class Connections : public BLEServerCallbacks {
             for (unsigned i = 0; i < sizeof(random); ++i) snprintf(challenge + i * 2, 3, "%02x", random[i]);
             challenge_ms = now_ms();
             provision_frames_reset(&frames);
+            reset_wifi_scan();
             uint32_t value;
             do { value = esp_random() % 1000000; } while (value == 123456);
             BLESecurity::setPassKey(true, value);
@@ -177,22 +300,32 @@ class Connections : public BLEServerCallbacks {
         xSemaphoreTake(mutex, portMAX_DELAY);
         if (desc->conn_handle == connection_id) {
             connection_id = BLE_HS_CONN_HANDLE_NONE;
-            authenticated = pairing = subscribed = false;
+            authenticated = pairing = subscribed = disconnecting = false;
             memset(challenge, 0, sizeof(challenge));
             provision_frames_reset(&frames);
+            reset_wifi_scan();
         }
         xSemaphoreGive(mutex);
     }
 };
 
-esp_err_t ble_provision_start(const char *device_id, const provision_trust_t *trust, bool initial)
+static esp_err_t start_radio(void)
 {
-    mutex = xSemaphoreCreateMutex();
-    if (!mutex) return ESP_ERR_NO_MEM;
-    snprintf(identity, sizeof(identity), "%s", device_id);
-    root = *trust;
+    if (server) {
+        if (radio_disabled && esp_bt_controller_enable(ESP_BT_MODE_BLE) != ESP_OK) return ESP_FAIL;
+        xSemaphoreTake(mutex, portMAX_DELAY);
+        radio_disabled = host_stopped = false;
+        xSemaphoreGive(mutex);
+        ble_hs_sched_start();
+        return ESP_OK;
+    }
     if (!BLEDevice::init("Water-Coaster")) return ESP_FAIL;
-    BLEDevice::setSecurityCallbacks(new Security());
+    static Security security;
+    static Connections connections;
+    static Reads reads;
+    static Writes writes;
+    static Wifi wifi_callbacks;
+    BLEDevice::setSecurityCallbacks(&security);
     BLESecurity::setAuthenticationMode(false, true, true); // Fresh physical pairing, no old-owner bonds.
     BLESecurity::setCapability(ESP_IO_CAP_OUT);
     BLESecurity::setKeySize(16);
@@ -200,23 +333,69 @@ esp_err_t ble_provision_start(const char *device_id, const provision_trust_t *tr
     ble_hs_cfg.sm_sc_only = 1;
     server = BLEDevice::createServer();
     server->advertiseOnDisconnect(false);
-    server->setCallbacks(new Connections());
+    server->setCallbacks(&connections);
     BLEService *service = server->createService(PROVISION_SERVICE_UUID);
     uint32_t read_permissions = BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_READ_ENC
         | BLECharacteristic::PROPERTY_READ_AUTHEN | BLECharacteristic::PROPERTY_READ_AUTHOR;
     info_characteristic = service->createCharacteristic(PROVISION_INFO_UUID, read_permissions);
-    BLECharacteristic *config = service->createCharacteristic(PROVISION_CONFIG_UUID,
+    BLECharacteristic *config_characteristic = service->createCharacteristic(PROVISION_CONFIG_UUID,
         BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_ENC
         | BLECharacteristic::PROPERTY_WRITE_AUTHEN | BLECharacteristic::PROPERTY_WRITE_AUTHOR);
     status_characteristic = service->createCharacteristic(PROVISION_STATUS_UUID,
         read_permissions | BLECharacteristic::PROPERTY_NOTIFY);
-    info_characteristic->setCallbacks(new Reads());
-    status_characteristic->setCallbacks(new Reads());
-    config->setCallbacks(new Writes());
+    BLECharacteristic *wifi_characteristic = service->createCharacteristic(PROVISION_WIFI_UUID,
+        read_permissions | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_ENC
+        | BLECharacteristic::PROPERTY_WRITE_AUTHEN | BLECharacteristic::PROPERTY_WRITE_AUTHOR);
+    info_characteristic->setCallbacks(&reads);
+    status_characteristic->setCallbacks(&reads);
+    config_characteristic->setCallbacks(&writes);
+    wifi_characteristic->setCallbacks(&wifi_callbacks);
     // NimBLE creates and owns the notification CCCD automatically.
     service->start();
     BLEDevice::getAdvertising()->addServiceUUID(PROVISION_SERVICE_UUID);
     BLEDevice::getAdvertising()->setScanResponse(true);
+    return ESP_OK;
+}
+
+static void host_stopped_callback(int result, void *)
+{
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    host_stopping = false;
+    host_stopped = result == 0;
+    if (result) start_retry_ms = now_ms() + 30000;
+    xSemaphoreGive(mutex);
+}
+
+static void stop_radio(void)
+{
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    if (host_stopping || radio_disabled || now_ms() < start_retry_ms) { xSemaphoreGive(mutex); return; }
+    bool stopped = host_stopped;
+    host_stopping = !stopped;
+    xSemaphoreGive(mutex);
+    if (stopped) {
+        esp_err_t result = esp_bt_controller_disable();
+        xSemaphoreTake(mutex, portMAX_DELAY);
+        radio_disabled = result == ESP_OK;
+        if (result != ESP_OK) start_retry_ms = now_ms() + 30000;
+        xSemaphoreGive(mutex);
+        if (result == ESP_OK) BLEDevice::onReset(0);
+    } else {
+        // 等待 NimBLE 异步停止后才关射频；保留 GATT 对象，重开时不会重复分配或泄漏。
+        BLEDevice::stopAdvertising();
+        int result = ble_hs_stop(&stop_listener, host_stopped_callback, nullptr);
+        if (result == BLE_HS_EALREADY) host_stopped_callback(0, nullptr);
+        else if (result && result != BLE_HS_EBUSY) host_stopped_callback(result, nullptr);
+    }
+}
+
+esp_err_t ble_provision_start(const char *device_id, const provision_trust_t *trust, bool initial)
+{
+    mutex = xSemaphoreCreateMutex();
+    if (!mutex) return ESP_ERR_NO_MEM;
+    (void)device_id;
+    (void)trust;
+    if (device_hardware_id(hardware_id) != ESP_OK) return ESP_FAIL;
     if (initial) ble_provision_open();
     return ESP_OK;
 }
@@ -233,7 +412,60 @@ void ble_provision_poll(void)
 {
     if (!mutex) return;
     xSemaphoreTake(mutex, portMAX_DELAY);
-    if (open_requested) { window_until_ms = now_ms() + PROVISION_WINDOW_MS; open_requested = false; }
+    if (open_requested) {
+        window_until_ms = now_ms() + PROVISION_WINDOW_MS;
+        open_requested = false;
+        completed_ms = start_retry_ms = 0;
+    }
+    // 完成通知留两秒给网页读取；窗口结束或成功后等待扫描/配网任务收尾再关闭。
+    if (completed_ms && now_ms() - completed_ms >= 2000) window_until_ms = 0;
+    bool opened = open_locked();
+    bool can_stop = !opened && !scan_running && !provisioning_busy();
+    uint16_t connected = connection_id;
+    if (can_stop && connected != BLE_HS_CONN_HANDLE_NONE) {
+        bool disconnect = !disconnecting && now_ms() >= start_retry_ms;
+        if (disconnect) disconnecting = true;
+        authenticated = pairing = subscribed = false;
+        xSemaphoreGive(mutex);
+        if (disconnect) {
+            int result = server->disconnect(connected);
+            if (result && result != BLE_HS_EALREADY) {
+                xSemaphoreTake(mutex, portMAX_DELAY);
+                if (connection_id == connected) {
+                    disconnecting = false;
+                    if (result == BLE_HS_ENOTCONN) connection_id = BLE_HS_CONN_HANDLE_NONE;
+                    else start_retry_ms = now_ms() + 30000;
+                }
+                xSemaphoreGive(mutex);
+            }
+        }
+        return;
+    }
+    if (can_stop && server && !radio_disabled) {
+        advertising = authenticated = pairing = subscribed = disconnecting = false;
+        memset(challenge, 0, sizeof(challenge));
+        provision_frames_reset(&frames);
+        reset_wifi_scan();
+        xSemaphoreGive(mutex);
+        stop_radio();
+        return;
+    }
+    if (host_stopping) { xSemaphoreGive(mutex); return; }
+    if (opened && (!server || radio_disabled || host_stopped)) {
+        bool retry = now_ms() >= start_retry_ms;
+        xSemaphoreGive(mutex);
+        if (retry) {
+            esp_err_t result = start_radio();
+            if (result != ESP_OK) {
+                xSemaphoreTake(mutex, portMAX_DELAY);
+                start_retry_ms = now_ms() + 30000;
+                xSemaphoreGive(mutex);
+                ble_provision_status(nullptr, "failed", "Bluetooth initialization failed", "BLE_START_FAILED");
+            }
+        }
+        return;
+    }
+    if (!server || radio_disabled || host_stopped || !ble_hs_synced()) { xSemaphoreGive(mutex); return; }
     bool should_advertise = open_locked() && connection_id == BLE_HS_CONN_HANDLE_NONE;
     bool start = should_advertise && !advertising, stop = !should_advertise && advertising;
     advertising = should_advertise;

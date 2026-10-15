@@ -11,6 +11,7 @@
 #include "nvs.h"
 #include "esp_mac.h"
 #include "esp_random.h"
+#include "esp_heap_caps.h"
 #include "nvs_flash.h"
 
 typedef struct {
@@ -21,7 +22,7 @@ typedef struct {
 
 static nvs_handle_t settings, events;
 static SemaphoreHandle_t lock;
-static queue_entry_t queue[EVENT_CAPACITY];
+static queue_entry_t *queue;
 static unsigned count;
 static uint32_t next_sequence = 1;
 static uint64_t current_boot;
@@ -103,12 +104,25 @@ static int compare_entries(const void *left, const void *right)
     return (a > b) - (a < b);
 }
 
+static esp_err_t allocate_queue(void)
+{
+    // This is a rebuildable index, not the NVS event data. Keep radio/task RAM available.
+    if (!queue) queue = heap_caps_calloc(EVENT_CAPACITY, sizeof(*queue), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!queue) {
+        console_println("事件索引内存不足：请在 Arduino 工具中启用 OPI PSRAM，保留 Flash 数据。");
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
+
 esp_err_t storage_init(device_config_t *config, uint64_t *boot_id)
 {
+    esp_err_t result = allocate_queue();
+    if (result != ESP_OK) return result;
     lock = xSemaphoreCreateMutex();
     if (!lock) return ESP_ERR_NO_MEM;
     // Arduino 启动时可能格式化默认 nvs；业务数据使用独立分区，失败时不擦除。
-    esp_err_t result = nvs_flash_init_partition("settings");
+    result = nvs_flash_init_partition("settings");
     if (result != ESP_OK) return result;
     result = nvs_open_from_partition("settings", "coaster", NVS_READWRITE, &settings);
     if (result != ESP_OK) return result;
@@ -349,15 +363,26 @@ esp_err_t storage_save_binding(const binding_state_t *binding)
 esp_err_t storage_load_provision(provision_record_t *record)
 {
     memset(record, 0, sizeof(*record));
-    size_t size = sizeof(*record);
-    esp_err_t result = nvs_get_blob(settings, "provision_v1", record, &size);
+    size_t size = 0;
+    esp_err_t result = nvs_get_blob(settings, "provision_v1", NULL, &size);
     if (result != ESP_OK) return result;
-    if (size != sizeof(*record) || record->version != 1 || record->phase < 1 || record->phase > 4
+    if (size == sizeof(legacy_provision_record_t)) {
+        legacy_provision_record_t old;
+        result = nvs_get_blob(settings, "provision_v1", &old, &size);
+        if (result != ESP_OK) return result;
+        record->version = old.version; record->phase = old.phase; record->candidate = old.candidate;
+        memcpy(record->binding_id, old.binding_id, sizeof(record->binding_id));
+        record->previous = old.previous; record->previous_binding = old.previous_binding;
+    } else if (size == sizeof(*record)) {
+        result = nvs_get_blob(settings, "provision_v1", record, &size);
+        if (result != ESP_OK) return result;
+    } else return ESP_ERR_INVALID_RESPONSE;
+    if ((record->version != 1 && record->version != 2) || record->phase < 1 || record->phase > 4
         || record->candidate.operation_id[36] || !provision_uuid(record->candidate.operation_id)
         || !memchr(record->candidate.ssid, 0, sizeof(record->candidate.ssid))
         || !record->candidate.ssid[0] || !memchr(record->candidate.password, 0, sizeof(record->candidate.password))
         || !memchr(record->candidate.server_url, 0, sizeof(record->candidate.server_url))
-        || !provision_origin(record->candidate.server_url) || record->candidate.ticket[64]
+        || !(record->version == 2 ? enrollment_origin(record->candidate.server_url) : provision_origin(record->candidate.server_url)) || record->candidate.ticket[64]
         || !provision_hex(record->candidate.ticket, 32, NULL) || record->binding_id[36]
         || (record->phase >= 2 && record->phase <= 3 && !provision_uuid(record->binding_id))
         || record->previous.version != CONFIG_VERSION || record->previous_binding.version != 1
@@ -369,6 +394,9 @@ esp_err_t storage_load_provision(provision_record_t *record)
         || !memchr(record->previous.device_id, 0, sizeof(record->previous.device_id))
         || !memchr(record->previous.token, 0, sizeof(record->previous.token))
         || !isfinite(record->previous.empty_cup)) return ESP_ERR_INVALID_RESPONSE;
+    if (record->version == 2 && (record->hardware_id[12] || !provision_hex(record->hardware_id, 6, NULL)
+        || !memchr(record->device_id, 0, sizeof(record->device_id)) || !memchr(record->token, 0, sizeof(record->token))
+        || ((record->phase == 2 || record->phase == 3) && (!record->device_id[0] || strlen(record->token) < 16)))) return ESP_ERR_INVALID_RESPONSE;
     return ESP_OK;
 }
 

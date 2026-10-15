@@ -51,6 +51,18 @@ typedef struct {
     char binding_id[37];
     device_config_t previous;
     binding_state_t previous_binding;
+} legacy_provision_record_t;
+
+typedef struct {
+    uint32_t version;
+    uint32_t phase;
+    provision_candidate_t candidate;
+    char binding_id[37];
+    device_config_t previous;
+    binding_state_t previous_binding;
+    char hardware_id[13];
+    char device_id[65];
+    char token[129];
 } provision_record_t;
 
 #ifdef __cplusplus

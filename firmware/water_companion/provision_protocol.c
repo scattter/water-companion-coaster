@@ -1,5 +1,6 @@
 #include "provision_protocol.h"
 #include <string.h>
+#include <stdio.h>
 
 static int hex_digit(char c)
 {
@@ -56,6 +57,29 @@ bool provision_origin(const char *value)
         if (!port) return false;
     }
     return !*p;
+}
+
+bool enrollment_origin(const char *value)
+{
+    if (provision_origin(value)) return true;
+    if (!value || strncmp(value, "http://", 7) || strlen(value) > 191) return false;
+    char secure[200];
+    snprintf(secure, sizeof(secure), "https://%s", value + 7);
+    if (!provision_origin(secure)) return false;
+    const char *p = value + 7;
+    unsigned ip[4];
+    for (unsigned i = 0; i < 4; ++i) {
+        if (*p < '0' || *p > '9' || (*p == '0' && p[1] >= '0' && p[1] <= '9')) return false;
+        unsigned n = 0, digits = 0;
+        while (*p >= '0' && *p <= '9') {
+            n = n * 10 + (unsigned)(*p++ - '0');
+            if (++digits > 3 || n > 255) return false;
+        }
+        ip[i] = n;
+        if (i < 3 && *p++ != '.') return false;
+    }
+    if (*p && *p != ':') return false;
+    return ip[0] == 10 || (ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31) || (ip[0] == 192 && ip[1] == 168);
 }
 
 bool provision_fresh(int64_t now_ms, int64_t challenge_ms, int64_t window_until_ms)

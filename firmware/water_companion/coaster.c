@@ -8,8 +8,11 @@
 #include "board_config.h"
 #include "console.h"
 #include "esp_random.h"
+#include "esp_attr.h"
+#include "esp_heap_caps.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -37,6 +40,48 @@ static bool sensor_ready, unsaved_event, watch, restart_required;
 static int64_t reboot_at_ms;
 static saved_event_t pending_event;
 static float weight = NAN;
+static float activity_weight = NAN;
+static int64_t last_activity_ms;
+
+// These tasks write Flash; their full stacks must remain in internal, cache-independent RAM.
+static DRAM_ATTR StackType_t serial_stack[8192 / sizeof(StackType_t)];
+static DRAM_ATTR StackType_t sampling_stack[4096 / sizeof(StackType_t)];
+static DRAM_ATTR StaticTask_t serial_task_buffer, sampling_task_buffer;
+static TaskHandle_t serial_handle;
+static esp_err_t startup_error = ESP_ERR_INVALID_STATE;
+static const char *startup_stage = "serial";
+
+static void report_memory(const char *stage)
+{
+    const uint32_t internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    char message[240];
+    snprintf(message, sizeof(message),
+        "boot[%s] internal free=%u largest=%u min=%u; PSRAM total=%u free=%u largest=%u",
+        stage, (unsigned)heap_caps_get_free_size(internal),
+        (unsigned)heap_caps_get_largest_free_block(internal),
+        (unsigned)heap_caps_get_minimum_free_size(internal),
+        (unsigned)heap_caps_get_total_size(MALLOC_CAP_SPIRAM),
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+    console_println(message);
+}
+
+static cJSON *diagnostics_json(void)
+{
+    cJSON *json = cJSON_CreateObject();
+    if (!json) return NULL;
+    const uint32_t internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    cJSON_AddStringToObject(json, "firmwareVersion", FIRMWARE_VERSION);
+    cJSON_AddBoolToObject(json, "startupOk", startup_error == ESP_OK);
+    cJSON_AddStringToObject(json, "startupStage", startup_stage);
+    cJSON_AddStringToObject(json, "startupError", esp_err_to_name(startup_error));
+    cJSON_AddNumberToObject(json, "internalHeapFree", heap_caps_get_free_size(internal));
+    cJSON_AddNumberToObject(json, "internalHeapLargest", heap_caps_get_largest_free_block(internal));
+    cJSON_AddNumberToObject(json, "internalHeapMinimum", heap_caps_get_minimum_free_size(internal));
+    cJSON_AddNumberToObject(json, "psramTotal", heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
+    cJSON_AddNumberToObject(json, "psramFree", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    return json;
+}
 
 bool device_authorize(const char *id, const char *authorization)
 {
@@ -55,6 +100,22 @@ bool device_authorize(const char *id, const char *authorization)
     return valid;
 }
 
+void device_wake(void)
+{
+    xSemaphoreTake(state_lock, portMAX_DELAY);
+    last_activity_ms = esp_timer_get_time() / 1000;
+    xSemaphoreGive(state_lock);
+}
+
+static void update_activity(float grams, int64_t now)
+{
+    // 累计变化超过 5 g 才唤醒，避免静置时的小幅噪声反复亮屏、加快心跳。
+    if (isfinite(grams) && (!isfinite(activity_weight) || fabsf(grams - activity_weight) >= 5)) {
+        activity_weight = grams;
+        last_activity_ms = now;
+    }
+}
+
 void device_snapshot(device_status_t *status)
 {
     xSemaphoreTake(state_lock, portMAX_DELAY);
@@ -65,6 +126,7 @@ void device_snapshot(device_status_t *status)
         .cup_present = fresh && config.calibrated && isfinite(weight) && weight > 5,
         .unsaved_event = unsaved_event, .raw_ready = fresh && raw_count > 0,
         .restart_required = restart_required,
+        .active = esp_timer_get_time() / 1000 - last_activity_ms < DEVICE_IDLE_MS,
         .raw = raw_count ? raw_samples[(raw_next + WEIGHING_SAMPLES - 1) % WEIGHING_SAMPLES] : 0,
     };
     if (!fresh) status->error = "HX711 未就绪，请检查接线和供电";
@@ -177,6 +239,7 @@ static void sample_task(void *arg)
             sensor_ready = false;
             raw_count = raw_next = 0;
             weight = NAN;
+            activity_weight = NAN;
             weighing_init(&machine, config.empty_cup);
         } else {
             if (sensor_ready && now - last_sample_ms > 350) raw_count = raw_next = 0;
@@ -186,6 +249,7 @@ static void sample_task(void *arg)
             raw_next = (raw_next + 1) % WEIGHING_SAMPLES;
             if (raw_count < WEIGHING_SAMPLES) ++raw_count;
             weight = config.calibrated ? (float)((raw - (double)config.zero) / config.counts_per_gram) : NAN;
+            update_activity(weight, now);
             if (unsaved_event) {
                 unsaved_event = storage_append(&pending_event) != ESP_OK;
                 weighing_init(&machine, config.empty_cup);
@@ -391,7 +455,11 @@ cJSON *device_command(const cJSON *json)
         else {
             config = next;
             if (!strcmp(name, "wifi") || !strcmp(name, "server")) restart_required = true;
-            if (reset_weighing || restart_required) weighing_init(&machine, config.empty_cup);
+            if (reset_weighing || restart_required) {
+                weighing_init(&machine, config.empty_cup);
+                activity_weight = NAN;
+                last_activity_ms = esp_timer_get_time() / 1000;
+            }
         }
     }
     xSemaphoreGive(state_lock);
@@ -448,6 +516,15 @@ static cJSON *factory_command(const cJSON *json)
     return reply(result == ESP_OK ? NULL : "信任配置保存失败", "信任配置已保存，请重启");
 }
 
+esp_err_t device_hardware_id(char output[13])
+{
+    uint8_t mac[6];
+    esp_err_t result = esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    if (result != ESP_OK) return result;
+    snprintf(output, 13, "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    return ESP_OK;
+}
+
 void device_config_snapshot(device_config_t *output, binding_state_t *owner)
 {
     xSemaphoreTake(state_lock, portMAX_DELAY);
@@ -488,6 +565,10 @@ esp_err_t device_commit_provision(const provision_record_t *record, bool rollbac
         strcpy(next.ssid, record->candidate.ssid);
         strcpy(next.password, record->candidate.password);
         strcpy(next.server_url, record->candidate.server_url);
+        if (record->version == 2) {
+            strcpy(next.device_id, record->device_id);
+            strcpy(next.token, record->token);
+        }
         strcpy(owner.binding_id, record->binding_id);
         if (strcmp(record->previous_binding.binding_id, owner.binding_id)) next.empty_cup = 0;
     }
@@ -505,14 +586,18 @@ esp_err_t device_commit_provision(const provision_record_t *record, bool rollbac
 static void serial_task(void *arg)
 {
     (void)arg;
+    // Storage and radio initialization may fail; wait for a final result before accepting commands.
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     char line[768] = {0};
     unsigned length = 0;
     bool overflow = false;
     for (;;) {
-        xSemaphoreTake(state_lock, portMAX_DELAY);
-        bool reboot = reboot_at_ms && esp_timer_get_time() / 1000 >= reboot_at_ms;
-        xSemaphoreGive(state_lock);
-        if (reboot) esp_restart();
+        if (startup_error == ESP_OK) {
+            xSemaphoreTake(state_lock, portMAX_DELAY);
+            bool reboot = reboot_at_ms && esp_timer_get_time() / 1000 >= reboot_at_ms;
+            xSemaphoreGive(state_lock);
+            if (reboot) esp_restart();
+        }
         int character = coaster_console_read();
         if (character < 0) {
             vTaskDelay(pdMS_TO_TICKS(10));
@@ -524,7 +609,11 @@ static void serial_task(void *arg)
                 line[length] = 0;
                 cJSON *json = cJSON_ParseWithOpts(line, NULL, true);
                 const char *name = field(json, "cmd");
-                if (name && !strcmp(name, "pending-time")) storage_dump_pending_time();
+                if (startup_error != ESP_OK) {
+                    if (name && (!strcmp(name, "status") || !strcmp(name, "diagnostics"))) print_json(diagnostics_json());
+                    else print_json(reply("初始化失败：仅允许 status 或 diagnostics，保留 Flash 数据", NULL));
+                } else if (name && !strcmp(name, "diagnostics")) print_json(diagnostics_json());
+                else if (name && !strcmp(name, "pending-time")) storage_dump_pending_time();
                 else if (name && (!strcmp(name, "trust") || !strcmp(name, "factory-info"))) print_json(factory_command(json));
                 else if (cJSON_IsObject(json)) print_json(device_command(json));
                 else print_json(reply("请输入单行 JSON 命令", NULL));
@@ -544,28 +633,56 @@ static void serial_task(void *arg)
 
 esp_err_t device_start(void)
 {
+    esp_err_t result = ESP_ERR_NO_MEM;
+    console_println("水伴固件 " FIRMWARE_VERSION " 正在初始化。");
+    report_memory("before-init");
+    serial_handle = xTaskCreateStatic(serial_task, "coaster-serial", sizeof(serial_stack), NULL, 5,
+        serial_stack, &serial_task_buffer);
+    if (!serial_handle) goto finished;
+    startup_stage = "state-lock";
     state_lock = xSemaphoreCreateMutex();
-    if (!state_lock) return ESP_ERR_NO_MEM;
-    esp_err_t result = storage_init(&config, &boot_id);
-    if (result != ESP_OK) return result;
+    if (!state_lock) goto finished;
+    startup_stage = "storage";
+    result = storage_init(&config, &boot_id);
+    if (result != ESP_OK) goto finished;
+    startup_stage = "binding";
     result = storage_load_binding(&binding);
-    if (result != ESP_OK) return result;
+    if (result != ESP_OK) goto finished;
+    startup_stage = "trust";
     result = storage_load_trust(&trust);
-    if (result != ESP_OK) return result;
+    if (result != ESP_OK) goto finished;
+    startup_stage = "provision-recovery";
     result = provisioning_start();
-    if (result != ESP_OK) return result;
+    if (result != ESP_OK) goto finished;
     weighing_init(&machine, config.empty_cup);
+    startup_stage = "hx711";
     result = hx711_init(HX711_DOUT_PIN, HX711_SCK_PIN);
-    if (result != ESP_OK) return result;
-    char message[192];
-    snprintf(message, sizeof(message), "水伴固件 " FIRMWARE_VERSION " 已启动：微雪 ESP32-S3-LCD-1.47B，"
-             "HX711 DOUT=GP%d、SCK=GP%d。", HX711_DOUT_PIN, HX711_SCK_PIN);
-    console_println(message);
-    console_println("通过 Type-C USB 串口输入 {\"cmd\":\"status\"} 查看真实采样。");
+    if (result != ESP_OK) goto finished;
+    report_memory("before-ble");
+    startup_stage = "ble";
     result = ble_provision_start(config.device_id, &trust, !config.ssid[0] || !binding.binding_id[0]);
-    if (result != ESP_OK) return result;
-    network_start(&config);
-    ESP_ERROR_CHECK(xTaskCreate(sample_task, "coaster-sampling", 4096, NULL, 6, NULL) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
-    ESP_ERROR_CHECK(xTaskCreate(serial_task, "coaster-serial", 8192, NULL, 5, NULL) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
-    return ESP_OK;
+    if (result != ESP_OK) goto finished;
+    report_memory("before-network");
+    startup_stage = "network";
+    result = network_start(&config);
+    if (result != ESP_OK) goto finished;
+    startup_stage = "sampling";
+    if (!xTaskCreateStatic(sample_task, "coaster-sampling", sizeof(sampling_stack), NULL, 6,
+        sampling_stack, &sampling_task_buffer)) {
+        result = ESP_ERR_NO_MEM;
+        goto finished;
+    }
+    startup_stage = "ready";
+finished:
+    startup_error = result;
+    report_memory(startup_stage);
+    if (result == ESP_OK) console_println("水伴固件 " FIRMWARE_VERSION " 已启动；发送 {\"cmd\":\"status\"} 查看状态。");
+    else {
+        char message[192];
+        snprintf(message, sizeof(message), "启动失败[%s]: %s；发送 {\"cmd\":\"diagnostics\"} 查看内存，保留 Flash 数据。",
+            startup_stage, esp_err_to_name(result));
+        console_println(message);
+    }
+    if (serial_handle) xTaskNotifyGive(serial_handle);
+    return result;
 }

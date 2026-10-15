@@ -6,7 +6,11 @@ import { authRoutes, fail } from './auth.js';
 import { bindOwnership, eventBinding, heartbeatBinding, ownership } from './bindings.js';
 import { provisioningSigner } from './signing.js';
 import { provisioningRoutes } from './provisioning.js';
+import { enrollmentRoutes } from './enrollment.js';
 import { bindingSchema, emptyBody, idParams, uuidPattern, uuidSchema } from './validation.js';
+
+const deviceOnlineMs = 90_000;
+const commandLifetimeMs = 120_000;
 
 export interface AppOptions {
   deviceToken?: string;
@@ -21,6 +25,7 @@ export interface AppOptions {
   signingKeyPath?: string;
   deploymentId?: string;
   serverUrl?: string;
+  allowLocalHttp?: boolean;
 }
 
 interface DeviceEvent {
@@ -148,7 +153,8 @@ export function createApp(options: AppOptions) {
     now, allowedOrigins: options.allowedOrigins ?? (options.appOrigin ? [new URL(options.appOrigin).origin] : defaultOrigins),
     secureCookie: options.appOrigin?.startsWith('https://') ?? false,
   });
-  provisioningRoutes(app, db, auth, signer, now);
+  provisioningRoutes(app, db, auth, signer, now, options.allowLocalHttp, options.serverUrl ?? options.appOrigin);
+  enrollmentRoutes(app, db, auth, signer, now, { allowLocalHttp: options.allowLocalHttp, serverUrl: options.serverUrl ?? options.appOrigin });
   app.setErrorHandler<FastifyError>((error, request, reply) => {
     if (error.validation || error.code === 'FST_ERR_CTP_INVALID_JSON_BODY') {
       return reply.code(400).send({ error: '请求参数无效', code: 'INVALID_REQUEST' });
@@ -165,7 +171,7 @@ export function createApp(options: AppOptions) {
   function online(deviceId: string, timestamp: number) {
     const row = db.prepare('SELECT last_seen_at AS lastSeenAt FROM devices WHERE id = ?').get(deviceId) as { lastSeenAt: string | null };
     const age = row.lastSeenAt ? timestamp - Date.parse(row.lastSeenAt) : Infinity;
-    return age >= 0 && age <= 15_000;
+    return age >= 0 && age <= deviceOnlineMs;
   }
   function expireCommands(deviceId: string, timestamp: number) {
     db.prepare(`UPDATE device_commands SET status = 'expired', message = '操作已过期，未在有效期内收到设备确认' WHERE device_id = ? AND status = 'pending' AND expires_at <= ?`)
@@ -220,9 +226,9 @@ export function createApp(options: AppOptions) {
     if (db.prepare('SELECT id FROM device_commands WHERE id = ?').get(id)) fail('操作不存在', 404);
     const live = getDevice.get(deviceId) as unknown as DeviceRow | undefined;
     const statusAge = live ? timestamp - Date.parse(live.lastSeenAt) : Infinity;
-    if (!live || live.bindingId !== bindingId || statusAge < 0 || statusAge > 15_000) fail('杯垫已离线，请等待连接后再设置空杯', 409, 'DEVICE_OFFLINE');
+    if (!live || live.bindingId !== bindingId || statusAge < 0 || statusAge > deviceOnlineMs) fail('杯垫已离线，请等待连接后再设置空杯', 409, 'DEVICE_OFFLINE');
     if (db.prepare(`SELECT id FROM device_commands WHERE device_id = ? AND status = 'pending'`).get(deviceId)) fail('上一项空杯设置尚未完成，请稍后重试', 409);
-    const expiresAt = timestamp + 30_000;
+    const expiresAt = timestamp + commandLifetimeMs;
     db.prepare(`INSERT INTO device_commands (id, device_id, binding_id, status, message, created_at, expires_at) VALUES (?, ?, ?, 'pending', NULL, ?, ?)`)
       .run(id, deviceId, bindingId, timestamp, expiresAt);
     return { command: { id, status: 'pending', message: null, expiresAt, bindingId } };
@@ -414,7 +420,7 @@ export function createApp(options: AppOptions) {
       date, timeZone, totals, week, events,
       device: !deviceId ? null : {
         id: deviceId, bindingId: user.bindingId, lastSeenAt: row?.lastSeenAt ?? null,
-        online: age >= 0 && age <= 15_000, weightGrams: status?.weightGrams ?? null,
+        online: age >= 0 && age <= deviceOnlineMs, weightGrams: status?.weightGrams ?? null,
         stable: status?.stable ?? false, cupPresent: status?.cupPresent ?? false, source: 'hx711',
         calibrated: status?.calibrated ?? false, emptyCupGrams: status?.emptyCupGrams ?? null,
         pendingCount: status?.pendingCount ?? 0, timePendingCount: status?.timePendingCount ?? 0,

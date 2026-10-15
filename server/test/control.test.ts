@@ -43,11 +43,11 @@ test('账号和设备之间不能读取或确认他人的命令', async (t) => {
 test('离线不能新建命令，过期命令不再下发，迟到确认不能变成功', async (t) => {
   const f = await fixture(t);
   const cookie = await f.register(); await f.bind(cookie);
-  f.advance(15_001);
+  f.advance(90_001);
   assert.equal((await f.web(cookie, '/api/control/cup', { id: randomUUID() })).statusCode, 409);
   await f.report();
   const id = randomUUID(); await f.web(cookie, '/api/control/cup', { id });
-  f.advance(30_000);
+  f.advance(120_000);
   const ack = await f.report('coaster-01', { ...heartbeat, commandResult: { id, ok: true, message: '迟到' } });
   assert.equal(ack.json().command, null);
   assert.equal((await f.web(cookie, `/api/control/commands/${id}`)).json().command.status, 'expired');
@@ -61,4 +61,24 @@ test('云端用户接口只允许空杯设置，没有USB、归零或重量标�
   for (const path of ['/api/setup/options', '/api/control/status']) assert.equal((await f.web(cookie, path)).statusCode, 404);
   for (const path of ['/api/control/calibrate', '/api/setup/calibrate', '/api/setup/wifi']) assert.equal((await f.web(cookie, path, { cmd: 'tare' })).statusCode, 404);
   for (const body of [{}, { id: 'bad' }, { id: randomUUID(), cmd: 'tare' }]) assert.equal((await f.web(cookie, '/api/control/cup', body)).statusCode, 400);
+});
+
+test('30 秒空闲心跳保持在线，空杯命令跨下一次心跳领取并确认，90 秒后离线', async (t) => {
+  const f = await fixture(t);
+  const cookie = await f.register(); await f.bind(cookie);
+  f.advance(29_000);
+  assert.equal((await f.web(cookie, '/api/dashboard')).json().device.online, true);
+  const id = randomUUID();
+  const created = await f.web(cookie, '/api/control/cup', { id });
+  assert.equal(created.statusCode, 200);
+  assert.equal(created.json().command.expiresAt, f.now().getTime() + 120_000);
+  f.advance(30_000);
+  assert.equal((await f.report()).json().command.id, id);
+  f.advance(5_000);
+  await f.report('coaster-01', { ...heartbeat, commandResult: { id, ok: true, message: '已保存' } });
+  assert.equal((await f.web(cookie, `/api/control/commands/${id}`)).json().command.status, 'succeeded');
+  f.advance(90_000);
+  assert.equal((await f.web(cookie, '/api/dashboard')).json().device.online, true);
+  f.advance(1);
+  assert.equal((await f.web(cookie, '/api/dashboard')).json().device.online, false);
 });

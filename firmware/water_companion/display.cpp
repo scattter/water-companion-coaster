@@ -149,6 +149,16 @@ void display_update(esp_err_t startup_result)
     device_snapshot(&device);
     ble_provision_display_t ble;
     ble_provision_snapshot(&ble);
+    bool provisioning = provisioning_busy();
+    bool awake = device.active || provisioning || ble.window_open || network.ap_ready || network.binding_code[0]
+        || !device.sensor_ready || !device.calibrated || device.unsaved_event || device.restart_required
+        || !isfinite(device.weight) || device.weight < -2 || device.weight > WEIGHING_MAX_GRAMS;
+    static bool backlight = true;
+    if (awake != backlight) {
+        digitalWrite(LCD_BL_PIN, awake ? HIGH : LOW);
+        backlight = awake;
+    }
+    if (!awake) return;
     if (ble.pairing) {
         char pin[24];
         snprintf(pin, sizeof(pin), "%06lu", (unsigned long)ble.passkey);
@@ -156,14 +166,21 @@ void display_update(esp_err_t startup_result)
         line(1, pin, WHITE);
         line(2, "手机连接密码", WHITE);
         line(3, "配网窗口10分钟", GRAY);
-    } else if (provisioning_busy()) {
+    } else if (provisioning) {
         line(0, "正在配网", GRAY);
         line(1, ble.stage, AMBER);
         line(2, "请勿断电", WHITE);
         line(3, "请查看网站", GRAY);
+    } else if (network.control_error != ESP_OK) {
+        char code[32];
+        snprintf(code, sizeof(code), "错误码: 0x%x", unsigned(network.control_error));
+        line(0, ble.window_open ? "BLE: Water-Coaster" : "配网热点", AMBER);
+        line(1, "HTTP 错误", RED);
+        line(2, "长按BOOT 3秒", WHITE);
+        line(3, code, GRAY);
     } else if (ble.window_open) {
         line(0, "BLE: Water-Coaster", GREEN);
-        if (network.ap_ready && network.control_error == ESP_OK) {
+        if (network.ap_ready && network.control_ready) {
             char password[40];
             snprintf(password, sizeof(password), "密码: %s", network.ap_password);
             line(1, network.ap_ssid, WHITE);
@@ -174,9 +191,10 @@ void display_update(esp_err_t startup_result)
             line(2, "配网窗口10分钟", GRAY);
             line(3, ble.stage, GRAY);
         }
-    } else if (network.ap_ready && network.control_error == ESP_OK) {
+    } else if (network.ap_ready && network.control_ready) {
         char password[40];
         snprintf(password, sizeof(password), "密码: %s", network.ap_password);
+        line(0, "配网热点", GREEN);
         line(1, network.ap_ssid, GREEN);
         line(2, password, WHITE);
         line(3, CONTROL_IP, GRAY);

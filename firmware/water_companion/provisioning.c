@@ -144,6 +144,7 @@ static bool bounded_json(const char *source)
 static bool accept_input(void)
 {
     static const char *const keys[] = {"protocolVersion", "operationId", "ssid", "password", "authorization"};
+    static const char *const enrollment_keys[] = {"protocolVersion", "operationId", "ssid", "password", "hardwareId", "challenge", "serverUrl", "ticket", "expiresAt"};
     static const char *const auth_keys[] = {"payload", "signature"};
     // cJSON strings cannot represent embedded NUL. Reject its escape before parsing.
     if (strstr(inbox.json, "\\u0000") || !bounded_json(inbox.json) || !utf8((const unsigned char *)inbox.json)) return false;
@@ -161,25 +162,45 @@ static bool accept_input(void)
     // Echo only a syntactically valid UUID on rejection; it is not authorization.
     if (provision_uuid(operation)) strcpy(record.candidate.operation_id, operation);
     device_config_snapshot(&record.previous, &record.previous_binding);
-    bool valid = exact_keys(json, keys, 5) && exact_keys(auth, auth_keys, 2)
-        && cJSON_IsNumber(version) && version->valuedouble == 1
-        && provision_uuid(operation) && ssid && *ssid && strlen(ssid) <= 32 && password
+    bool valid = cJSON_IsNumber(version) && provision_uuid(operation) && ssid && *ssid && strlen(ssid) <= 32 && password
         && (strlen(password) == 0 || (strlen(password) >= 8 && strlen(password) <= 63))
-        && !device.restart_required && !device.unsaved_event && !network.wifi_trial && strlen(record.previous.token) >= 16
-        && storage_load_trust(&trust) == ESP_OK && trust.version == 1
-        && provision_fresh(esp_timer_get_time() / 1000, inbox.challenge_ms, inbox.window_until_ms)
-        && provision_payload(payload, &trust, record.previous.device_id, inbox.challenge, operation,
-            network_has_time() ? network_epoch_ms() : 0, &record.candidate)
-        && provision_verify_signature(payload, signature, trust.public_key)
+        && !device.restart_required && !device.unsaved_event && !network.wifi_trial
         && provision_fresh(esp_timer_get_time() / 1000, inbox.challenge_ms, inbox.window_until_ms);
-    if (valid) {
+    if (valid && version->valuedouble == 2) {
+        const char *hardware = text(json, "hardwareId"), *challenge = text(json, "challenge");
+        const char *url = text(json, "serverUrl"), *ticket = text(json, "ticket");
+        const cJSON *expires = cJSON_GetObjectItemCaseSensitive(json, "expiresAt");
+        valid = exact_keys(json, enrollment_keys, 9) && device_hardware_id(record.hardware_id) == ESP_OK
+            && hardware && !strcmp(hardware, record.hardware_id) && challenge && !strcmp(challenge, inbox.challenge)
+            && enrollment_origin(url) && provision_hex(ticket, 32, NULL) && cJSON_IsNumber(expires)
+            && isfinite(expires->valuedouble) && expires->valuedouble >= 1600000000000.0 && expires->valuedouble <= 4102444800000.0
+            && floor(expires->valuedouble) == expires->valuedouble;
+        // Existing credentials stay tied to their saved server. Fresh devices establish
+        // that address through the physically confirmed, encrypted BLE connection.
+        if (valid && record.previous.token[0] && record.previous.server_url[0]
+            && strcmp(record.previous.server_url, url)) valid = false;
+        if (valid) {
+            record.version = 2;
+            strcpy(record.candidate.server_url, url);
+            strcpy(record.candidate.ticket, ticket);
+            record.candidate.expires_at_ms = (int64_t)expires->valuedouble;
+        }
+    } else if (valid && version->valuedouble == 1) {
+        valid = exact_keys(json, keys, 5) && exact_keys(auth, auth_keys, 2) && strlen(record.previous.token) >= 16
+            && storage_load_trust(&trust) == ESP_OK && trust.version == 1
+            && provision_payload(payload, &trust, record.previous.device_id, inbox.challenge, operation,
+                network_has_time() ? network_epoch_ms() : 0, &record.candidate)
+            && provision_verify_signature(payload, signature, trust.public_key);
         record.version = 1;
+    } else valid = false;
+    valid = valid && provision_fresh(esp_timer_get_time() / 1000, inbox.challenge_ms, inbox.window_until_ms);
+    if (valid) {
         record.phase = 1;
         strcpy(record.candidate.ssid, ssid);
         strcpy(record.candidate.password, password);
         acceptance_deadline_ms = inbox.challenge_ms + PROVISION_CHALLENGE_MS;
         if (inbox.window_until_ms < acceptance_deadline_ms) acceptance_deadline_ms = inbox.window_until_ms;
-        // Only the signed expiry-derived issue time may bootstrap TLS.
+        // V2 receives this clock hint over confirmed BLE; the server enforces ticket expiry.
         network_set_time(record.candidate.expires_at_ms - PROVISION_CHALLENGE_MS);
     }
     cJSON_Delete(json);
@@ -202,6 +223,21 @@ static bool cloud_result(const cJSON *reply)
     if (!strcmp(state, "claimed") || !strcmp(state, "completed")) {
         const char *binding = text(reply, "bindingId");
         if (!provision_uuid(binding) || (record.binding_id[0] && strcmp(binding, record.binding_id))) return false;
+        if (record.version == 2) {
+            const char *hardware = text(reply, "hardwareId"), *id = text(reply, "deviceId"), *token = text(reply, "token");
+            if (!hardware || strcmp(hardware, record.hardware_id) || !id || !*id || strlen(id) > 64
+                || strspn(id, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != strlen(id)
+                || (record.device_id[0] && strcmp(id, record.device_id))) return false;
+            if (token) {
+                if (!provision_hex(token, 32, NULL)) return false;
+                strcpy(record.token, token);
+            } else if (!record.token[0] && !strcmp(id, record.previous.device_id)) {
+                // An authenticated existing device keeps its credential on Wi-Fi changes.
+                strcpy(record.token, record.previous.token);
+            }
+            if (strlen(record.token) < 16) return false;
+            strcpy(record.device_id, id);
+        }
         strcpy(record.binding_id, binding);
         record.phase = 2;
         phase = P_SAVE;
@@ -269,12 +305,28 @@ void provisioning_poll(int64_t now, bool connected)
         cJSON *body = cJSON_CreateObject(), *reply = NULL;
         cJSON_AddStringToObject(body, "operationId", record.candidate.operation_id);
         cJSON_AddStringToObject(body, "ticket", record.candidate.ticket);
-        // After this point uncertainty is resolved with GET, never another claim.
+        bool proof_ok = true;
+        if (record.version == 2) {
+            cJSON_AddStringToObject(body, "hardwareId", record.hardware_id);
+            if (record.previous.token[0]) {
+                char proof[65];
+                proof_ok = provision_identity_proof(record.previous.token, record.candidate.operation_id,
+                    record.hardware_id, record.candidate.ticket, proof);
+                if (proof_ok) {
+                    cJSON_AddStringToObject(body, "deviceId", record.previous.device_id);
+                    cJSON_AddStringToObject(body, "identityProof", proof);
+                }
+                memset(proof, 0, sizeof(proof));
+            }
+        }
+        if (!proof_ok) { cJSON_Delete(body); rollback("INVALID_AUTHORIZATION"); return; }
+        // After this point uncertainty is resolved by querying, never another claim.
         phase = P_QUERY;
         recovered = true;
         int http = 0;
-        esp_err_t result = body ? network_provision_request(record.candidate.server_url,
-            "/api/device/provisioning/claim", body, &reply, &http) : ESP_ERR_NO_MEM;
+        esp_err_t result = !body ? ESP_ERR_NO_MEM : record.version == 2
+            ? network_enrollment_request(record.candidate.server_url, "/api/enrollment/claim", body, NULL, NULL, &reply, &http)
+            : network_provision_request(record.candidate.server_url, "/api/device/provisioning/claim", body, &reply, &http);
         if (result == ESP_OK) cloud_result(reply);
         else if (http >= 400 && http < 500 && http != 408 && http != 429) rollback("CLAIM_REJECTED");
         cJSON_Delete(body);
@@ -288,8 +340,18 @@ void provisioning_poll(int64_t now, bool connected)
         snprintf(path, sizeof(path), "/api/device/provisioning/operations/%s", record.candidate.operation_id);
         cJSON *reply = NULL;
         int http = 0;
-        if (network_provision_request(record.candidate.server_url, path, NULL, &reply, &http) == ESP_OK) cloud_result(reply);
+        cJSON *query = NULL;
+        esp_err_t result;
+        if (record.version == 2) {
+            query = cJSON_CreateObject();
+            cJSON_AddStringToObject(query, "operationId", record.candidate.operation_id);
+            cJSON_AddStringToObject(query, "hardwareId", record.hardware_id);
+            cJSON_AddStringToObject(query, "ticket", record.candidate.ticket);
+            result = query ? network_enrollment_request(record.candidate.server_url, "/api/enrollment/query", query, NULL, NULL, &reply, &http) : ESP_ERR_NO_MEM;
+        } else result = network_provision_request(record.candidate.server_url, path, NULL, &reply, &http);
+        if (result == ESP_OK) cloud_result(reply);
         else if (http == 404 || http == 409 || http == 410) rollback("OPERATION_CANCELLED");
+        cJSON_Delete(query);
         cJSON_Delete(reply);
         next_action_ms = now + 5000;
         return;
@@ -310,8 +372,10 @@ void provisioning_poll(int64_t now, bool connected)
         cJSON_AddStringToObject(body, "operationId", record.candidate.operation_id);
         cJSON_AddStringToObject(body, "bindingId", record.binding_id);
         int http = 0;
-        esp_err_t result = body ? network_provision_request(record.candidate.server_url,
-            "/api/device/provisioning/complete", body, &reply, &http) : ESP_ERR_NO_MEM;
+        esp_err_t result = !body ? ESP_ERR_NO_MEM : record.version == 2
+            ? network_enrollment_request(record.candidate.server_url, "/api/device/enrollment/complete", body,
+                record.device_id, record.token, &reply, &http)
+            : network_provision_request(record.candidate.server_url, "/api/device/provisioning/complete", body, &reply, &http);
         const char *state = text(reply, "status");
         if (result == ESP_OK && cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reply, "ok"))
             && state && !strcmp(state, "completed")) phase = P_FINISH;
