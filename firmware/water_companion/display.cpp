@@ -161,9 +161,16 @@ void display_update(esp_err_t startup_result)
         line(1, ble.stage, AMBER);
         line(2, "请勿断电", WHITE);
         line(3, "请查看网站", GRAY);
+    } else if (network.control_error != ESP_OK) {
+        char code[32];
+        snprintf(code, sizeof(code), "错误码: 0x%x", unsigned(network.control_error));
+        line(0, ble.window_open ? "BLE: Water-Coaster" : "配网热点", AMBER);
+        line(1, "HTTP 错误", RED);
+        line(2, "长按BOOT 3秒", WHITE);
+        line(3, code, GRAY);
     } else if (ble.window_open) {
         line(0, "BLE: Water-Coaster", GREEN);
-        if (network.ap_ready && network.control_error == ESP_OK) {
+        if (network.ap_ready && network.control_ready) {
             char password[40];
             snprintf(password, sizeof(password), "密码: %s", network.ap_password);
             line(1, network.ap_ssid, WHITE);
@@ -174,9 +181,10 @@ void display_update(esp_err_t startup_result)
             line(2, "配网窗口10分钟", GRAY);
             line(3, ble.stage, GRAY);
         }
-    } else if (network.ap_ready && network.control_error == ESP_OK) {
+    } else if (network.ap_ready && network.control_ready) {
         char password[40];
         snprintf(password, sizeof(password), "密码: %s", network.ap_password);
+        line(0, "配网热点", GREEN);
         line(1, network.ap_ssid, GREEN);
         line(2, password, WHITE);
         line(3, CONTROL_IP, GRAY);

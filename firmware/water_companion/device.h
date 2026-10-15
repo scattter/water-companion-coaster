@@ -5,7 +5,7 @@
 #include "cJSON.h"
 #include "storage.h"
 
-#define FIRMWARE_VERSION "0.6.0"
+#define FIRMWARE_VERSION "0.7.1"
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,6 +26,7 @@ typedef struct {
 } device_status_t;
 
 void device_config_snapshot(device_config_t *config, binding_state_t *binding);
+esp_err_t device_hardware_id(char output[13]);
 esp_err_t device_change_binding(const char *binding_id);
 esp_err_t device_commit_provision(const provision_record_t *record, bool rollback);
 void device_snapshot(device_status_t *status);

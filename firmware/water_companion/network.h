@@ -14,6 +14,7 @@ typedef struct {
     bool server_connected;
     bool waiting_for_time;
     bool ap_ready;
+    bool control_ready;
     bool bound;
     bool wifi_trial;
     bool wifi_rollback;
@@ -35,9 +36,11 @@ typedef struct {
 
 
 esp_err_t network_provision_request(const char *origin, const char *path, const cJSON *body, cJSON **reply, int *http_status);
+esp_err_t network_enrollment_request(const char *origin, const char *path, const cJSON *body,
+    const char *device_id, const char *token, cJSON **reply, int *http_status);
 esp_err_t network_use_wifi(const char *ssid, const char *password);
 void network_apply_config(const device_config_t *config);
-void network_start(const device_config_t *config);
+esp_err_t network_start(const device_config_t *config);
 void network_provision(void);
 esp_err_t network_request_binding(void);
 void network_snapshot(network_status_t *status);

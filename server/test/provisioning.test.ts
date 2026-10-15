@@ -387,7 +387,7 @@ test('版本化迁移为明确归属生成legacy批次，未归属隔离，重�
   }
   old.close();
   let db = openDatabase(dbPath);
-  assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 3);
+  assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 4);
   const bindingId = db.prepare('SELECT binding_id FROM devices WHERE id = ?').get('owned')!.binding_id;
   assert.ok(bindingId);
   assert.equal(db.prepare('SELECT binding_id FROM device_events WHERE device_id = ?').get('owned')!.binding_id, bindingId);

@@ -1,4 +1,5 @@
 import { isIPv4 } from 'node:net';
+import { networkInterfaces } from 'node:os';
 
 export const uuidPattern = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
 export const uuidSchema = { type: 'string', pattern: uuidPattern, minLength: 36, maxLength: 36 };
@@ -7,8 +8,16 @@ export const hexSchema = { type: 'string', pattern: '^[a-f0-9]{64}$', minLength:
 export const emptyBody = { body: { type: 'object', additionalProperties: false } };
 export const idParams = { type: 'object', additionalProperties: false, required: ['id'], properties: { id: uuidSchema } };
 
-/** The byte limit and origin syntax are shared by USB registration and the cloud.
- * HTTP is opt-in, solely for the existing private-LAN USB development path. */
+export function localServerOrigin(port: number): string | undefined {
+  const addresses = new Set(Object.entries(networkInterfaces()).filter(([name]) => !/^(utun|tun|tap|docker|br-|veth|vmnet|bridge)/i.test(name))
+    .flatMap(([, interfaces]) => (interfaces ?? []).filter((entry) => entry.family === 'IPv4' && !entry.internal).map((entry) => entry.address)));
+  const origins = [...addresses].flatMap((address) => {
+    try { return [validateServerOrigin(`http://${address}:${port}`, true)]; } catch { return []; }
+  });
+  return origins.length === 1 ? origins[0] : undefined;
+}
+
+/** Shared by device registration and provisioning; private-LAN HTTP is opt-in for development. */
 export function validateServerOrigin(value: string, allowLocalHttp = false): string {
   const invalid = () => new Error('服务器地址必须是 HTTPS 源地址（最多191字节，无路径、查询、凭据或片段）；仅本地开发允许局域网 HTTP');
   if (!value || value !== value.trim() || Buffer.byteLength(value) > 191 || /[\s\\\x00-\x1f\x7f]/.test(value)) throw invalid();

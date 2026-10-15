@@ -16,6 +16,9 @@ test('admin import validates exported registries and refuses raw tokens, duplica
 
 test('admin origin validation permits HTTPS origins and prevents URLs that change the request destination', () => {
   assert.equal(httpsOrigin(' https://water.example:8443/ '), 'https://water.example:8443');
+  assert.equal(httpsOrigin('http://192.168.1.10:3001', true), 'http://192.168.1.10:3001');
+  assert.throws(() => httpsOrigin('http://192.168.1.10:3001'));
+  for (const bad of ['http://127.0.0.1', 'http://localhost', 'http://8.8.8.8', 'http://172.32.1.1', 'http://192.168.evil.com']) assert.throws(() => httpsOrigin(bad, true));
   for (const bad of ['http://water.example', 'https://water.example/path', 'https://user:pass@water.example', 'https://water.example/?x=1',
     'https://water.example/#fragment', 'https://water.example/?', 'https://water.example/#', 'https://water.example.',
     'https://water_example.com', 'https://[::1]', 'https://water.example:0', 'https://water.example:abc',

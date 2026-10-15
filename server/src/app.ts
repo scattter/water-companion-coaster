@@ -6,6 +6,7 @@ import { authRoutes, fail } from './auth.js';
 import { bindOwnership, eventBinding, heartbeatBinding, ownership } from './bindings.js';
 import { provisioningSigner } from './signing.js';
 import { provisioningRoutes } from './provisioning.js';
+import { enrollmentRoutes } from './enrollment.js';
 import { bindingSchema, emptyBody, idParams, uuidPattern, uuidSchema } from './validation.js';
 
 export interface AppOptions {
@@ -21,6 +22,7 @@ export interface AppOptions {
   signingKeyPath?: string;
   deploymentId?: string;
   serverUrl?: string;
+  allowLocalHttp?: boolean;
 }
 
 interface DeviceEvent {
@@ -148,7 +150,8 @@ export function createApp(options: AppOptions) {
     now, allowedOrigins: options.allowedOrigins ?? (options.appOrigin ? [new URL(options.appOrigin).origin] : defaultOrigins),
     secureCookie: options.appOrigin?.startsWith('https://') ?? false,
   });
-  provisioningRoutes(app, db, auth, signer, now);
+  provisioningRoutes(app, db, auth, signer, now, options.allowLocalHttp, options.serverUrl ?? options.appOrigin);
+  enrollmentRoutes(app, db, auth, signer, now, { allowLocalHttp: options.allowLocalHttp, serverUrl: options.serverUrl ?? options.appOrigin });
   app.setErrorHandler<FastifyError>((error, request, reply) => {
     if (error.validation || error.code === 'FST_ERR_CTP_INVALID_JSON_BODY') {
       return reply.code(400).send({ error: '请求参数无效', code: 'INVALID_REQUEST' });

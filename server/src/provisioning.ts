@@ -15,7 +15,8 @@ interface Operation {
 const operationColumns = `id, device_id AS deviceId, user_id AS userId, status, binding_id AS bindingId,
   ticket_hash AS ticketHash, expires_at AS expiresAt, code, message`;
 
-export function provisioningRoutes(app: FastifyInstance, db: DatabaseSync, auth: ReturnType<typeof authRoutes>, signer: ProvisioningSigner, now: () => Date) {
+export function provisioningRoutes(app: FastifyInstance, db: DatabaseSync, auth: ReturnType<typeof authRoutes>, signer: ProvisioningSigner, now: () => Date, allowLocalHttp = false, fallbackServerUrl?: string) {
+  const settings = () => ({ ...signer.settings(), serverUrl: signer.settings().serverUrl || fallbackServerUrl || '', allowLocalHttp });
   const deviceIdSchema = { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9_-]+$' };
   const registryIdSchema = { type: 'string', minLength: 14, maxLength: 14, pattern: '^coaster-(?!000000)[0-9]{6}$' };
   const registrySchema = { type: 'object', additionalProperties: false, required: ['version', 'devices'], properties: {
@@ -40,21 +41,23 @@ export function provisioningRoutes(app: FastifyInstance, db: DatabaseSync, auth:
     catch (error) { fail((error as Error).message, 400, 'INVALID_REGISTRY'); }
     return importRegistryRecords(db, registry);
   });
-  app.get('/api/admin/settings', { schema: { querystring: { type: 'object', additionalProperties: false } } }, async () => signer.settings());
+  app.get('/api/admin/settings', { schema: { querystring: { type: 'object', additionalProperties: false } } }, async () => settings());
   app.post<{ Body: { serverUrl: string } }>('/api/admin/settings', { schema: { body: {
     type: 'object', additionalProperties: false, required: ['serverUrl'], properties: { serverUrl: { type: 'string', minLength: 1, maxLength: 191 } },
   } } }, async (request) => {
     let serverUrl: string;
-    try { serverUrl = validateServerOrigin(request.body.serverUrl); }
-    catch { fail('服务器地址必须是 HTTPS origin，最多191字节，无路径、凭据、查询或片段', 400, 'INVALID_SERVER_URL'); }
+    try { serverUrl = validateServerOrigin(request.body.serverUrl, allowLocalHttp); }
+    catch { fail(allowLocalHttp ? '地址需为 HTTPS 或局域网 IPv4 HTTP，不带路径' : '服务器地址必须是 HTTPS origin，最多191字节，无路径、凭据、查询或片段', 400, 'INVALID_SERVER_URL'); }
     transaction(db, () => {
       if (signer.settings().serverUrl !== serverUrl) {
         db.prepare('UPDATE settings SET server_url = ?, config_version = config_version + 1 WHERE singleton = 1').run(serverUrl);
         db.prepare(`UPDATE provisioning_operations SET status = 'cancelled', code = 'CONFIG_CHANGED', message = '服务器配置已更新，请重新配网'
           WHERE status = 'issued'`).run();
+        db.prepare(`UPDATE enrollment_operations SET status = 'cancelled', code = 'CONFIG_CHANGED', message = '服务器配置已更新，请重新配网'
+          WHERE status = 'issued'`).run();
       }
     });
-    return signer.settings();
+    return settings();
   });
 
   function operation(id: string): Operation {

@@ -98,6 +98,11 @@ int main(void) {
     assert(provision_hex(signature, 64, NULL) && provision_hex(public_key, 65, NULL));
     assert(!provision_hex(signature, 65, NULL) && !provision_hex("AB", 1, NULL));
     assert(provision_origin("https://coaster.example:8443"));
+    assert(enrollment_origin("http://192.168.1.10:3001"));
+    assert(enrollment_origin("http://10.0.0.2"));
+    assert(enrollment_origin("http://172.16.1.2"));
+    const char *bad_local[] = {"http://localhost:3001", "http://127.0.0.1", "http://8.8.8.8", "http://192.168.evil.com", "http://192.168.1.999", "http://172.32.1.2", "http://192.168.1.1/api", "http://192.168.01.1"};
+    for (unsigned i=0; i<sizeof(bad_local)/sizeof(*bad_local); ++i) assert(!enrollment_origin(bad_local[i]));
     const char *bad[] = {"http://coaster.example", "https://user@host", "https://host/path", "https://host/",
         "https://host?x", "https://host#x", "https://host:0", "https://host:65536", "https://-host", "https://host..test"};
     for (unsigned i=0; i<sizeof(bad)/sizeof(bad[0]); ++i) assert(!provision_origin(bad[i]));
@@ -159,7 +164,7 @@ static cJSON *cJSON_ParseWithOpts(const char *s, const char **end, bool require_
     (void)s; (void)end; (void)require_end; cJSON *r=input; input=NULL; return r;
 }
 static provision_record_t journal;
-static bool journal_present, verify_ok;
+static bool journal_present, verify_ok, reuse_identity;
 static int saves, claims, queries, completes, wifi_switches, save_error, cleanup_error, commit_error;
 static int http_error;
 static const char *remote_status;
@@ -179,6 +184,10 @@ esp_err_t storage_clear_provision(void) { if(cleanup_error) return cleanup_error
 esp_err_t storage_clear_wifi(void) { return ESP_OK; }
 esp_err_t storage_load_trust(provision_trust_t *r) { memset(r,0,sizeof(*r)); r->version=1; strcpy(r->deployment_id,deployment); strcpy(r->public_key,public_key); return ESP_OK; }
 bool provision_verify_signature(const char *p,const char *s,const char *k) { assert(p && s && k); return verify_ok; }
+esp_err_t device_hardware_id(char out[13]) { strcpy(out,"aabbccddeeff"); return ESP_OK; }
+bool provision_identity_proof(const char *token,const char *op,const char *hw,const char *ticket,char out[65]) {
+    assert(token && op && hw && ticket); memset(out,'f',64); out[64]=0; return true;
+}
 void device_snapshot(device_status_t *s) { memset(s,0,sizeof(*s)); }
 void network_snapshot(network_status_t *s) { memset(s,0,sizeof(*s)); }
 esp_err_t storage_save_config(const device_config_t *c) { if(commit_error) return commit_error; disk_config=*c; return ESP_OK; }
@@ -187,7 +196,7 @@ ${actual(coaster, 'void device_config_snapshot')}
 ${actual(coaster, 'esp_err_t device_commit_provision')}
 ${actual(coaster, 'esp_err_t device_change_binding')}
 esp_err_t network_use_wifi(const char *s,const char *p) { assert(s && p); ++wifi_switches; return ESP_OK; }
-void network_apply_config(const device_config_t *c) { assert(!strcmp(c->device_id,"coaster-test")); }
+void network_apply_config(const device_config_t *c) { assert(c->device_id[0]); }
 esp_err_t network_provision_request(const char *url,const char *path,const cJSON *body,cJSON **reply,int *http) {
     assert(journal_present && provisioning_busy()); assert(!strcmp(url,"https://coaster.example:8443"));
     *reply=NULL; *http=http_error;
@@ -202,6 +211,26 @@ esp_err_t network_provision_request(const char *url,const char *path,const cJSON
         if(!strcmp(remote_status,"claimed") || !strcmp(remote_status,"completed")) cJSON_AddStringToObject(*reply,"bindingId",owner); }
     return ESP_OK;
 }
+esp_err_t network_enrollment_request(const char *url,const char *path,const cJSON *body,const char *id,const char *token,cJSON **reply,int *http) {
+    assert(journal_present && provisioning_busy() && !strcmp(url,"http://192.168.1.10:3001"));
+    *reply=NULL; *http=http_error;
+    if(strstr(path,"/claim")) { assert(body && journal.phase==1 && !id && !token); ++claims; }
+    else if(strstr(path,"/query")) { assert(body && !id && !token); ++queries; }
+    else { assert(strstr(path,"/complete") && body); ++completes;
+        assert(journal.phase==3 && !strcmp(disk_config.device_id,reuse_identity ? "coaster-test" : "coaster-654321"));
+        assert(id && !strcmp(id,disk_config.device_id) && token && !strcmp(token,disk_config.token)); }
+    if(http_error) return ESP_ERR_INVALID_RESPONSE;
+    *http=200; *reply=cJSON_CreateObject();
+    if(strstr(path,"/complete")) { cJSON_AddBoolToObject(*reply,"ok",true); cJSON_AddStringToObject(*reply,"status","completed"); }
+    else { cJSON_AddStringToObject(*reply,"operationId",operation); cJSON_AddStringToObject(*reply,"status",remote_status);
+        cJSON_AddStringToObject(*reply,"hardwareId","aabbccddeeff");
+        if(!strcmp(remote_status,"claimed") || !strcmp(remote_status,"completed")) {
+            cJSON_AddStringToObject(*reply,"bindingId",owner); cJSON_AddStringToObject(*reply,"deviceId",reuse_identity ? "coaster-test" : "coaster-654321");
+            if(!reuse_identity && !strcmp(remote_status,"claimed")) cJSON_AddStringToObject(*reply,"token","${'cd'.repeat(32)}");
+        }
+    }
+    return ESP_OK;
+}
 ${state}
 static void prepare(void) {
     release(); memset(&journal,0,sizeof(journal)); journal_present=false;
@@ -212,7 +241,7 @@ static void prepare(void) {
     memset(&binding,0,sizeof(binding)); binding.version=1; strcpy(binding.binding_id,deployment);
     disk_config=config; disk_binding=binding;
     saves=claims=queries=completes=wifi_switches=save_error=cleanup_error=commit_error=http_error=0;
-    clock_ms=1000; epoch=1800000000000LL; next_action_ms=0; verify_ok=true; remote_status="claimed";
+    clock_ms=1000; epoch=1800000000000LL; next_action_ms=0; verify_ok=true; reuse_identity=false; remote_status="claimed";
     last_stage[0]=last_code[0]=last_operation[0]=0;
 }
 static void make_input(void) {
@@ -222,12 +251,48 @@ static void make_input(void) {
     cJSON *auth=cJSON_AddObjectToObject(input,"authorization"); cJSON_AddStringToObject(auth,"payload",payload); cJSON_AddStringToObject(auth,"signature",signature);
 }
 static void submit(void) { make_input(); assert(provisioning_submit("{}",challenge,0,600000)==ESP_OK); }
+static void submit_enrollment(bool fresh) {
+    if(fresh) { config.token[0]=config.server_url[0]=0; binding.binding_id[0]=0; disk_config=config; disk_binding=binding; }
+    input=cJSON_CreateObject(); cJSON_AddNumberToObject(input,"protocolVersion",2);
+    cJSON_AddStringToObject(input,"operationId",operation); cJSON_AddStringToObject(input,"ssid","new-wifi");
+    cJSON_AddStringToObject(input,"password","new-password"); cJSON_AddStringToObject(input,"hardwareId","aabbccddeeff");
+    cJSON_AddStringToObject(input,"challenge",challenge); cJSON_AddStringToObject(input,"serverUrl","http://192.168.1.10:3001");
+    cJSON_AddStringToObject(input,"ticket","${'ef'.repeat(32)}"); cJSON_AddNumberToObject(input,"expiresAt",1800000300000.0);
+    assert(provisioning_submit("{}",challenge,0,600000)==ESP_OK);
+}
 static void tick(int64_t t, bool connected) { clock_ms=t; provisioning_poll(t,connected); }
 static void reboot(void) {
     config=disk_config; binding=disk_binding; release(); next_action_ms=0; epoch=0;
     assert(provisioning_start()==ESP_OK && provisioning_busy());
 }
 int main(void) {
+    prepare(); submit_enrollment(true); tick(1000,false);
+    assert(journal.version==2 && !config.token[0] && !strcmp(journal.hardware_id,"aabbccddeeff"));
+    tick(2000,true); assert(claims==1 && phase==P_SAVE && !config.token[0]);
+    tick(3000,true); assert(phase==P_FINISH && completes==1 && !strcmp(config.device_id,"coaster-654321"));
+    assert(!strcmp(config.token,"${'cd'.repeat(32)}") && config.zero==1234 && config.counts_per_gram==-234.5);
+    tick(4000,true); assert(!provisioning_busy() && !strcmp(last_stage,"completed"));
+    prepare(); submit_enrollment(true); tick(1000,false); http_error=503; tick(2000,true);
+    assert(claims==1 && phase==P_QUERY); reboot(); http_error=0;
+    tick(3000,false); tick(4000,true); tick(9000,true); tick(10000,true);
+    assert(claims==1 && completes==1 && !provisioning_busy() && !strcmp(config.device_id,"coaster-654321"));
+    prepare(); submit_enrollment(true); tick(1000,false); tick(2000,true); tick(3000,true);
+    reboot(); remote_status="completed"; tick(4000,false); tick(5000,true); tick(10000,true); tick(11000,true);
+    assert(!provisioning_busy() && !strcmp(config.token,"${'cd'.repeat(32)}"));
+    prepare(); submit_enrollment(true); tick(1000,false); tick(46000,false); tick(47000,false);
+    assert(!provisioning_busy() && !config.token[0] && !strcmp(config.ssid,"old-wifi") && claims==0);
+    prepare(); submit_enrollment(false); tick(1000,false);
+    assert(!provisioning_busy() && claims==0 && saves==0);
+    prepare(); reuse_identity=true; strcpy(config.server_url,"http://192.168.1.10:3001");
+    memset(config.token,'x',128); config.token[128]=0; strcpy(binding.binding_id,owner);
+    disk_config=config; disk_binding=binding;
+    submit_enrollment(false); tick(1000,false); tick(2000,true); tick(3000,true); tick(4000,true);
+    assert(!provisioning_busy() && claims==1 && completes==1 && config.empty_cup==105.5);
+    assert(strlen(config.token)==128 && !strcmp(config.device_id,"coaster-test"));
+    prepare(); submit_enrollment(true); cJSON_GetObjectItemCaseSensitive(input,"hardwareId")->valuestring[0]='0'; tick(1000,false);
+    assert(!provisioning_busy() && !saves && !claims && !wifi_switches);
+    prepare(); submit_enrollment(true); cJSON_GetObjectItemCaseSensitive(input,"challenge")->valuestring[0]='0'; tick(1000,false);
+    assert(!provisioning_busy() && !saves && !claims && !wifi_switches);
     prepare(); submit(); assert(provisioning_busy()); tick(1000,false);
     assert(journal_present && saves==1 && claims==0 && wifi_switches==1 && !strcmp(config.ssid,"old-wifi"));
     tick(2000,true); assert(claims==1 && phase==P_SAVE);
@@ -372,6 +437,62 @@ int main(void) {
     assert(read_event(1,&loaded)==ESP_OK && !strcmp(loaded.binding_id,"22222222-2222-4222-8222-222222222222"));
     ((saved_event_t *)blob)->binding_id[0]='X'; assert(read_event(1,&loaded)==ESP_ERR_INVALID_RESPONSE);
     blob_size=7; assert(read_event(1,&loaded)==ESP_ERR_INVALID_RESPONSE);
+}
+`, ['provision_protocol.c'], basicHeaders);
+});
+
+test('actual storage resumes old provisioning journals and validates new identity records without rewriting flash', () => {
+  const storage = readFileSync(join(firmware, 'storage.c'), 'utf8');
+  runC(`
+#include <assert.h>
+#include <math.h>
+#include <string.h>
+#include "storage.h"
+static unsigned char blob[sizeof(provision_record_t)];
+static size_t blob_size;
+static int settings, read_error;
+static int nvs_get_blob(int handle,const char *key,void *out,size_t *size) {
+    (void)handle; assert(!strcmp(key,"provision_v1"));
+    if(read_error) return read_error;
+    if(out) { assert(*size>=blob_size); memcpy(out,blob,blob_size); }
+    *size=blob_size; return ESP_OK;
+}
+static void save(const void *record,size_t size) { memcpy(blob,record,size); blob_size=size; }
+${actual(storage, 'esp_err_t storage_load_provision')}
+int main(void) {
+    legacy_provision_record_t old={.version=1,.phase=1,.previous={.version=CONFIG_VERSION,
+        .zero_set=true,.calibrated=true,.zero=123,.counts_per_gram=-234.5,.empty_cup=105.5},.previous_binding={.version=1}};
+    strcpy(old.candidate.operation_id,"22222222-2222-4222-8222-222222222222");
+    strcpy(old.candidate.ssid,"new-wifi"); strcpy(old.candidate.password,"new-password");
+    strcpy(old.candidate.server_url,"https://coaster.example");
+    memset(old.candidate.ticket,'c',64); old.candidate.expires_at_ms=1800000300000LL;
+    strcpy(old.previous.device_id,"coaster-old"); strcpy(old.previous.token,"existing-device-credential");
+    save(&old,sizeof(old));
+    provision_record_t loaded; memset(&loaded,0xa5,sizeof(loaded));
+    assert(storage_load_provision(&loaded)==ESP_OK && loaded.version==1);
+    assert(!loaded.hardware_id[0] && !loaded.device_id[0] && !loaded.token[0]);
+    assert(loaded.previous.calibrated && loaded.previous.zero==123 && loaded.previous.empty_cup==105.5);
+    assert(blob_size==sizeof(old) && !memcmp(blob,&old,blob_size));
+    save(&loaded,sizeof(loaded)); assert(storage_load_provision(&loaded)==ESP_OK);
+    provision_record_t record=loaded; record.version=2;
+    strcpy(record.hardware_id,"aabbccddeeff"); strcpy(record.candidate.server_url,"http://192.168.1.10:3001");
+    save(&record,sizeof(record)); assert(storage_load_provision(&loaded)==ESP_OK && loaded.version==2);
+    record.phase=2; strcpy(record.binding_id,"33333333-3333-4333-8333-333333333333");
+    strcpy(record.device_id,"coaster-654321");
+    save(&record,sizeof(record)); assert(storage_load_provision(&loaded)==ESP_ERR_INVALID_RESPONSE);
+    memset(record.token,'f',64); save(&record,sizeof(record));
+    assert(storage_load_provision(&loaded)==ESP_OK && !strcmp(loaded.device_id,"coaster-654321"));
+    record.phase=3; memset(record.token,'x',128); record.token[128]=0; save(&record,sizeof(record));
+    assert(storage_load_provision(&loaded)==ESP_OK && strlen(loaded.token)==128);
+    assert(blob_size==sizeof(record) && !memcmp(blob,&record,blob_size));
+    record.token[128]='x'; save(&record,sizeof(record)); assert(storage_load_provision(&loaded)==ESP_ERR_INVALID_RESPONSE);
+    record.token[128]=0; record.hardware_id[0]='z'; save(&record,sizeof(record));
+    assert(storage_load_provision(&loaded)==ESP_ERR_INVALID_RESPONSE);
+    record.hardware_id[0]='a'; memset(record.device_id,'x',sizeof(record.device_id)); save(&record,sizeof(record));
+    assert(storage_load_provision(&loaded)==ESP_ERR_INVALID_RESPONSE);
+    old.version=2; save(&old,sizeof(old)); assert(storage_load_provision(&loaded)==ESP_ERR_INVALID_RESPONSE);
+    blob_size=7; assert(storage_load_provision(&loaded)==ESP_ERR_INVALID_RESPONSE);
+    read_error=ESP_ERR_NVS_NOT_FOUND; assert(storage_load_provision(&loaded)==ESP_ERR_NVS_NOT_FOUND);
 }
 `, ['provision_protocol.c'], basicHeaders);
 });

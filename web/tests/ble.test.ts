@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { setImmediate as tick } from 'node:timers/promises';
-import { BLE_UUID, BleTransport, bluetoothCompatibility, encodeFrames, parseInfo, validateWifi,
-  type BleCharacteristic, type BleServer, type BleStatus, type BluetoothAccess, type ProvisionConfig } from '../src/ble.ts';
+import { BLE_UUID, BleTransport, bluetoothCompatibility, encodeFrames, parseInfo, parseWifiScan, validateWifi,
+  type BleCharacteristic, type BleServer, type BleStatus, type BluetoothAccess, type ProvisionConfig, type WifiNetwork } from '../src/ble.ts';
 
 const operationId = '10000000-0000-4000-8000-000000000001';
 const info = { protocolVersion: 1, deviceId: 'coaster-000001', deploymentId: '20000000-0000-4000-8000-000000000001', challenge: 'a'.repeat(64), trusted: true };
@@ -18,6 +18,14 @@ class Peripheral {
   maxActive = 0;
   chosen = false;
   received: Uint8Array[] = [];
+  info: Record<string, unknown> = info;
+  wifiNetworks: WifiNetwork[] = [];
+  wifiState = 'ready';
+  wifiCode = 'WIFI_BUSY';
+  wifiIndex = 0;
+  wifiPendingReads = 0;
+  wifiGate: ReturnType<typeof deferred<DataView>> | null = null;
+  wifiRequests: number[][] = [];
   status: BleStatus = { operationId, stage: 'saving', message: '保存中', sequence: 4 };
   statusGate: ReturnType<typeof deferred<DataView>> | null = null;
   infoGate: ReturnType<typeof deferred<DataView>> | null = null;
@@ -30,7 +38,13 @@ class Peripheral {
       target.startNotifications = () => this.action(async () => target);
       target.readValue = () => this.action(async () => {
         assert.equal(this.chosen, true, 'info cannot be read before requestDevice');
-        if (uuid === BLE_UUID.info) return this.infoGate ? await this.infoGate.promise : view(info);
+        if (uuid === BLE_UUID.info) return this.infoGate ? await this.infoGate.promise : view(this.info);
+        if (uuid === BLE_UUID.wifi) {
+          if (this.wifiGate) return await this.wifiGate.promise;
+          if (this.wifiPendingReads-- > 0) return view({ state: 'scanning', count: 0 });
+          return view({ state: this.wifiState, count: this.wifiState === 'ready' ? this.wifiNetworks.length : 0,
+            index: this.wifiIndex, network: this.wifiNetworks[this.wifiIndex], code: this.wifiCode });
+        }
         assert.equal(uuid, BLE_UUID.status);
         this.reads++;
         const result = this.statusGate ? await this.statusGate.promise : view(this.status);
@@ -39,6 +53,12 @@ class Peripheral {
         return result;
       });
       target.writeValueWithResponse = value => this.action(async () => {
+        if (uuid === BLE_UUID.wifi) {
+          this.wifiRequests.push([...value]);
+          if (value[0] === 1) { assert.equal(value.length, 1); this.wifiIndex = 0; }
+          else { assert.equal(value[0], 2); assert.equal(value.length, 2); this.wifiIndex = value[1]; }
+          return;
+        }
         assert.equal(uuid, BLE_UUID.config);
         this.received.push(value.slice());
         if (this.received.length === 2) this.notify.dispatchEvent(new Event('characteristicvaluechanged'));
@@ -166,6 +186,91 @@ test('cancelled picker does not read info and unsupported browsers get actionabl
   assert.match(bluetoothCompatibility(false, bluetooth), /HTTPS/);
   assert.match(bluetoothCompatibility(true), /Chrome/);
   assert.equal(bluetoothCompatibility(true, bluetooth), '');
-  assert.throws(() => parseInfo(view({ ...info, protocolVersion: 2 })), /协议/);
+  assert.throws(() => parseInfo(view({ ...info, protocolVersion: 2 })), /设备信息/);
+  const fresh = parseInfo(view({ protocolVersion: 2, deviceId: '', hardwareId: 'aabbccddeeff', challenge: 'a'.repeat(64) }));
+  assert.equal(fresh.hardwareId, 'aabbccddeeff');
+  assert.equal(fresh.deviceId, '');
   assert.equal(parseInfo(view({ ...info, deploymentId: '', trusted: false })).trusted, false);
+});
+
+const wifiInfo = { protocolVersion: 2, deviceId: '', hardwareId: 'aabbccddeeff', challenge: 'a'.repeat(64), wifiScan: true };
+const homeWifi: WifiNetwork = { ssid: '客厅 Wi-Fi', rssi: -50, channel: 6, secure: true };
+
+test('设备扫描按页读取 2.4 GHz 网络、按信号去重，并与状态读取共用 GATT 队列', async () => {
+  const peripheral = new Peripheral();
+  peripheral.info = wifiInfo;
+  peripheral.wifiPendingReads = 1;
+  peripheral.wifiNetworks = [
+    { ...homeWifi, rssi: -80 },
+    { ...homeWifi, ssid: '访客网络', rssi: -70, secure: false },
+    homeWifi,
+    ...Array.from({ length: 17 }, (_, index) => ({ ...homeWifi, ssid: `网络 ${index}`, rssi: -90 + index })),
+  ];
+  const transport = new BleTransport(peripheral.bluetooth, { status() {}, error() {}, disconnected() {} });
+  assert.equal((await transport.choose()).wifiScan, true);
+  await settle();
+  const [networks] = await Promise.all([transport.scanWifi(), transport.readStatus()]);
+  assert.equal(networks.length, 19);
+  assert.deepEqual(networks[0], homeWifi);
+  assert.equal(networks.find(network => network.ssid === '访客网络')?.secure, false);
+  assert.equal(peripheral.wifiRequests.length, 20);
+  assert.deepEqual(peripheral.wifiRequests.at(-1), [2, 19]);
+  assert.equal(peripheral.maxActive, 1);
+  assert.equal(peripheral.received.length, 0, '扫描不能写入配网配置');
+  transport.disconnect();
+});
+
+test('空网络、设备忙和扫描失败均可重试，旧固件仍能连接', async () => {
+  const peripheral = new Peripheral();
+  const transport = new BleTransport(peripheral.bluetooth, { status() {}, error() {}, disconnected() {} });
+  await transport.choose();
+  await assert.rejects(transport.scanWifi(), /升级固件/);
+  assert.equal(peripheral.wifiRequests.length, 0);
+  peripheral.info = wifiInfo;
+  await transport.reconnect();
+  assert.deepEqual(await transport.scanWifi(), []);
+  peripheral.wifiState = 'failed';
+  await assert.rejects(transport.scanWifi(), /正在连接 Wi-Fi/);
+  peripheral.wifiCode = 'SCAN_FAILED';
+  await assert.rejects(transport.scanWifi(), /扫描未完成/);
+  assert.equal(transport.connected, true);
+  peripheral.wifiState = 'ready';
+  peripheral.wifiNetworks = [homeWifi];
+  assert.deepEqual(await transport.scanWifi(), [homeWifi]);
+  transport.disconnect();
+});
+
+test('扫描超时关闭连接，迟到的数据不能继续读取下一页', async () => {
+  const peripheral = new Peripheral();
+  peripheral.info = wifiInfo;
+  let disconnected = 0;
+  const transport = new BleTransport(peripheral.bluetooth, { status() {}, error() {}, disconnected() { disconnected++; } }, 30);
+  await transport.choose();
+  await settle();
+  peripheral.wifiGate = deferred<DataView>();
+  await assert.rejects(transport.scanWifi(), { name: 'TimeoutError' });
+  assert.equal(transport.connected, false);
+  assert.equal(disconnected, 1);
+  peripheral.wifiGate.resolve(view({ state: 'ready', count: 2, index: 0, network: homeWifi }));
+  await settle();
+  assert.deepEqual(peripheral.wifiRequests, [[1]]);
+  peripheral.wifiGate = null;
+  peripheral.wifiNetworks = [homeWifi];
+  await transport.reconnect();
+  assert.deepEqual(await transport.scanWifi(), [homeWifi]);
+  transport.disconnect();
+});
+
+test('拒绝损坏、越界、5 GHz 或过长的扫描数据，长中文与转义名称可读取', () => {
+  const response = { state: 'ready', count: 1, index: 0, network: homeWifi };
+  for (const network of [
+    { ...homeWifi, ssid: '' }, { ...homeWifi, ssid: '水'.repeat(11) }, { ...homeWifi, ssid: 'wifi\0evil' },
+    { ...homeWifi, rssi: 1 }, { ...homeWifi, channel: 36 }, { ...homeWifi, secure: 'true' },
+  ]) assert.throws(() => parseWifiScan(view({ ...response, network })), /不完整/);
+  assert.throws(() => parseWifiScan(view({ ...response, count: 21 })), /不完整/);
+  assert.throws(() => parseWifiScan(view({ ...response, index: 1 })), /不完整/);
+  const escaped = { ...response, network: { ...homeWifi, ssid: '\n'.repeat(32) } };
+  assert.ok(view(escaped).byteLength < 512);
+  assert.equal(parseWifiScan(view(escaped)).network?.ssid, escaped.network.ssid);
+  assert.equal(parseWifiScan(view({ ...response, network: { ...homeWifi, ssid: '水'.repeat(10) } })).count, 1);
 });

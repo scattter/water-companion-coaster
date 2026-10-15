@@ -131,7 +131,7 @@ static bool provisioning_busy(void) { return false; }
 static esp_err_t start_wifi(void) { return ESP_OK; }
 static const char *esp_err_to_name(esp_err_t error) { (void)error; return "test error"; }
 static void console_println(const char *text) { assert(text); }
-${actual(network, 'void network_start')}
+${actual(network, 'esp_err_t network_start')}
 ${actual(network, 'void network_snapshot')}
 ${actual(device, 'bool device_authorize')}
 ${actual(device, 'void device_snapshot')}

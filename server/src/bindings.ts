@@ -42,6 +42,8 @@ export function endOwnership(db: DatabaseSync, deviceId: string, userId: string,
   db.prepare('UPDATE devices SET user_id = NULL, binding_id = NULL, last_seen_at = NULL WHERE id = ?').run(deviceId);
   db.prepare(`UPDATE provisioning_operations SET status = 'cancelled', code = 'BINDING_ENDED', message = '绑定已结束，授权已作废'
     WHERE device_id = ? AND status IN ('issued', 'claimed', 'completed')`).run(deviceId);
+  db.prepare(`UPDATE enrollment_operations SET status = 'cancelled', credential = NULL, code = 'BINDING_ENDED', message = '绑定已结束，请重新配网'
+    WHERE device_id = ? AND status IN ('issued', 'claimed', 'completed')`).run(deviceId);
   db.prepare("UPDATE device_commands SET status = 'expired', message = '绑定已结束' WHERE device_id = ? AND status = 'pending'").run(deviceId);
   db.prepare('DELETE FROM binding_codes WHERE device_id = ?').run(deviceId);
   db.prepare('DELETE FROM device_status WHERE id = ?').run(deviceId);

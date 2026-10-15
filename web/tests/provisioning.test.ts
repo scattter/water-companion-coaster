@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { setImmediate as tick } from 'node:timers/promises';
 import { ApiError } from '../src/api.ts';
-import { ProvisionFlow, provisionStorageKey, type AuthorizationResult, type OperationStatus, type ProvisionState, type ProvisionTransport } from '../src/provisioning.ts';
+import { ProvisionFlow, provisionStorageKey, type AuthorizationResult, type EnrollmentResult, type OperationStatus, type ProvisionState, type ProvisionTransport } from '../src/provisioning.ts';
 import { commandStorageKey, type Session } from '../src/session.ts';
-import type { BleStatus, DeviceInfo, ProvisionConfig } from '../src/ble.ts';
+import type { BleStatus, DeviceInfo, ProvisionConfig, WifiNetwork } from '../src/ble.ts';
 
 const id = '10000000-0000-4000-8000-000000000001';
 const batch = '30000000-0000-4000-8000-000000000001';
@@ -32,11 +32,16 @@ function fixture(initial: Session = user, storage = new MemoryStorage()) {
   let operationStatus = { ...status };
   let ble: BleStatus = { operationId: id, stage: 'received', sequence: 1, message: '已收到' };
   let selected = { ...info };
+  let enrollment: EnrollmentResult | null = null;
   let getGate: ReturnType<typeof deferred<OperationStatus>> | null = null;
   let postGate: ReturnType<typeof deferred<AuthorizationResult>> | null = null;
   let finalGate: ReturnType<typeof deferred<Session>> | null = null;
   let requestError: unknown;
   let writeError: unknown;
+  let scanError: unknown;
+  let scanGate: ReturnType<typeof deferred<WifiNetwork[]>> | null = null;
+  let scanCount = 0;
+  const wifiNetworks: WifiNetwork[] = [{ ssid: '客厅', rssi: -50, channel: 6, secure: true }];
   const requests: { path: string; body: unknown }[] = [];
   const sent: ProvisionConfig[] = [];
   const completed: Session[] = [];
@@ -48,6 +53,7 @@ function fixture(initial: Session = user, storage = new MemoryStorage()) {
     async reconnect() { Object.assign(this, { connected: true }); return selected; },
     disconnect() { Object.assign(this, { connected: false }); },
     async readStatus() { return ble; },
+    async scanWifi() { scanCount++; if (scanError) throw scanError; return scanGate ? await scanGate.promise : wifiNetworks; },
     async send(value) { sent.push(structuredClone(value)); if (writeError) throw writeError; },
   };
   const flow = new ProvisionFlow({
@@ -57,7 +63,7 @@ function fixture(initial: Session = user, storage = new MemoryStorage()) {
       if (requestError) throw requestError;
       let value: unknown;
       if (path === '/api/auth/session') value = finalGate ? await finalGate.promise : serverSession;
-      else if (body) value = postGate ? await postGate.promise : signed;
+      else if (body) value = path === '/api/enrollment/operations' ? enrollment : postGate ? await postGate.promise : signed;
       else value = getGate ? await getGate.promise : operationStatus;
       return value as T;
     },
@@ -68,14 +74,128 @@ function fixture(initial: Session = user, storage = new MemoryStorage()) {
     setStatus(value: Partial<OperationStatus>) { operationStatus = { ...operationStatus, ...value }; },
     setBle(value: Partial<BleStatus>) { ble = { ...ble, ...value }; return ble; },
     setInfo(value: Partial<DeviceInfo>) { selected = { ...selected, ...value }; },
+    setEnrollment(value: EnrollmentResult) { enrollment = value; },
     setCurrent(value: Session) { currentSession = value; }, setServerSession(value: Session) { serverSession = value; },
     setNow(value: number) { now = value; },
     setGetGate(value: typeof getGate) { getGate = value; }, setPostGate(value: typeof postGate) { postGate = value; },
     setFinalGate(value: typeof finalGate) { finalGate = value; },
     setError(value: unknown) { requestError = value; }, setWriteError(value: unknown) { writeError = value; },
+    setScanError(value: unknown) { scanError = value; }, setScanGate(value: typeof scanGate) { scanGate = value; },
+    get scanCount() { return scanCount; }, wifiNetworks,
   };
 }
 async function start(f: ReturnType<typeof fixture>) { await f.flow.connect(); await f.flow.start('客厅', 'wifi-secret'); await settle(); }
+
+test('支持扫描的杯垫连接后自动列出网络，扫描时不能申请票据或发送配置', async () => {
+  const f = fixture();
+  f.setInfo({ wifiScan: true });
+  const gate = deferred<WifiNetwork[]>();
+  f.setScanGate(gate);
+  const connected = f.flow.connect();
+  await settle();
+  assert.equal(f.flow.state.scanning, true);
+  assert.equal(f.flow.state.busy, true);
+  await f.flow.start('客厅', 'wifi-secret');
+  await f.flow.scanWifi();
+  assert.equal(f.scanCount, 1);
+  assert.deepEqual(f.requests, []);
+  assert.deepEqual(f.sent, []);
+  gate.resolve(f.wifiNetworks);
+  await connected;
+  assert.deepEqual(f.flow.state.wifiNetworks, f.wifiNetworks);
+  assert.equal(f.flow.state.busy, false);
+  assert.deepEqual(f.storage.writes, []);
+  const legacy = fixture();
+  await legacy.flow.connect();
+  assert.equal(legacy.flow.state.connected, true);
+  assert.equal(legacy.scanCount, 0);
+});
+
+test('扫描失败保留蓝牙连接并允许重试，空列表不会制造网络', async () => {
+  const f = fixture();
+  f.setInfo({ wifiScan: true });
+  f.setScanError(new Error('杯垫正在连接 Wi-Fi，请稍后重新扫描。'));
+  await f.flow.connect();
+  assert.match(f.flow.state.scanError, /重新扫描/);
+  assert.equal(f.flow.state.connected, true);
+  assert.equal(f.flow.state.busy, false);
+  f.setScanError(undefined);
+  f.wifiNetworks.length = 0;
+  await f.flow.scanWifi();
+  assert.equal(f.flow.state.scanError, '');
+  assert.deepEqual(f.flow.state.wifiNetworks, []);
+  assert.equal(f.scanCount, 2);
+});
+
+test('取消或断线后，旧扫描不能覆盖重新连接后的网络列表', async () => {
+  for (const pause of [true, false]) {
+    const f = fixture();
+    f.setInfo({ wifiScan: true });
+    const oldScan = deferred<WifiNetwork[]>();
+    f.setScanGate(oldScan);
+    const oldConnection = f.flow.connect();
+    await settle();
+    if (pause) f.flow.pause();
+    else { f.transport.disconnect(); f.flow.disconnected(); }
+    assert.equal(f.flow.state.scanning, false);
+    assert.equal(f.flow.state.busy, false);
+    f.setScanGate(null);
+    await f.flow.connect(true);
+    oldScan.resolve([{ ssid: '旧网络', rssi: -30, channel: 1, secure: false }]);
+    await oldConnection;
+    assert.deepEqual(f.flow.state.wifiNetworks, f.wifiNetworks);
+    assert.equal(f.flow.state.connected, true);
+    assert.equal(f.scanCount, 2);
+    assert.deepEqual(f.requests, []);
+  }
+});
+
+test('自动注册不需要设备编号或信任配置，先保存服务器分配的身份再显示绑定成功', async () => {
+  const f = fixture();
+  const hardwareId = 'aabbccddeeff';
+  const enrollment: EnrollmentResult = { operationId: id, hardwareId, deviceId: null, serverUrl: 'http://192.168.1.10:3001', ticket: 'c'.repeat(64), expiresAt: 300000 };
+  f.setInfo({ protocolVersion: 2, deviceId: '', hardwareId, deploymentId: '', trusted: false });
+  f.setEnrollment(enrollment);
+  f.setStatus({ deviceId: null, hardwareId });
+  await start(f);
+  assert.equal(f.sent.length, 1);
+  assert.equal(f.sent[0].protocolVersion, 2);
+  assert.equal('ticket' in f.sent[0] && f.sent[0].ticket, enrollment.ticket);
+  assert.deepEqual(f.requests.find(call => call.body)?.body, { hardwareId, deviceId: null, challenge: info.challenge });
+  assert.equal(f.requests.find(call => call.body)?.path, '/api/enrollment/operations');
+  for (const value of f.storage.writes) {
+    assert.equal(value.includes(enrollment.ticket), false);
+    assert.doesNotMatch(value, /wifi-secret|serverUrl|password/);
+  }
+  f.setStatus({ status: 'claimed', deviceId: info.deviceId, bindingId: batch });
+  await f.flow.poll(true);
+  assert.equal(f.flow.state.operation?.deviceId, info.deviceId);
+  assert.equal(f.completed.length, 0);
+  const resumed = fixture(user, f.storage);
+  resumed.setStatus({ status: 'completed', hardwareId, deviceId: info.deviceId, bindingId: batch });
+  await resumed.flow.poll(true);
+  assert.deepEqual(resumed.completed, [bound]);
+  assert.equal(resumed.sent.length, 0);
+  assert.equal(resumed.requests[0].path, `/api/enrollment/operations/${id}`);
+  f.flow.dispose(); resumed.flow.dispose();
+});
+
+test('自动注册尚未分配编号时，重连按硬件标识确认同一杯垫', async () => {
+  const f = fixture();
+  const hardwareId = 'aabbccddeeff';
+  f.setInfo({ protocolVersion: 2, deviceId: '', hardwareId, deploymentId: '', trusted: false });
+  f.setEnrollment({ operationId: id, hardwareId, deviceId: null, serverUrl: 'http://192.168.1.10:3001', ticket: 'c'.repeat(64), expiresAt: 300000 });
+  f.setStatus({ deviceId: null, hardwareId });
+  await start(f);
+  f.flow.disconnected();
+  f.setInfo({ hardwareId: '001122334455' });
+  await f.flow.connect(true);
+  assert.match(f.flow.state.error, /同一台杯垫/);
+  f.setInfo({ hardwareId, deviceId: info.deviceId });
+  await f.flow.connect(true);
+  assert.equal(f.flow.state.connected, true);
+  f.flow.dispose();
+});
 
 test('unbound onboarding sends opaque authorization to BLE, retains only safe identifiers, and requires persistent completion', async () => {
   const f = fixture();
@@ -296,7 +416,7 @@ test('a failed BLE status with empty operation id is associated only with this c
   f.flow.receiveStatus({ operationId: '', stage: 'failed', sequence: 2, message: 'bad auth', code: 'INVALID_AUTHORIZATION' });
   await settle();
   assert.equal(f.flow.state.ble?.operationId, id);
-  assert.match(f.flow.state.error, /授权校验/);
+  assert.match(f.flow.state.error, /本次配置/);
   f.flow.pause();
   await f.flow.connect(true);
   f.flow.receiveStatus({ operationId: '', stage: 'failed', sequence: 100, message: 'unrelated', code: 'INVALID_FRAME' });

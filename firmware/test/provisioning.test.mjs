@@ -10,8 +10,9 @@ test('实际配网状态机只在连接成功后保存，失败保留身份标�
   const device = readFileSync(new URL('../water_companion/coaster.c', import.meta.url), 'utf8');
   const update = network.match(/static void update_provisioning\([\s\S]*?\n\}/)?.[0];
   const cleanup = network.match(/static void clear_wifi_candidate\([\s\S]*?\n\}/)?.[0];
+  const control = network.match(/static esp_err_t update_control\([\s\S]*?\n\}/)?.[0];
   const saveWifi = device.match(/esp_err_t device_save_wifi\([\s\S]*?\n\}/)?.[0];
-  assert.ok(update && saveWifi && cleanup);
+  assert.ok(update && saveWifi && cleanup && control);
   const root = fileURLToPath(new URL('../../data/test-output/', import.meta.url));
   mkdirSync(root, { recursive: true });
   const directory = mkdtempSync(join(root, 'provisioning-'));
@@ -26,14 +27,15 @@ typedef int esp_err_t;
 enum { ESP_OK, WIFI_MODE_APSTA, WIFI_MODE_STA, WIFI_IF_STA };
 #define CONNECTED 1
 #define portMAX_DELAY 0
-#define portENTER_CRITICAL(lock) ((void)(lock))
-#define portEXIT_CRITICAL(lock) ((void)(lock))
+#define portENTER_CRITICAL(lock) ((void)(lock), ++critical_depth)
+#define portEXIT_CRITICAL(lock) ((void)(lock), --critical_depth)
+#define ESP_LOGE(...) ((void)0)
 typedef struct { char ssid[33]; char password[65]; char device_id[65]; char token[129];
     bool calibrated; int zero; double counts_per_gram; float empty_cup; } device_config_t;
 typedef struct { struct { char ssid[33]; char password[65]; } sta; } wifi_config_t;
 static device_config_t config, settings, persisted;
-static struct { bool wifi_trial, wifi_rollback, wifi_configured, wifi_connected, server_connected;
-    int wifi_error, wifi_reason, http_status, server_error; char ip[16], wifi_ssid[33]; } network_status;
+static struct { bool wifi_trial, wifi_rollback, wifi_configured, wifi_connected, server_connected, control_ready;
+    int wifi_error, wifi_reason, http_status, server_error, control_error; char ip[16], wifi_ssid[33]; } network_status;
 static int state_lock, wifi_lock, status_lock, wifi_state;
 static int64_t ap_until_ms, trial_started_ms, next_cleanup_ms;
 static uint32_t connection_generation;
@@ -41,11 +43,16 @@ static bool wifi_cleanup_pending;
 static bool provision_requested, wifi_trial;
 static char previous_ssid[33], previous_password[65];
 static int connected, mode, writes, clear_count, reconnects, save_error, config_calls, clear_error;
-static void xSemaphoreTake(int lock, int wait) { (void)lock; (void)wait; }
-static void xSemaphoreGive(int lock) { (void)lock; }
+static int lock_depth, critical_depth, mode_error, start_error, stop_error, starts, stops;
+static bool busy;
+static void xSemaphoreTake(int lock, int wait) { (void)lock; (void)wait; ++lock_depth; }
+static void xSemaphoreGive(int lock) { (void)lock; --lock_depth; }
+static bool provisioning_busy(void) { return busy; }
+static int control_start(void) { assert(!lock_depth && !critical_depth); ++starts; return start_error; }
+static int control_stop(void) { assert(!lock_depth && !critical_depth); ++stops; return stop_error; }
 static int xEventGroupGetBits(int group) { (void)group; return connected; }
 static void xEventGroupClearBits(int group, int flags) { (void)group; connected &= ~flags; }
-static int esp_wifi_set_mode(int value) { mode = value; return ESP_OK; }
+static int esp_wifi_set_mode(int value) { if (mode_error) return mode_error; mode = value; return ESP_OK; }
 static int esp_wifi_disconnect(void) { connected = 0; return ESP_OK; }
 static int esp_wifi_set_config(int interface, const wifi_config_t *value) {
     assert(interface == WIFI_IF_STA); assert(!strcmp(value->sta.ssid, previous_ssid));
@@ -58,6 +65,7 @@ static int storage_save_config(const device_config_t *value) {
 }
 ${saveWifi}
 ${cleanup}
+${control}
 ${update}
 static void prepare(void) {
     memset(&config, 0, sizeof(config));
@@ -71,6 +79,9 @@ static void prepare(void) {
     trial_started_ms = 0; connected = writes = clear_count = reconnects = save_error = config_calls = 0;
     ap_until_ms = 600000; provision_requested = false;
     clear_error = 0; wifi_cleanup_pending = false;
+    assert(!lock_depth && !critical_depth);
+    starts = stops = start_error = stop_error = mode_error = 0; busy = false;
+    network_status.control_ready = false; network_status.control_error = ESP_OK;
 }
 static void identity_unchanged(void) {
     assert(!strcmp(config.device_id, "coaster-unique") && !strcmp(config.token, "secret-device-token"));
@@ -102,10 +113,34 @@ int main(void) {
     assert(!wifi_cleanup_pending && network_status.wifi_error == 0 && clear_count == 2);
     provision_requested = true; update_provisioning(50000);
     assert(mode == WIFI_MODE_APSTA && ap_until_ms == 650000);
-    update_provisioning(649999); assert(mode == WIFI_MODE_APSTA);
+    assert(starts == 1 && network_status.control_ready && network_status.control_error == ESP_OK);
+    update_provisioning(649999); assert(mode == WIFI_MODE_APSTA && starts == 1 && stops == 0);
     update_provisioning(650000); assert(mode == WIFI_MODE_STA && ap_until_ms == 0);
+    assert(stops == 1 && !network_status.control_ready);
+    update_provisioning(650001); assert(stops == 1);
     provision_requested = true; update_provisioning(650001);
-    assert(mode == WIFI_MODE_APSTA && ap_until_ms == 1250001);
+    assert(mode == WIFI_MODE_APSTA && ap_until_ms == 1250001 && starts == 2);
+    // Opening failures are visible, do not claim readiness, and can be retried by BOOT.
+    prepare(); wifi_trial = false; ap_until_ms = 0; start_error = -7;
+    provision_requested = true; update_provisioning(1);
+    assert(!network_status.control_ready && network_status.control_error == -7 && starts == 1);
+    update_provisioning(2); assert(starts == 1);
+    start_error = 0; provision_requested = true; update_provisioning(3);
+    assert(network_status.control_ready && network_status.control_error == ESP_OK && starts == 2);
+    // BLE work cannot keep the HTTP stack alive past the AP deadline.
+    busy = true; update_provisioning(600003);
+    assert(stops == 1 && !network_status.control_ready && ap_until_ms == 0 && mode == WIFI_MODE_STA);
+    // Expiry still waits for an existing legacy Wi-Fi trial to complete.
+    prepare(); busy = true; update_provisioning(600000);
+    assert(wifi_trial && stops == 0 && ap_until_ms == 600000 && writes == 0);
+    wifi_trial = false; stop_error = -8; update_provisioning(600001);
+    assert(stops == 1 && ap_until_ms == 600000 && network_status.control_error == -8);
+    stop_error = 0; update_provisioning(600002);
+    assert(stops == 2 && ap_until_ms == 0 && network_status.control_error == ESP_OK);
+    prepare(); wifi_trial = false; ap_until_ms = 0; mode_error = -9;
+    provision_requested = true; update_provisioning(1);
+    assert(starts == 0 && !network_status.control_ready && network_status.control_error == -9);
+    assert(!lock_depth && !critical_depth);
 }
 `;
     const filename = join(directory, 'provisioning.c');

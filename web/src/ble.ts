@@ -5,6 +5,7 @@ export const BLE_UUID = {
   info: '7d2a0002-7b9c-4e6a-9f21-531bd67a0c10',
   config: '7d2a0003-7b9c-4e6a-9f21-531bd67a0c10',
   status: '7d2a0004-7b9c-4e6a-9f21-531bd67a0c10',
+  wifi: '7d2a0005-7b9c-4e6a-9f21-531bd67a0c10',
 } as const;
 
 // Only the Web Bluetooth surface this transport uses. No ambient browser patches.
@@ -24,11 +25,26 @@ export interface BluetoothAccess {
   requestDevice(options: { filters: { services: string[] }[]; optionalServices: string[] }): Promise<BleDevice>;
 }
 export interface DeviceInfo {
-  protocolVersion: 1;
+  protocolVersion: 1 | 2;
   deviceId: string;
+  hardwareId?: string;
   deploymentId: string;
   challenge: string;
   trusted: boolean;
+  wifiScan?: boolean;
+}
+export interface WifiNetwork {
+  ssid: string;
+  rssi: number;
+  channel: number;
+  secure: boolean;
+}
+interface WifiScan {
+  state: 'idle' | 'scanning' | 'ready' | 'failed';
+  count: number;
+  index?: number;
+  network?: WifiNetwork;
+  code?: string;
 }
 export const bleStages = ['idle', 'received', 'wifi_connecting', 'cloud_verifying', 'bound', 'saving', 'completed', 'failed', 'recovering'] as const;
 export interface BleStatus {
@@ -38,16 +54,28 @@ export interface BleStatus {
   sequence: number;
   code?: string;
 }
-export interface ProvisionConfig {
+export interface SignedProvisionConfig {
   protocolVersion: 1;
   operationId: string;
   ssid: string;
   password: string;
   authorization: { payload: string; signature: string };
 }
+export interface EnrollmentConfig {
+  protocolVersion: 2;
+  operationId: string;
+  hardwareId: string;
+  challenge: string;
+  ssid: string;
+  password: string;
+  serverUrl: string;
+  ticket: string;
+  expiresAt: number;
+}
+export type ProvisionConfig = SignedProvisionConfig | EnrollmentConfig;
 
 export function bluetoothCompatibility(secure: boolean, bluetooth?: BluetoothAccess): string {
-  if (!secure) return '蓝牙配网需要 HTTPS 安全页面，请使用水伴的 HTTPS 地址。';
+  if (!secure) return '浏览器只允许在 HTTPS 或本机 localhost 页面使用蓝牙，请使用对应地址。';
   if (!bluetooth) return '当前浏览器不支持网页蓝牙。请用 Android 或电脑上的 Chrome / Edge；iPhone、iPad 或应用内浏览器可用下方热点方式，但杯垫必须已由管理员预配服务器地址。';
   return '';
 }
@@ -89,6 +117,15 @@ function readJson(value: DataView): Record<string, unknown> {
 
 export function parseInfo(value: DataView): DeviceInfo {
   const data = readJson(value);
+  if (data.protocolVersion === 2) {
+    if (typeof data.hardwareId !== 'string' || !/^[a-f0-9]{12}$/.test(data.hardwareId)
+      || typeof data.deviceId !== 'string' || !/^[\w-]{0,64}$/.test(data.deviceId)
+      || typeof data.challenge !== 'string' || !/^[a-f0-9]{64}$/.test(data.challenge)) {
+      throw new Error('杯垫返回的设备信息无效，请重新连接。');
+    }
+    return { protocolVersion: 2, hardwareId: data.hardwareId, deviceId: data.deviceId, challenge: data.challenge, deploymentId: '', trusted: true,
+      ...(data.wifiScan === true ? { wifiScan: true } : {}) };
+  }
   if (data.protocolVersion !== 1 || typeof data.deviceId !== 'string' || !/^[\w-]{1,64}$/.test(data.deviceId)
     || typeof data.deploymentId !== 'string' || (data.trusted !== false && !uuidPattern.test(data.deploymentId))
     || typeof data.challenge !== 'string' || !/^[0-9a-f]{64}$/i.test(data.challenge) || typeof data.trusted !== 'boolean') {
@@ -106,6 +143,25 @@ export function parseStatus(value: DataView): BleStatus {
   return data as unknown as BleStatus;
 }
 
+export function parseWifiScan(value: DataView): WifiScan {
+  const data = readJson(value);
+  const invalid = () => new Error('杯垫返回的 Wi-Fi 列表不完整，请重新扫描。');
+  if (!['idle', 'scanning', 'ready', 'failed'].includes(data.state as string)
+    || !Number.isInteger(data.count) || Number(data.count) < 0 || Number(data.count) > 20
+    || (data.state !== 'ready' && data.count !== 0)
+    || (data.code !== undefined && typeof data.code !== 'string')) throw invalid();
+  if (data.state === 'ready' && Number(data.count) > 0) {
+    const network = data.network as Partial<WifiNetwork> | undefined;
+    if (!Number.isInteger(data.index) || Number(data.index) < 0 || Number(data.index) >= Number(data.count)
+      || !network || typeof network.ssid !== 'string' || network.ssid.includes('\0')
+      || new TextEncoder().encode(network.ssid).length < 1 || new TextEncoder().encode(network.ssid).length > 32
+      || !Number.isInteger(network.rssi) || Number(network.rssi) < -127 || Number(network.rssi) > 0
+      || !Number.isInteger(network.channel) || Number(network.channel) < 1 || Number(network.channel) > 14
+      || typeof network.secure !== 'boolean') throw invalid();
+  }
+  return data as unknown as WifiScan;
+}
+
 function deadline<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new DOMException('蓝牙响应超时，请重新连接后查询同一次配网。', 'TimeoutError')), timeoutMs);
@@ -117,6 +173,7 @@ export class BleTransport {
   private device?: BleDevice;
   private config?: BleCharacteristic;
   private status?: BleCharacteristic;
+  private wifi?: BleCharacteristic;
   private generation = 0;
   private queue: Promise<unknown> = Promise.resolve();
   private notificationRead = false;
@@ -185,6 +242,10 @@ export class BleTransport {
       const status = await deadline(service.getCharacteristic(BLE_UUID.status), this.timeoutMs);
       this.assertCurrent(version);
       this.status = status;
+      if (result.wifiScan) {
+        this.wifi = await deadline(service.getCharacteristic(BLE_UUID.wifi), this.timeoutMs);
+        this.assertCurrent(version);
+      }
       const changed = () => this.onNotification(version);
       status.addEventListener('characteristicvaluechanged', changed);
       this.detach = () => status.removeEventListener('characteristicvaluechanged', changed);
@@ -252,6 +313,48 @@ export class BleTransport {
     });
   }
 
+  scanWifi(): Promise<WifiNetwork[]> {
+    const version = this.generation;
+    return this.serial(async () => {
+      const wifi = this.wifi;
+      if (!wifi) throw new Error('当前杯垫固件不支持 Wi-Fi 扫描，请升级固件或手动输入。');
+      const read = async () => {
+        this.assertCurrent(version);
+        const value = await wifi.readValue();
+        this.assertCurrent(version);
+        return parseWifiScan(value);
+      };
+      await wifi.writeValueWithResponse(new Uint8Array([1]));
+      let result = await read();
+      while (result.state === 'scanning') {
+        await new Promise(resolve => setTimeout(resolve, 250));
+        result = await read();
+      }
+      if (result.state === 'failed') throw new Error(result.code === 'WIFI_BUSY'
+        ? '杯垫正在连接 Wi-Fi，请稍后重新扫描。' : '扫描未完成，请稍后重试。');
+      if (result.state !== 'ready') throw new Error('扫描未开始，请重新扫描。');
+      const count = result.count;
+      const networks: WifiNetwork[] = [];
+      for (let index = 0; index < count; index++) {
+        if (index > 0) {
+          this.assertCurrent(version);
+          await wifi.writeValueWithResponse(new Uint8Array([2, index]));
+          result = await read();
+        }
+        if (result.state !== 'ready' || result.count !== count || result.index !== index || !result.network) {
+          throw new Error('Wi-Fi 列表已变化，请重新扫描。');
+        }
+        networks.push(result.network);
+      }
+      const seen = new Set<string>();
+      return networks.sort((a, b) => b.rssi - a.rssi).filter(network => {
+        if (seen.has(network.ssid)) return false;
+        seen.add(network.ssid);
+        return true;
+      });
+    }, this.timeoutMs * 2);
+  }
+
   async send(config: ProvisionConfig): Promise<void> {
     validateWifi(config.ssid, config.password);
     const frames = encodeFrames(config);
@@ -278,6 +381,7 @@ export class BleTransport {
     this.disconnected = undefined;
     this.config = undefined;
     this.status = undefined;
+    this.wifi = undefined;
     this.notificationRead = false;
     this.notificationDirty = false;
     this.readingStatus = false;
