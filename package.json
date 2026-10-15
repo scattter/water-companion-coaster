@@ -20,7 +20,6 @@
     "smoke:web": "node --import tsx scripts/smoke-server.mjs",
     "test:firmware": "node scripts/test-firmware.mjs",
     "build:firmware": "node scripts/build-firmware.mjs",
-    "provision": "npm run provision --workspace @coaster/server --",
     "admin": "npm run admin --workspace @coaster/server --",
     "provisioning-key": "npm run provisioning-key --workspace @coaster/server --"
   },

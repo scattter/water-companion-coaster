@@ -31,7 +31,7 @@ Content-Type: application/json
 
 服务端保存内部硬件标识与正式 ID 的唯一关联，重配与普通配置重置继续检查原账号归属。已有已登记身份使用原凭证的 HMAC 证明完成硬件关联，保留编号及有效凭证。HMAC 绑定操作、硬件和票据，不能跨操作重放。硬件标识不是防篡改硬件认证，也不跨独立数据库同步归属。
 
-工厂仍负责重量标定；0.7.0 不需 USB 写身份或信任公钥。旧 `provision` CLI、登记清单、`server` / `trust` 命令仅用于兼容与受控运维，见 [出厂说明](factory-provisioning.md)。已有 `DEVICE_ID` / `DEVICE_TOKEN` 环境变量仍只用于旧设备首次迁移，不覆盖已登记凭证。
+工厂仍负责重量标定；0.7.0 不需 USB 写身份或信任公钥。旧 `provision` CLI、手工登记和清单导入已移除；`server` / `trust` 命令仍用于受控运维，见 [出厂说明](factory-provisioning.md)。已有 `DEVICE_ID` / `DEVICE_TOKEN` 环境变量仍只用于旧设备首次迁移，不覆盖已登记凭证。
 
 设备保存身份和 origin 后，BLE v2 重配要求同一 origin。生产 HTTPS 始终校验证书；只有非生产后端允许配置 RFC1918 私网 IPv4 HTTP。设备接受 HTTP 只限这些私网地址，拒绝公网 HTTP、localhost 和回环。
 
@@ -68,7 +68,7 @@ Content-Type: application/json
 }
 ```
 
-未标定／传感器不可用时重量为 `null`，不能捏造读数。空杯未登记为 `null`。设备约五秒心跳，超过十五秒未收到有效心跳视为离线。响应：
+未标定／传感器不可用时重量为 `null`，不能捏造读数。空杯未登记为 `null`。0.7.2 活动时约五秒心跳，静置三十秒后约三十秒心跳；超过九十秒未收到有效心跳视为离线。失败按 5、10、20、40、60 秒退避，重连后立即确认。响应：
 
 ```ts
 {
@@ -85,7 +85,7 @@ Content-Type: application/json
 用户在杯垫上放空杯、静置三秒后：
 
 1. 浏览器生成 UUID 并保留，以 `POST /api/control/cup` 提交 `{id}`。
-2. 服务端确认设备归属与新鲜在线状态，创建约三十秒有效的待执行命令；同一编号重试返回原命令，不重复创建。每台同时最多一条待执行命令。
+2. 服务端确认设备归属与新鲜在线状态，创建两分钟有效的待执行命令；同一编号重试返回原命令，不重复创建。每台同时最多一条待执行命令。
 3. 返回 `{command:{id,status,message,expiresAt}}`；`status` 为 `pending`、`succeeded`、`failed` 或 `expired`。请求已接收不等于空杯设置成功。
 4. 杯垫通过心跳领取命令，检查 ID、有效期和 `cup` 白名单，保存执行占位后执行，持久保存结果并在后续心跳回执。重启或重传不会自动再次获取杯重；执行中断时明确报告未确认结果。
 5. 浏览器调用 `GET /api/control/commands/:id` 查询，只有 `succeeded` 才显示成功。POST 响应丢失仍可用已保存的 ID 查询，不自动重发写操作。

@@ -16,7 +16,7 @@ DB_PATH=/实际持久目录/coaster.sqlite npm run admin -- --username 已注册
 
 ## 工厂标定与交付
 
-1. 按 [固件说明](../firmware/README.md) 上传 0.7.0。保留 `partitions.csv`，选择 16 MB Flash、OPI PSRAM，关闭“擦除全部 Flash”。
+1. 按 [固件说明](../firmware/README.md) 上传 0.7.2。保留 `partitions.csv`，选择 16 MB Flash、OPI PSRAM，关闭“擦除全部 Flash”。
 2. 整机空载，通过 USB 执行 `tare`，放上已知质量执行 `calibrate`，再用其他重量复核。
 3. 断电重启后确认 `calibrated: true`。工厂不替最终用户登记空杯。
 4. 交付时用户用自己的账号完成 BLE 配网和绑定。测试中已绑定的设备，先由测试账号解绑。
@@ -51,16 +51,13 @@ DB_PATH=/实际持久目录/coaster.sqlite npm run admin -- --username 已注册
 {"cmd":"reboot"}
 ```
 
-## 旧版兼容工具
+## 已登记设备兼容
 
-0.6.x 的签名配网协议仍保留，管理员页面将逐台登记、导入与签名配置折叠。新流程不执行以下步骤：
+0.7.2 移除网页手工登记、JSON 清单导入、对应写入接口与 `npm run provision` CLI；新设备统一使用 BLE 自动注册。管理员仍可查看设备归属、维护服务器地址。
 
-- `npm run provisioning-key -- --out ./data/provisioning-private.pem` 生成旧部署签名私钥，配置 `PROVISION_SIGNING_KEY_FILE` / `PROVISION_DEPLOYMENT_ID`；不能替换已交付设备对应的密钥。
-- `npm run provision -- --id coaster-000001` 为旧设备生成独立凭证，操作员将工具输出的 `server` 命令通过 USB 写入。
-- 旧 `trust` 命令写入公开部署 UUID 与 P-256 公钥；私钥留在服务器。
-- `npm run provision -- --export ./output/factory/batch-001.json --id coaster-000001` 导出仅含 `id/tokenHash/createdAt` 的清单，在管理员页面导入。相同身份幂等，冲突拒绝，不覆盖归属。
+已有云端设备、凭证、账号归属和历史不删除。旧版签名配网及中断操作恢复仍保留；如果仍有已部署的 0.6.x 设备，保留其原签名密钥和部署 UUID，旧 `trust` 命令仍用于受控运维。新设备无需这些配置。
 
-工具使用当前 `DB_PATH`；工厂本机库不会随代码自动部署。旧设备升级到 0.7.0 后，已在当前服务登记的身份先证明原凭证，再关联硬件标识，保留编号。尚未被当前服务登记的本机调试编号可在首次绑定时取得正式编号。数据库、历史和原设备凭证必须保留，不能把换库当成迁移。
+旧设备升级后，已在当前服务登记的身份先证明原凭证，再关联硬件标识，保留编号。尚未登记的本机调试编号可在首次绑定时取得正式编号。数据库、历史和原设备凭证必须保留，不能把换库当成迁移。
 
 ## 故障与恢复
 

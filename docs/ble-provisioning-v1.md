@@ -23,11 +23,11 @@
 
 ## 网页/管理员 API
 
+0.7.2 起手工登记与清单导入接口已移除，新增设备使用 v2 自动注册；本节其余接口继续服务已登记旧设备。
+
 沿用同源JSON/Cookie；错误 `{error,code?}`；Session增加 `user.role:'user'|'admin'`, `bindingId:string|null`。
 
 - GET `/api/admin/devices` -> `{devices:[{id,createdAt,bound:boolean,username:string|null}]}`。
-- POST `/api/admin/devices` `{id,token}` -> `{inserted:number,skipped:number}`；同编号同hash幂等，冲突409，永不返回token。
-- POST `/api/admin/devices/import` `{version:1,devices:[{id,tokenHash,createdAt}]}` -> `{inserted,skipped}`。
 - GET `/api/admin/settings` -> `{serverUrl,configVersion,deploymentId,publicKey,signingReady}`。
 - POST `/api/admin/settings` `{serverUrl}` -> 同GET；生产仅HTTPS origin。签名密钥不通过HTTP配置。
 - POST `/api/provisioning/operations` `{deviceId,deploymentId,challenge}` -> `{operationId,serverUrl,expiresAt,authorization:{payload,signature}}`。授权包含ticket；网页不解析其安全决策。

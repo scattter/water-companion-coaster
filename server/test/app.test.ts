@@ -68,7 +68,7 @@ test('绑定码仅在线设备申请，过期、消费、抢绑和一人多设�
   const expired = await f.web(user, '/api/devices/bind', { code: first.code });
   assert.equal(expired.statusCode, 400); assert.match(expired.json().error, /绑定码无效或已过期/);
   const fresh = await f.code();
-  f.advance(15_001);
+  f.advance(90_001);
   assert.equal((await f.web(user, '/api/devices/bind', { code: fresh.code })).statusCode, 409);
   await f.report();
   assert.equal((await f.web(user, '/api/devices/bind', { code: fresh.code })).statusCode, 200);
@@ -149,7 +149,7 @@ test('数据库重开与Wi-Fi地址变化保留账号归属、事件、撤销和
   try {
     const read = () => app.inject({ url: '/api/dashboard', headers: { cookie } });
     assert.equal((await read()).json().totals.drinkMl, 50);
-    f.advance(15_001);
+    f.advance(90_001);
     assert.equal((await read()).json().device.online, false);
     assert.equal((await app.inject({ method: 'POST', url: '/api/device/heartbeat', remoteAddress: '203.0.113.50', headers: headers(), payload: heartbeat })).json().bound, true);
     assert.equal((await read()).json().device.online, true);

@@ -58,7 +58,7 @@ void loop()
     static unsigned long pressed_at = 0;
     static bool handled = false;
     if (startup_result == ESP_OK && digitalRead(PROVISION_BUTTON_PIN) == LOW) {
-        if (!pressed_at) pressed_at = millis();
+        if (!pressed_at) { pressed_at = millis(); device_wake(); }
         if (!handled && millis() - pressed_at >= 3000) {
             network_provision();
             ble_provision_open();

@@ -25,6 +25,10 @@
 #include "freertos/task.h"
 
 #define CONNECTED BIT0
+#define HEARTBEAT_ACTIVE_MS 5000
+#define HEARTBEAT_IDLE_MS 30000
+#define HEARTBEAT_RETRY_MAX_MS 60000
+#define SERVER_TIMEOUT_MS 90000
 static EventGroupHandle_t wifi_state;
 static SemaphoreHandle_t wifi_lock;
 static device_config_t settings;
@@ -46,6 +50,19 @@ typedef struct {
     size_t length;
     bool overflow;
 } response_buffer_t;
+
+// 所有请求都在网络任务串行执行；复用客户端和响应缓冲，避免每次心跳重新握手。
+static esp_http_client_handle_t http_client;
+static response_buffer_t http_response;
+static char http_origin[192];
+static uint32_t http_generation;
+
+static void close_http(void)
+{
+    if (http_client) esp_http_client_cleanup(http_client);
+    http_client = NULL;
+    http_origin[0] = 0;
+}
 
 bool network_has_time(void)
 {
@@ -74,7 +91,7 @@ void network_snapshot(network_status_t *status)
     int64_t confirmed = last_confirmed_ms;
     portEXIT_CRITICAL(&status_lock);
     status->server_connected = status->server_connected && status->wifi_connected
-        && esp_timer_get_time() / 1000 - confirmed <= 15000;
+        && esp_timer_get_time() / 1000 - confirmed <= SERVER_TIMEOUT_MS;
     if (status->bound || !network_has_time() || status->binding_expires_at <= network_epoch_ms()) {
         status->binding_code[0] = 0;
         status->binding_expires_at = 0;
@@ -103,38 +120,54 @@ static esp_err_t request_as(const char *origin, const char *path, const cJSON *b
 {
     *reply = NULL;
     if (http_status) *http_status = 0;
+    if (strlen(origin) >= sizeof(http_origin)) return ESP_ERR_INVALID_ARG;
     char url[320], authorization[144];
     snprintf(url, sizeof(url), "%s%s", origin, path);
     snprintf(authorization, sizeof(authorization), "Bearer %s", token ? token : "");
     char *json = body ? cJSON_PrintUnformatted(body) : NULL;
     if (body && !json) return ESP_ERR_NO_MEM;
-    response_buffer_t response = {0};
-    esp_http_client_config_t config = {
-        .url = url, .method = body ? HTTP_METHOD_POST : HTTP_METHOD_GET, .timeout_ms = 2000,
-        .event_handler = on_http, .user_data = &response,
-        .disable_auto_redirect = true, .crt_bundle_attach = esp_crt_bundle_attach,
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (!client) { cJSON_free(json); return ESP_ERR_NO_MEM; }
-    esp_err_t result = esp_http_client_set_header(client, "Content-Type", "application/json");
-    if (result == ESP_OK && token && *token) result = esp_http_client_set_header(client, "Authorization", authorization);
-    if (result == ESP_OK && device_id && *device_id && token && *token) result = esp_http_client_set_header(client, "X-Device-ID", device_id);
-    if (result == ESP_OK && json) result = esp_http_client_set_post_field(client, json, strlen(json));
-    if (result == ESP_OK) result = esp_http_client_perform(client);
-    int status = esp_http_client_get_status_code(client);
+    portENTER_CRITICAL(&status_lock);
+    uint32_t generation = connection_generation;
+    portEXIT_CRITICAL(&status_lock);
+    if (http_client && (strcmp(http_origin, origin) || http_generation != generation)) close_http();
+    memset(&http_response, 0, sizeof(http_response));
+    if (!http_client) {
+        esp_http_client_config_t config = {
+            .url = url, .timeout_ms = 2000, .event_handler = on_http, .user_data = &http_response,
+            .disable_auto_redirect = true, .crt_bundle_attach = esp_crt_bundle_attach,
+        };
+        http_client = esp_http_client_init(&config);
+        if (!http_client) { cJSON_free(json); return ESP_ERR_NO_MEM; }
+        strcpy(http_origin, origin);
+        http_generation = generation;
+    }
+    esp_err_t result = esp_http_client_set_url(http_client, url);
+    if (result == ESP_OK) result = esp_http_client_set_method(http_client, body ? HTTP_METHOD_POST : HTTP_METHOD_GET);
+    if (result == ESP_OK) result = esp_http_client_set_header(http_client, "Content-Type", "application/json");
+    if (result == ESP_OK) result = esp_http_client_set_header(http_client, "Connection", "keep-alive");
+    // 自动注册的匿名请求不能继承上一条请求的设备凭证。
+    esp_http_client_delete_header(http_client, "Authorization");
+    esp_http_client_delete_header(http_client, "X-Device-ID");
+    if (result == ESP_OK && token && *token) result = esp_http_client_set_header(http_client, "Authorization", authorization);
+    if (result == ESP_OK && device_id && *device_id && token && *token) result = esp_http_client_set_header(http_client, "X-Device-ID", device_id);
+    if (result == ESP_OK) result = esp_http_client_set_post_field(http_client, json, json ? strlen(json) : 0);
+    if (result == ESP_OK) result = esp_http_client_perform(http_client);
+    int status = esp_http_client_get_status_code(http_client);
     if (http_status) *http_status = status;
-    esp_http_client_cleanup(client);
+    esp_http_client_set_post_field(http_client, NULL, 0);
     cJSON_free(json);
     memset(authorization, 0, sizeof(authorization));
-    if (result != ESP_OK) return result;
-    if (status != 200 || response.overflow) {
+    if (result != ESP_OK) { close_http(); return result; }
+    if (status != 200 || http_response.overflow) {
+        close_http();
         ESP_LOGW(TAG, "设备上报失败：HTTP %d", status);
         return ESP_ERR_INVALID_RESPONSE;
     }
-    *reply = cJSON_Parse(response.data);
+    *reply = cJSON_Parse(http_response.data);
     if (cJSON_IsObject(*reply)) return ESP_OK;
     cJSON_Delete(*reply);
     *reply = NULL;
+    close_http();
     return ESP_ERR_INVALID_RESPONSE;
 }
 
@@ -271,7 +304,7 @@ static void receive_command(const cJSON *reply)
         (int64_t)expires->valuedouble, network_epoch_ms(), storage_save_command, execute_cup);
 }
 
-static void heartbeat(void)
+static bool heartbeat(void)
 {
     portENTER_CRITICAL(&status_lock);
     uint32_t generation = connection_generation;
@@ -281,7 +314,7 @@ static void heartbeat(void)
     unsigned pending, time_pending;
     storage_counts(&pending, &time_pending);
     cJSON *body = cJSON_CreateObject(), *reply = NULL;
-    if (!body) return;
+    if (!body) return false;
     if (status.sensor_ready && status.calibrated && isfinite(status.weight)
         && status.weight >= -2000 && status.weight <= 4000)
         cJSON_AddNumberToObject(body, "weightGrams", roundf(status.weight * 10) / 10);
@@ -354,6 +387,7 @@ static void heartbeat(void)
     } else ESP_LOGW(TAG, "心跳未确认：%s", esp_err_to_name(result));
     cJSON_Delete(reply);
     cJSON_Delete(body);
+    return confirmed;
 }
 
 static esp_err_t upload_one(void)
@@ -563,15 +597,27 @@ static void update_provisioning(int64_t now)
 static void network_task(void *arg)
 {
     (void)arg;
-    int64_t last_connect = -5000, last_heartbeat = -5000, next_upload = 0;
-    unsigned backoff_ms = 1000;
+    int64_t last_connect = -5000, last_heartbeat = -HEARTBEAT_IDLE_MS, next_upload = 0, retry_at = 0;
+    unsigned backoff_ms = 1000, heartbeat_backoff = HEARTBEAT_ACTIVE_MS;
+    uint32_t generation = UINT32_MAX;
     for (;;) {
         int64_t now = esp_timer_get_time() / 1000;
         provisioning_poll(now, (xEventGroupGetBits(wifi_state) & CONNECTED) != 0);
         update_provisioning(now);
         if (provisioning_busy()) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
+        portENTER_CRITICAL(&status_lock);
+        uint32_t current_generation = connection_generation;
+        portEXIT_CRITICAL(&status_lock);
+        if (generation != current_generation) {
+            generation = current_generation;
+            last_heartbeat = -HEARTBEAT_IDLE_MS;
+            retry_at = next_upload = 0;
+            heartbeat_backoff = HEARTBEAT_ACTIVE_MS;
+            close_http();
+        }
         if (network_has_time()) storage_resolve_time(network_epoch_ms() - now);
         if (settings.ssid[0] && !(xEventGroupGetBits(wifi_state) & CONNECTED)) {
+            close_http();
             if ((last_connect < 0 || now - last_connect >= 30000)
                 && xSemaphoreTake(wifi_lock, 0) == pdTRUE) {
                 esp_wifi_connect();
@@ -580,9 +626,18 @@ static void network_task(void *arg)
             }
         } else if ((xEventGroupGetBits(wifi_state) & CONNECTED) && settings.server_url[0] && settings.token[0]
             && (strncmp(settings.server_url, "https://", 8) != 0 || network_has_time())) {
-            if (now - last_heartbeat >= 5000) {
-                heartbeat();
-                last_heartbeat = now;
+            device_status_t device;
+            device_snapshot(&device);
+            unsigned interval = device.active || cloud_command.pending ? HEARTBEAT_ACTIVE_MS : HEARTBEAT_IDLE_MS;
+            if (now >= retry_at && (retry_at || now - last_heartbeat >= interval)) {
+                bool confirmed = heartbeat();
+                last_heartbeat = esp_timer_get_time() / 1000;
+                if (confirmed) { retry_at = 0; heartbeat_backoff = HEARTBEAT_ACTIVE_MS; }
+                else {
+                    retry_at = last_heartbeat + heartbeat_backoff;
+                    heartbeat_backoff = heartbeat_backoff * 2 > HEARTBEAT_RETRY_MAX_MS
+                        ? HEARTBEAT_RETRY_MAX_MS : heartbeat_backoff * 2;
+                }
             }
             portENTER_CRITICAL(&status_lock);
             bool get_binding = binding_requested;

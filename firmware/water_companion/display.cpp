@@ -149,6 +149,16 @@ void display_update(esp_err_t startup_result)
     device_snapshot(&device);
     ble_provision_display_t ble;
     ble_provision_snapshot(&ble);
+    bool provisioning = provisioning_busy();
+    bool awake = device.active || provisioning || ble.window_open || network.ap_ready || network.binding_code[0]
+        || !device.sensor_ready || !device.calibrated || device.unsaved_event || device.restart_required
+        || !isfinite(device.weight) || device.weight < -2 || device.weight > WEIGHING_MAX_GRAMS;
+    static bool backlight = true;
+    if (awake != backlight) {
+        digitalWrite(LCD_BL_PIN, awake ? HIGH : LOW);
+        backlight = awake;
+    }
+    if (!awake) return;
     if (ble.pairing) {
         char pin[24];
         snprintf(pin, sizeof(pin), "%06lu", (unsigned long)ble.passkey);
@@ -156,7 +166,7 @@ void display_update(esp_err_t startup_result)
         line(1, pin, WHITE);
         line(2, "手机连接密码", WHITE);
         line(3, "配网窗口10分钟", GRAY);
-    } else if (provisioning_busy()) {
+    } else if (provisioning) {
         line(0, "正在配网", GRAY);
         line(1, ble.stage, AMBER);
         line(2, "请勿断电", WHITE);

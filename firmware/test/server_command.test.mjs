@@ -88,6 +88,7 @@ static void cJSON_Delete(cJSON *object) {
 #include "storage.h"
 #include "network.h"
 #define portMAX_DELAY 0
+#define SERVER_TIMEOUT_MS 90000
 #define portENTER_CRITICAL(lock) ((void)(lock))
 #define portEXIT_CRITICAL(lock) ((void)(lock))
 static device_config_t config, persisted, settings;
@@ -97,10 +98,10 @@ static unsigned queued, queued_time;
 static int32_t raw_samples[WEIGHING_SAMPLES];
 static unsigned raw_count;
 static unsigned raw_next;
-static int64_t last_sample_ms, reboot_at_ms;
+static int64_t last_sample_ms, reboot_at_ms, last_activity_ms;
 static bool sensor_ready, unsaved_event, watch, restart_required;
 static saved_event_t pending_event;
-static float weight = NAN;
+static float weight = NAN, activity_weight = NAN;
 static network_status_t network_status;
 static int status_lock;
 static int64_t last_confirmed_ms;

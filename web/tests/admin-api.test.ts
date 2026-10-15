@@ -1,18 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { httpsOrigin, parseRegistry } from '../src/admin.ts';
+import { httpsOrigin } from '../src/admin.ts';
 import { ApiError, request } from '../src/api.ts';
-
-const registry = { version: 1, devices: [{ id: 'coaster-000001', tokenHash: 'a'.repeat(64), createdAt: 1720000000000 }] };
-
-test('admin import validates exported registries and refuses raw tokens, duplicate identities and malformed hashes', () => {
-  assert.deepEqual(parseRegistry(JSON.stringify(registry)), registry);
-  assert.throws(() => parseRegistry('{bad'), /JSON/);
-  assert.throws(() => parseRegistry(JSON.stringify({ ...registry, token: 'raw-secret' })), /清单/);
-  assert.throws(() => parseRegistry(JSON.stringify({ ...registry, devices: [{ ...registry.devices[0], token: 'raw-secret' }] })), /只能包含/);
-  assert.throws(() => parseRegistry(JSON.stringify({ ...registry, devices: [registry.devices[0], registry.devices[0]] })), /重复/);
-  assert.throws(() => parseRegistry(JSON.stringify({ ...registry, devices: [{ ...registry.devices[0], tokenHash: 'A'.repeat(64) }] })), /哈希/);
-});
 
 test('admin origin validation permits HTTPS origins and prevents URLs that change the request destination', () => {
   assert.equal(httpsOrigin(' https://water.example:8443/ '), 'https://water.example:8443');

@@ -4,7 +4,6 @@ import type { FastifyInstance } from 'fastify';
 import { authRoutes, fail } from './auth.js';
 import { bindOwnership, endOwnership, ownership } from './bindings.js';
 import { hash, transaction } from './db.js';
-import { importRegistryRecords, validateProvisionRegistry } from './provision-registry.js';
 import { authorizationLifetimeMs, type ProvisioningSigner } from './signing.js';
 import { emptyBody, hexSchema, idParams, uuidSchema, validateServerOrigin } from './validation.js';
 
@@ -18,29 +17,10 @@ const operationColumns = `id, device_id AS deviceId, user_id AS userId, status, 
 export function provisioningRoutes(app: FastifyInstance, db: DatabaseSync, auth: ReturnType<typeof authRoutes>, signer: ProvisioningSigner, now: () => Date, allowLocalHttp = false, fallbackServerUrl?: string) {
   const settings = () => ({ ...signer.settings(), serverUrl: signer.settings().serverUrl || fallbackServerUrl || '', allowLocalHttp });
   const deviceIdSchema = { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9_-]+$' };
-  const registryIdSchema = { type: 'string', minLength: 14, maxLength: 14, pattern: '^coaster-(?!000000)[0-9]{6}$' };
-  const registrySchema = { type: 'object', additionalProperties: false, required: ['version', 'devices'], properties: {
-    version: { const: 1 }, devices: { type: 'array', minItems: 1, maxItems: 1000, items: {
-      type: 'object', additionalProperties: false, required: ['id', 'tokenHash', 'createdAt'], properties: {
-        id: registryIdSchema, tokenHash: hexSchema, createdAt: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
-      },
-    } },
-  } };
   app.get('/api/admin/devices', { schema: { querystring: { type: 'object', additionalProperties: false } } }, async () => ({
     devices: db.prepare(`SELECT d.id, d.created_at AS createdAt, d.user_id IS NOT NULL AS bound, u.username
       FROM devices d LEFT JOIN users u ON u.id = d.user_id ORDER BY d.id`).all().map((row) => ({ ...row, bound: !!row.bound })),
   }));
-  app.post<{ Body: { id: string; token: string } }>('/api/admin/devices', { schema: { body: {
-    type: 'object', additionalProperties: false, required: ['id', 'token'], properties: {
-      id: registryIdSchema, token: { type: 'string', minLength: 16, maxLength: 128, pattern: '^[!-~]+$' },
-    },
-  } } }, async (request) => importRegistryRecords(db, { version: 1, devices: [{ id: request.body.id, tokenHash: hash(request.body.token), createdAt: now().getTime() }] }));
-  app.post('/api/admin/devices/import', { schema: { body: registrySchema } }, async (request) => {
-    let registry;
-    try { registry = validateProvisionRegistry(request.body); }
-    catch (error) { fail((error as Error).message, 400, 'INVALID_REGISTRY'); }
-    return importRegistryRecords(db, registry);
-  });
   app.get('/api/admin/settings', { schema: { querystring: { type: 'object', additionalProperties: false } } }, async () => settings());
   app.post<{ Body: { serverUrl: string } }>('/api/admin/settings', { schema: { body: {
     type: 'object', additionalProperties: false, required: ['serverUrl'], properties: { serverUrl: { type: 'string', minLength: 1, maxLength: 191 } },

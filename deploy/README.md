@@ -14,7 +14,7 @@
 
 - Docker 与 Compose v2；能拉取 `node:24-bookworm-slim`、`nginx:stable-alpine`。
 - 域名已解析到本机，80/443 可用（设备固件要求**有效证书**的 HTTPS，不能省）。
-- 服务器时钟同步（`timedatectl set-ntp true`）：事件时间和 15 秒在线判定都依赖它。
+- 服务器时钟同步（`timedatectl set-ntp true`）：事件时间和 90 秒在线判定都依赖它。
 
 ## 二、首次部署
 
@@ -60,7 +60,7 @@ docker compose exec api node server/dist/admin.js --username 已注册账号
 
 ### 旧固件兼容（可选）
 
-仍在交付 0.6.x 签名固件时，保留原有签名配置。首次兼容部署可生成私钥：
+仍有已部署的 0.6.x 签名设备时，保留原有签名配置。旧版签名工具继续保留供兼容运维：
 
 ```sh
 docker compose exec api node server/dist/provisioning-key.js --out /data/provisioning-private.pem
@@ -73,7 +73,7 @@ PROVISION_SIGNING_KEY_FILE=/data/provisioning-private.pem
 PROVISION_DEPLOYMENT_ID=工具输出的UUID
 ```
 
-旧固件仍需逐台登记 ID/token、USB 写公开信任信息；登记和导入位于管理员折叠区。签名配置缺失只阻止 v1 授权，不影响 v2 自动注册；固定部署或公钥不匹配仍拒绝启动。详情见 [出厂与兼容运维](../docs/factory-provisioning.md)。
+0.7.2 已移除手工登记与清单导入；新设备统一升级后自动注册，已登记旧设备仍可使用原签名流程。签名配置缺失只阻止 v1 授权，不影响 v2 自动注册；固定部署或公钥不匹配仍拒绝启动。详情见 [出厂与兼容运维](../docs/factory-provisioning.md)。
 
 ## 五、备份与恢复
 

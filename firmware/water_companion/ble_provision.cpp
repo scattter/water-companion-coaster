@@ -1,10 +1,14 @@
 #include <Arduino.h>
+// ble_hs_stop.h 缺少 C 链接声明，必须先于 Arduino BLE 头文件按 C 接口引入。
+extern "C" {
+#include <host/ble_hs.h>
+#include <host/ble_hs_mbuf.h>
+}
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLESecurity.h>
-#include <host/ble_hs.h>
-#include <host/ble_hs_mbuf.h>
 #include "esp_random.h"
+#include "esp_bt.h"
 #include "esp_timer.h"
 #include "ble_provision.h"
 #include "provisioning.h"
@@ -34,6 +38,9 @@ static struct {
     uint32_t sequence;
 } current = {"", "idle", "Ready", "", 0};
 static uint32_t notified_sequence;
+static int64_t completed_ms, start_retry_ms;
+static bool disconnecting, radio_disabled, host_stopping, host_stopped;
+static ble_hs_stop_listener stop_listener;
 enum class ScanState { Idle, Scanning, Ready, Failed };
 static ScanState scan_state = ScanState::Idle;
 static bool scan_running;
@@ -116,6 +123,7 @@ void ble_provision_status(const char *operation, const char *stage, const char *
         snprintf(current.message, sizeof(current.message), "%s", message);
         snprintf(current.code, sizeof(current.code), "%s", code ? code : "");
         ++current.sequence;
+        if (!strcmp(stage, "completed")) completed_ms = now_ms();
     }
     if (mutex) xSemaphoreGive(mutex);
 }
@@ -292,7 +300,7 @@ class Connections : public BLEServerCallbacks {
         xSemaphoreTake(mutex, portMAX_DELAY);
         if (desc->conn_handle == connection_id) {
             connection_id = BLE_HS_CONN_HANDLE_NONE;
-            authenticated = pairing = subscribed = false;
+            authenticated = pairing = subscribed = disconnecting = false;
             memset(challenge, 0, sizeof(challenge));
             provision_frames_reset(&frames);
             reset_wifi_scan();
@@ -301,15 +309,23 @@ class Connections : public BLEServerCallbacks {
     }
 };
 
-esp_err_t ble_provision_start(const char *device_id, const provision_trust_t *trust, bool initial)
+static esp_err_t start_radio(void)
 {
-    mutex = xSemaphoreCreateMutex();
-    if (!mutex) return ESP_ERR_NO_MEM;
-    (void)device_id;
-    (void)trust;
-    if (device_hardware_id(hardware_id) != ESP_OK) return ESP_FAIL;
+    if (server) {
+        if (radio_disabled && esp_bt_controller_enable(ESP_BT_MODE_BLE) != ESP_OK) return ESP_FAIL;
+        xSemaphoreTake(mutex, portMAX_DELAY);
+        radio_disabled = host_stopped = false;
+        xSemaphoreGive(mutex);
+        ble_hs_sched_start();
+        return ESP_OK;
+    }
     if (!BLEDevice::init("Water-Coaster")) return ESP_FAIL;
-    BLEDevice::setSecurityCallbacks(new Security());
+    static Security security;
+    static Connections connections;
+    static Reads reads;
+    static Writes writes;
+    static Wifi wifi_callbacks;
+    BLEDevice::setSecurityCallbacks(&security);
     BLESecurity::setAuthenticationMode(false, true, true); // Fresh physical pairing, no old-owner bonds.
     BLESecurity::setCapability(ESP_IO_CAP_OUT);
     BLESecurity::setKeySize(16);
@@ -317,27 +333,69 @@ esp_err_t ble_provision_start(const char *device_id, const provision_trust_t *tr
     ble_hs_cfg.sm_sc_only = 1;
     server = BLEDevice::createServer();
     server->advertiseOnDisconnect(false);
-    server->setCallbacks(new Connections());
+    server->setCallbacks(&connections);
     BLEService *service = server->createService(PROVISION_SERVICE_UUID);
     uint32_t read_permissions = BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_READ_ENC
         | BLECharacteristic::PROPERTY_READ_AUTHEN | BLECharacteristic::PROPERTY_READ_AUTHOR;
     info_characteristic = service->createCharacteristic(PROVISION_INFO_UUID, read_permissions);
-    BLECharacteristic *config = service->createCharacteristic(PROVISION_CONFIG_UUID,
+    BLECharacteristic *config_characteristic = service->createCharacteristic(PROVISION_CONFIG_UUID,
         BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_ENC
         | BLECharacteristic::PROPERTY_WRITE_AUTHEN | BLECharacteristic::PROPERTY_WRITE_AUTHOR);
     status_characteristic = service->createCharacteristic(PROVISION_STATUS_UUID,
         read_permissions | BLECharacteristic::PROPERTY_NOTIFY);
-    BLECharacteristic *wifi = service->createCharacteristic(PROVISION_WIFI_UUID,
+    BLECharacteristic *wifi_characteristic = service->createCharacteristic(PROVISION_WIFI_UUID,
         read_permissions | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_ENC
         | BLECharacteristic::PROPERTY_WRITE_AUTHEN | BLECharacteristic::PROPERTY_WRITE_AUTHOR);
-    info_characteristic->setCallbacks(new Reads());
-    status_characteristic->setCallbacks(new Reads());
-    config->setCallbacks(new Writes());
-    wifi->setCallbacks(new Wifi());
+    info_characteristic->setCallbacks(&reads);
+    status_characteristic->setCallbacks(&reads);
+    config_characteristic->setCallbacks(&writes);
+    wifi_characteristic->setCallbacks(&wifi_callbacks);
     // NimBLE creates and owns the notification CCCD automatically.
     service->start();
     BLEDevice::getAdvertising()->addServiceUUID(PROVISION_SERVICE_UUID);
     BLEDevice::getAdvertising()->setScanResponse(true);
+    return ESP_OK;
+}
+
+static void host_stopped_callback(int result, void *)
+{
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    host_stopping = false;
+    host_stopped = result == 0;
+    if (result) start_retry_ms = now_ms() + 30000;
+    xSemaphoreGive(mutex);
+}
+
+static void stop_radio(void)
+{
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    if (host_stopping || radio_disabled || now_ms() < start_retry_ms) { xSemaphoreGive(mutex); return; }
+    bool stopped = host_stopped;
+    host_stopping = !stopped;
+    xSemaphoreGive(mutex);
+    if (stopped) {
+        esp_err_t result = esp_bt_controller_disable();
+        xSemaphoreTake(mutex, portMAX_DELAY);
+        radio_disabled = result == ESP_OK;
+        if (result != ESP_OK) start_retry_ms = now_ms() + 30000;
+        xSemaphoreGive(mutex);
+        if (result == ESP_OK) BLEDevice::onReset(0);
+    } else {
+        // 等待 NimBLE 异步停止后才关射频；保留 GATT 对象，重开时不会重复分配或泄漏。
+        BLEDevice::stopAdvertising();
+        int result = ble_hs_stop(&stop_listener, host_stopped_callback, nullptr);
+        if (result == BLE_HS_EALREADY) host_stopped_callback(0, nullptr);
+        else if (result && result != BLE_HS_EBUSY) host_stopped_callback(result, nullptr);
+    }
+}
+
+esp_err_t ble_provision_start(const char *device_id, const provision_trust_t *trust, bool initial)
+{
+    mutex = xSemaphoreCreateMutex();
+    if (!mutex) return ESP_ERR_NO_MEM;
+    (void)device_id;
+    (void)trust;
+    if (device_hardware_id(hardware_id) != ESP_OK) return ESP_FAIL;
     if (initial) ble_provision_open();
     return ESP_OK;
 }
@@ -354,7 +412,60 @@ void ble_provision_poll(void)
 {
     if (!mutex) return;
     xSemaphoreTake(mutex, portMAX_DELAY);
-    if (open_requested) { window_until_ms = now_ms() + PROVISION_WINDOW_MS; open_requested = false; }
+    if (open_requested) {
+        window_until_ms = now_ms() + PROVISION_WINDOW_MS;
+        open_requested = false;
+        completed_ms = start_retry_ms = 0;
+    }
+    // 完成通知留两秒给网页读取；窗口结束或成功后等待扫描/配网任务收尾再关闭。
+    if (completed_ms && now_ms() - completed_ms >= 2000) window_until_ms = 0;
+    bool opened = open_locked();
+    bool can_stop = !opened && !scan_running && !provisioning_busy();
+    uint16_t connected = connection_id;
+    if (can_stop && connected != BLE_HS_CONN_HANDLE_NONE) {
+        bool disconnect = !disconnecting && now_ms() >= start_retry_ms;
+        if (disconnect) disconnecting = true;
+        authenticated = pairing = subscribed = false;
+        xSemaphoreGive(mutex);
+        if (disconnect) {
+            int result = server->disconnect(connected);
+            if (result && result != BLE_HS_EALREADY) {
+                xSemaphoreTake(mutex, portMAX_DELAY);
+                if (connection_id == connected) {
+                    disconnecting = false;
+                    if (result == BLE_HS_ENOTCONN) connection_id = BLE_HS_CONN_HANDLE_NONE;
+                    else start_retry_ms = now_ms() + 30000;
+                }
+                xSemaphoreGive(mutex);
+            }
+        }
+        return;
+    }
+    if (can_stop && server && !radio_disabled) {
+        advertising = authenticated = pairing = subscribed = disconnecting = false;
+        memset(challenge, 0, sizeof(challenge));
+        provision_frames_reset(&frames);
+        reset_wifi_scan();
+        xSemaphoreGive(mutex);
+        stop_radio();
+        return;
+    }
+    if (host_stopping) { xSemaphoreGive(mutex); return; }
+    if (opened && (!server || radio_disabled || host_stopped)) {
+        bool retry = now_ms() >= start_retry_ms;
+        xSemaphoreGive(mutex);
+        if (retry) {
+            esp_err_t result = start_radio();
+            if (result != ESP_OK) {
+                xSemaphoreTake(mutex, portMAX_DELAY);
+                start_retry_ms = now_ms() + 30000;
+                xSemaphoreGive(mutex);
+                ble_provision_status(nullptr, "failed", "Bluetooth initialization failed", "BLE_START_FAILED");
+            }
+        }
+        return;
+    }
+    if (!server || radio_disabled || host_stopped || !ble_hs_synced()) { xSemaphoreGive(mutex); return; }
     bool should_advertise = open_locked() && connection_id == BLE_HS_CONN_HANDLE_NONE;
     bool start = should_advertise && !advertising, stop = !should_advertise && advertising;
     advertising = should_advertise;

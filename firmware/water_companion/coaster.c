@@ -40,6 +40,8 @@ static bool sensor_ready, unsaved_event, watch, restart_required;
 static int64_t reboot_at_ms;
 static saved_event_t pending_event;
 static float weight = NAN;
+static float activity_weight = NAN;
+static int64_t last_activity_ms;
 
 // These tasks write Flash; their full stacks must remain in internal, cache-independent RAM.
 static DRAM_ATTR StackType_t serial_stack[8192 / sizeof(StackType_t)];
@@ -98,6 +100,22 @@ bool device_authorize(const char *id, const char *authorization)
     return valid;
 }
 
+void device_wake(void)
+{
+    xSemaphoreTake(state_lock, portMAX_DELAY);
+    last_activity_ms = esp_timer_get_time() / 1000;
+    xSemaphoreGive(state_lock);
+}
+
+static void update_activity(float grams, int64_t now)
+{
+    // 累计变化超过 5 g 才唤醒，避免静置时的小幅噪声反复亮屏、加快心跳。
+    if (isfinite(grams) && (!isfinite(activity_weight) || fabsf(grams - activity_weight) >= 5)) {
+        activity_weight = grams;
+        last_activity_ms = now;
+    }
+}
+
 void device_snapshot(device_status_t *status)
 {
     xSemaphoreTake(state_lock, portMAX_DELAY);
@@ -108,6 +126,7 @@ void device_snapshot(device_status_t *status)
         .cup_present = fresh && config.calibrated && isfinite(weight) && weight > 5,
         .unsaved_event = unsaved_event, .raw_ready = fresh && raw_count > 0,
         .restart_required = restart_required,
+        .active = esp_timer_get_time() / 1000 - last_activity_ms < DEVICE_IDLE_MS,
         .raw = raw_count ? raw_samples[(raw_next + WEIGHING_SAMPLES - 1) % WEIGHING_SAMPLES] : 0,
     };
     if (!fresh) status->error = "HX711 未就绪，请检查接线和供电";
@@ -220,6 +239,7 @@ static void sample_task(void *arg)
             sensor_ready = false;
             raw_count = raw_next = 0;
             weight = NAN;
+            activity_weight = NAN;
             weighing_init(&machine, config.empty_cup);
         } else {
             if (sensor_ready && now - last_sample_ms > 350) raw_count = raw_next = 0;
@@ -229,6 +249,7 @@ static void sample_task(void *arg)
             raw_next = (raw_next + 1) % WEIGHING_SAMPLES;
             if (raw_count < WEIGHING_SAMPLES) ++raw_count;
             weight = config.calibrated ? (float)((raw - (double)config.zero) / config.counts_per_gram) : NAN;
+            update_activity(weight, now);
             if (unsaved_event) {
                 unsaved_event = storage_append(&pending_event) != ESP_OK;
                 weighing_init(&machine, config.empty_cup);
@@ -434,7 +455,11 @@ cJSON *device_command(const cJSON *json)
         else {
             config = next;
             if (!strcmp(name, "wifi") || !strcmp(name, "server")) restart_required = true;
-            if (reset_weighing || restart_required) weighing_init(&machine, config.empty_cup);
+            if (reset_weighing || restart_required) {
+                weighing_init(&machine, config.empty_cup);
+                activity_weight = NAN;
+                last_activity_ms = esp_timer_get_time() / 1000;
+            }
         }
     }
     xSemaphoreGive(state_lock);
