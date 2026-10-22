@@ -8,7 +8,8 @@
   },
   "workspaces": [
     "server",
-    "web"
+    "web",
+    "client"
   ],
   "scripts": {
     "dev": "node scripts/dev.mjs",
@@ -17,6 +18,10 @@
     "test": "npm run test --workspace @coaster/server && npm run test --workspace @coaster/web",
     "check": "npm run typecheck && npm test",
     "build:web": "npm run build --workspace @coaster/web",
+    "dev:client": "npm run tauri --workspace @coaster/client -- dev",
+    "check:client": "npm run typecheck --workspace @coaster/client && npm run test --workspace @coaster/client",
+    "check:client:native": "cargo check --manifest-path client/src-tauri/Cargo.toml --locked",
+    "test:client:native": "cargo test --manifest-path client/src-tauri/Cargo.toml --locked --lib",
     "smoke:web": "node --import tsx scripts/smoke-server.mjs",
     "test:firmware": "node scripts/test-firmware.mjs",
     "build:firmware": "node scripts/build-firmware.mjs",

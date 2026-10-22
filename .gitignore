@@ -10,3 +10,5 @@ data/
 output/
 .playwright-cli/
 firmware/water_companion/build/
+client/src-tauri/target/
+client/src-tauri/gen/

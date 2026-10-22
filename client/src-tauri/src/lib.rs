@@ -1,0 +1,152 @@
+mod address;
+mod api;
+mod credentials;
+mod engine;
+mod model;
+mod platform;
+mod runtime;
+mod storage;
+mod tray;
+
+use model::{Connection, Settings, Snapshot};
+use runtime::Backend;
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
+use tauri_plugin_opener::OpenerExt;
+
+#[tauri::command]
+fn get_snapshot(backend: State<'_, Arc<Backend>>) -> Snapshot {
+    backend.snapshot()
+}
+
+#[tauri::command]
+async fn configure_server(
+    app: AppHandle,
+    backend: State<'_, Arc<Backend>>,
+    address: String,
+) -> Result<Snapshot, String> {
+    backend.configure(&app, &address).await
+}
+
+#[tauri::command]
+async fn login(
+    app: AppHandle,
+    backend: State<'_, Arc<Backend>>,
+    username: String,
+    password: String,
+) -> Result<Snapshot, String> {
+    backend.inner().login(&app, &username, &password).await
+}
+
+#[tauri::command]
+async fn logout(app: AppHandle, backend: State<'_, Arc<Backend>>) -> Result<Snapshot, String> {
+    backend.logout(&app).await
+}
+
+#[tauri::command]
+async fn refresh(app: AppHandle, backend: State<'_, Arc<Backend>>) -> Result<Snapshot, String> {
+    backend.inner().sync(&app, true).await;
+    Ok(backend.snapshot())
+}
+
+#[tauri::command]
+async fn update_settings(
+    app: AppHandle,
+    backend: State<'_, Arc<Backend>>,
+    settings: Settings,
+) -> Result<Snapshot, String> {
+    let _operation = backend.operations.lock().await;
+    backend.settings(&app, settings)
+}
+
+pub fn show_panel(app: &AppHandle, page: &str) -> Result<(), String> {
+    if !matches!(page, "dashboard" | "settings") {
+        return Err("未知页面。".into());
+    }
+    let window = app
+        .get_webview_window("panel")
+        .ok_or("无法找到详情窗口。")?;
+    platform::position_panel(&window).map_err(|_| "无法定位详情窗口。")?;
+    window.unminimize().map_err(|_| "无法展开详情窗口。")?;
+    window.show().map_err(|_| "无法显示详情窗口。")?;
+    window.set_focus().map_err(|_| "无法切换到详情窗口。")?;
+    window
+        .emit("companion://page", page)
+        .map_err(|_| "无法切换详情页面。")?;
+    Ok(())
+}
+
+#[tauri::command]
+fn hide_panel(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.hide().map_err(|_| "无法收起详情窗口。".into())
+}
+
+#[tauri::command]
+fn open_website(app: AppHandle, backend: State<'_, Arc<Backend>>) -> Result<(), String> {
+    let server = backend.snapshot().server.ok_or("请先配置服务器地址。")?;
+    app.opener()
+        .open_url(server, None::<&str>)
+        .map_err(|_| "无法打开浏览器，请检查系统默认浏览器设置。".into())
+}
+
+#[tauri::command]
+fn quit(app: AppHandle) {
+    app.exit(0);
+}
+
+pub fn run() {
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .invoke_handler(tauri::generate_handler![
+            get_snapshot,
+            configure_server,
+            login,
+            logout,
+            refresh,
+            update_settings,
+            hide_panel,
+            open_website,
+            quit
+        ])
+        .setup(|app| {
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            platform::start();
+            let backend = Arc::new(
+                Backend::new(&app.path().app_config_dir()?).map_err(std::io::Error::other)?,
+            );
+            app.manage(backend.clone());
+            tray::setup(app.handle())?;
+            if let Some(panel) = app.get_webview_window("panel") {
+                platform::setup_panel(&panel).map_err(std::io::Error::other)?;
+                let window = panel.clone();
+                panel.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                });
+            }
+            if matches!(
+                backend.snapshot().connection,
+                Connection::Unconfigured | Connection::SignedOut
+            ) {
+                show_panel(app.handle(), "dashboard").map_err(std::io::Error::other)?;
+            }
+            backend.publish(app.handle());
+            backend.start(app.handle().clone());
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("无法启动饮水陪伴客户端");
+    app.run(|handle, event| match event {
+        RunEvent::ExitRequested {
+            code: None, api, ..
+        } => api.prevent_exit(),
+        #[cfg(target_os = "macos")]
+        RunEvent::Reopen { .. } => {
+            let _ = show_panel(handle, "dashboard");
+        }
+        _ => {}
+    });
+}

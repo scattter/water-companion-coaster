@@ -1,0 +1,32 @@
+{
+  "source": "atlas.png",
+  "drinkingSource": "drinking-atlas.png",
+  "width": 444,
+  "height": 222,
+  "states": {
+    "working": [
+      "working-0.png",
+      "working-1.png",
+      "working-2.png",
+      "working-3.png"
+    ],
+    "sleeping": [
+      "sleeping-0.png",
+      "sleeping-1.png",
+      "sleeping-2.png",
+      "sleeping-3.png"
+    ],
+    "drinking": [
+      "drinking-0.png",
+      "drinking-1.png",
+      "drinking-2.png",
+      "drinking-3.png"
+    ],
+    "reminding": [
+      "reminding-0.png",
+      "reminding-1.png",
+      "reminding-2.png",
+      "reminding-3.png"
+    ]
+  }
+}

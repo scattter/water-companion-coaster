@@ -5,41 +5,7 @@ import DeviceOnboarding from './DeviceOnboarding.vue';
 import AdminPanel from './AdminPanel.vue';
 import { ApiError, errorMessage, request } from './api';
 import { sameBinding, type Session } from './session';
-
-type EventKind = 'drink' | 'refill';
-interface DrinkEvent {
-  id: string;
-  kind: EventKind;
-  amountMl: number;
-  beforeGrams: number;
-  afterGrams: number;
-  occurredAt: string;
-  revokedAt: string | null;
-}
-interface Dashboard {
-  date: string;
-  timeZone: string;
-  totals: { drinkMl: number; refillMl: number; drinkCount: number };
-  week: { date: string; drinkMl: number }[];
-  events: DrinkEvent[];
-  device: {
-    id: string;
-    lastSeenAt: string | null;
-    online: boolean;
-    weightGrams: number | null;
-    stable: boolean;
-    cupPresent: boolean;
-    source: 'hx711';
-    calibrated: boolean;
-    emptyCupGrams: number | null;
-    pendingCount: number;
-    timePendingCount: number;
-    clockSynced: boolean;
-    error: string | null;
-    firmwareVersion: string | null;
-    bindingId: string | null;
-  } | null;
-}
+import type { Dashboard, DrinkEvent } from '../../shared/dashboard';
 const session = ref<Session>({ user: null, deviceId: null, bindingId: null });
 const page = ref<'dashboard' | 'add' | 'admin'>('dashboard');
 const provisioningBusy = ref(false);
