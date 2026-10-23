@@ -25,7 +25,10 @@ const address = ref('');
 const username = ref('');
 const password = ref('');
 const connectionFeedback = ref('');
+const panel = ref<HTMLElement | null>(null);
 const subscriptions: UnlistenFn[] = [];
+let resizeObserver: ResizeObserver | undefined;
+let panelHeight = 0;
 let disposed = false;
 
 const dashboard = computed(() => snapshot.value.dashboard);
@@ -117,8 +120,21 @@ function onKeydown(event: KeyboardEvent) {
   void native.hide().catch(cause => { actionError.value = errorMessage(cause); });
 }
 
+function resizePanel() {
+  if (!panel.value || disposed) return;
+  const height = Math.ceil(panel.value.getBoundingClientRect().height);
+  if (height <= 0 || height === panelHeight) return;
+  panelHeight = height;
+  void native.resize(height).catch(cause => {
+    panelHeight = 0;
+    console.error('无法调整面板高度：', cause);
+  });
+}
+
 onMounted(async () => {
   window.addEventListener('keydown', onKeydown);
+  resizeObserver = new ResizeObserver(resizePanel);
+  if (panel.value) resizeObserver.observe(panel.value, { box: 'border-box' });
   try {
     const stopSnapshot = await native.onSnapshot(applySnapshot);
     if (disposed) { stopSnapshot(); return; }
@@ -136,6 +152,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   disposed = true;
+  resizeObserver?.disconnect();
   window.removeEventListener('keydown', onKeydown);
   subscriptions.forEach(unsubscribe => unsubscribe());
   password.value = '';
@@ -143,7 +160,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="panel-shell" :aria-busy="busy || loading">
+  <main ref="panel" class="panel-shell" :aria-busy="busy || loading">
     <header class="panel-topbar">
       <div>
         <p class="brand">饮水陪伴</p>
@@ -198,11 +215,17 @@ onBeforeUnmount(() => {
       </section>
 
       <section v-else class="dashboard-view">
-        <div class="hero-scene"><img :src="sprite" alt="像素水豚的陪伴小场景" draggable="false" /></div>
-        <p class="state-label">{{ stateLabel }}</p>
-        <p class="eyebrow">{{ title }}</p>
-        <p class="hero-amount">{{ amount(dashboard?.totals.drinkMl) }}<span>ml</span></p>
-        <p v-if="stale" class="stale-note">当前显示上次同步的数据</p>
+        <div class="dashboard-summary">
+          <div class="companion-summary">
+            <div class="hero-scene"><img :src="sprite" alt="像素水豚的陪伴小场景" draggable="false" /></div>
+            <p class="state-label">{{ stateLabel }}</p>
+          </div>
+          <div class="intake-summary">
+            <p class="eyebrow">{{ title }}</p>
+            <p class="hero-amount">{{ amount(dashboard?.totals.drinkMl) }}<span>ml</span></p>
+            <p v-if="stale" class="stale-note">当前显示上次同步的数据</p>
+          </div>
+        </div>
 
         <dl class="drink-details">
           <div><dt>饮水次数</dt><dd>{{ dashboard ? dashboard.totals.drinkCount : '—' }}<span v-if="dashboard"> 次</span></dd></div>

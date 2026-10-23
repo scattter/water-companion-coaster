@@ -15,6 +15,7 @@ export const native = {
   refresh: () => invoke<Snapshot>('refresh'),
   settings: (settings: Settings) => invoke<Snapshot>('update_settings', { settings }),
   website: () => invoke<void>('open_website'),
+  resize: (height: number) => invoke<void>('resize_panel', { height }),
   hide: () => invoke<void>('hide_panel'),
   quit: () => invoke<void>('quit'),
   onSnapshot: (handler: (snapshot: Snapshot) => void): Promise<UnlistenFn> =>

@@ -19,6 +19,7 @@
     "check": "npm run typecheck && npm test",
     "build:web": "npm run build --workspace @coaster/web",
     "dev:client": "npm run tauri --workspace @coaster/client -- dev",
+    "build:client": "npm run tauri --workspace @coaster/client -- build --bundles app --ci -- --locked",
     "check:client": "npm run typecheck --workspace @coaster/client && npm run test --workspace @coaster/client",
     "check:client:native": "cargo check --manifest-path client/src-tauri/Cargo.toml --locked",
     "test:client:native": "cargo test --manifest-path client/src-tauri/Cargo.toml --locked --lib",

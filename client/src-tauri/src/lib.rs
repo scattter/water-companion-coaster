@@ -77,6 +77,14 @@ pub fn show_panel(app: &AppHandle, page: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn resize_panel(window: tauri::WebviewWindow, height: f64) -> Result<(), String> {
+    if !height.is_finite() || height <= 0.0 {
+        return Err("面板高度无效。".into());
+    }
+    platform::resize_panel(&window, height).map_err(|_| "无法调整面板高度。".into())
+}
+
+#[tauri::command]
 fn hide_panel(window: tauri::WebviewWindow) -> Result<(), String> {
     window.hide().map_err(|_| "无法收起详情窗口。".into())
 }
@@ -104,6 +112,7 @@ pub fn run() {
             logout,
             refresh,
             update_settings,
+            resize_panel,
             hide_panel,
             open_website,
             quit

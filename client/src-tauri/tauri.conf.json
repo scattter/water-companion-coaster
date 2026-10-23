@@ -14,8 +14,7 @@
       {
         "label": "panel",
         "title": "饮水陪伴",
-        "width": 380,
-        "height": 610,
+        "width": 340,
         "visible": false,
         "focus": false,
         "resizable": false,

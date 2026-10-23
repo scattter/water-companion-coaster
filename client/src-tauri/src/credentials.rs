@@ -1,12 +1,45 @@
 const SERVICE: &str = "com.watercompanion.client.session";
 
 #[cfg(target_os = "macos")]
+fn service_name() -> Result<&'static str, String> {
+    use sha2::{Digest, Sha256};
+    use std::{fs::File, sync::OnceLock};
+
+    // 本地临时签名随构建改变，旧条目的访问权限不会继承；每个可执行版本使用独立条目。
+    static NAME: OnceLock<Result<String, String>> = OnceLock::new();
+    NAME.get_or_init(|| {
+        let executable =
+            std::env::current_exe().map_err(|_| "无法定位客户端，请重新启动后再试。")?;
+        let mut file = File::open(executable).map_err(|_| "无法读取客户端，请重新安装后再试。")?;
+        let mut hash = Sha256::new();
+        std::io::copy(&mut file, &mut hash)
+            .map_err(|_| "无法识别客户端版本，请重新安装后再试。")?;
+        Ok(format!("{SERVICE}.{:x}", hash.finalize()))
+    })
+    .as_ref()
+    .map(String::as_str)
+    .map_err(Clone::clone)
+}
+
+#[cfg(target_os = "macos")]
+fn keychain_error(action: &str, code: i32) -> String {
+    if matches!(code, -25308 | -25293) {
+        format!(
+            "系统钥匙串暂不允许{action}登录信息（错误 {code}）。请确认“登录”钥匙串已解锁后重试。"
+        )
+    } else {
+        format!("无法{action}登录信息（钥匙串错误 {code}），请稍后重试。")
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn disable_prompts() -> Result<(), String> {
     use security_framework::os::macos::keychain::{KeychainUserInteractionLock, SecKeychain};
     use std::sync::OnceLock;
 
     // 此开关作用于整个进程；一直保留 guard，避免并发操作或 guard 析构时重新打开系统弹窗。
-    static INTERACTION_LOCK: OnceLock<Result<KeychainUserInteractionLock, String>> = OnceLock::new();
+    static INTERACTION_LOCK: OnceLock<Result<KeychainUserInteractionLock, String>> =
+        OnceLock::new();
     INTERACTION_LOCK
         .get_or_init(|| {
             SecKeychain::disable_user_interaction()
@@ -28,7 +61,7 @@ pub fn valid_token(token: &str) -> bool {
 pub fn read(origin: &str) -> Result<Option<String>, String> {
     use security_framework::passwords::get_generic_password;
     disable_prompts()?;
-    match get_generic_password(SERVICE, origin) {
+    match get_generic_password(service_name()?, origin) {
         Ok(bytes) => String::from_utf8(bytes)
             .map_err(|_| "保存的登录信息无效，请重新登录。".into())
             .and_then(|value| {
@@ -39,7 +72,7 @@ pub fn read(origin: &str) -> Result<Option<String>, String> {
                 }
             }),
         Err(error) if error.code() == -25300 => Ok(None),
-        Err(_) => Err("保存的登录状态已不可用，请重新登录客户端。".into()),
+        Err(error) => Err(keychain_error("读取", error.code())),
     }
 }
 
@@ -49,17 +82,17 @@ pub fn save(origin: &str, token: &str) -> Result<(), String> {
         return Err("服务器返回的登录信息无效。".into());
     }
     disable_prompts()?;
-    security_framework::passwords::set_generic_password(SERVICE, origin, token.as_bytes())
-        .map_err(|_| "无法保存登录信息，请检查“登录”钥匙串是否已解锁后重试。".into())
+    security_framework::passwords::set_generic_password(service_name()?, origin, token.as_bytes())
+        .map_err(|error| keychain_error("保存", error.code()))
 }
 
 #[cfg(target_os = "macos")]
 pub fn remove(origin: &str) -> Result<(), String> {
     disable_prompts()?;
-    match security_framework::passwords::delete_generic_password(SERVICE, origin) {
+    match security_framework::passwords::delete_generic_password(service_name()?, origin) {
         Ok(()) => Ok(()),
         Err(error) if error.code() == -25300 => Ok(()),
-        Err(_) => Err("无法清除登录信息，请检查“登录”钥匙串是否已解锁后重试。".into()),
+        Err(error) => Err(keychain_error("清除", error.code())),
     }
 }
 
@@ -85,5 +118,45 @@ mod tests {
         assert!(!valid_token(&"A1".repeat(32)));
         assert!(!valid_token("abc; injected=1"));
         assert!(!valid_token(&"g".repeat(64)));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "需要本机已解锁的钥匙串；仅创建并清理随机测试账号"]
+    fn current_build_credentials_do_not_touch_legacy_entries() {
+        use security_framework::passwords::{
+            delete_generic_password, get_generic_password, set_generic_password,
+        };
+
+        disable_prompts().unwrap();
+        let origin = format!(
+            "https://keychain-check-{}-{}.invalid",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        );
+        let legacy = "a1".repeat(32);
+        let current = "b2".repeat(32);
+        let replacement = "c3".repeat(32);
+        let result = std::panic::catch_unwind(|| -> Result<(), String> {
+            set_generic_password(SERVICE, &origin, legacy.as_bytes()).map_err(|e| e.to_string())?;
+            remove(&origin)?;
+            assert!(read(&origin)?.is_none());
+            save(&origin, &current)?;
+            assert_eq!(read(&origin)?.as_deref(), Some(current.as_str()));
+            save(&origin, &replacement)?;
+            assert_eq!(read(&origin)?.as_deref(), Some(replacement.as_str()));
+            remove(&origin)?;
+            assert!(read(&origin)?.is_none());
+            assert_eq!(
+                get_generic_password(SERVICE, &origin).map_err(|e| e.to_string())?,
+                legacy.as_bytes()
+            );
+            Ok(())
+        });
+        let cleanup_current = remove(&origin);
+        let cleanup_legacy = delete_generic_password(SERVICE, &origin);
+        result.unwrap().unwrap();
+        cleanup_current.unwrap();
+        cleanup_legacy.unwrap();
     }
 }

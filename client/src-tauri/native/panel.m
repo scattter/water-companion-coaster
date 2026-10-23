@@ -57,6 +57,7 @@ void coaster_panel_position(void) {
     NSScreen *screen = statusWindow.screen;
     if (!window) return;
     if (!screen || NSIsEmptyRect(button.bounds)) {
+        [window setContentSize:panelSize];
         [window center];
         return;
     }
@@ -72,4 +73,10 @@ void coaster_panel_position(void) {
         MIN(NSMidX(anchor) - width / 2, NSMaxX(area) - margin - width));
     [window setFrame:NSMakeRect(x, top - height, width, height) display:NO];
     [window invalidateShadow];
+}
+
+void coaster_panel_resize(double height) {
+    // 保留内容的完整高度，屏幕限高仅在定位时应用，重新展开时仍能恢复。
+    panelSize.height = height;
+    coaster_panel_position();
 }

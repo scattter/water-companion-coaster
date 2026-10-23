@@ -13,6 +13,7 @@ extern "C" {
     fn coaster_wake_generation() -> u64;
     fn coaster_panel_setup(window: *mut std::ffi::c_void, status_item: *mut std::ffi::c_void);
     fn coaster_panel_position();
+    fn coaster_panel_resize(height: f64);
 }
 
 pub fn setup_panel(window: &tauri::WebviewWindow) -> Result<(), String> {
@@ -45,6 +46,19 @@ pub fn position_panel(window: &tauri::WebviewWindow) -> tauri::Result<()> {
     return window.run_on_main_thread(|| unsafe { coaster_panel_position() });
     #[cfg(not(target_os = "macos"))]
     window.center()
+}
+
+pub fn resize_panel(window: &tauri::WebviewWindow, height: f64) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    return window.run_on_main_thread(move || unsafe { coaster_panel_resize(height) });
+    #[cfg(not(target_os = "macos"))]
+    {
+        let width = window
+            .inner_size()?
+            .to_logical::<f64>(window.scale_factor()?)
+            .width;
+        window.set_size(tauri::LogicalSize::new(width, height))
+    }
 }
 
 pub fn start() {
