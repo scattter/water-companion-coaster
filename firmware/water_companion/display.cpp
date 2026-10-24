@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <math.h>
+#include "esp_timer.h"
 #include "esp_wifi_types.h"
 #include "board_config.h"
 #include "device.h"
@@ -16,6 +17,7 @@ static const int ROW_HEIGHT = 20;
 static const int row_y[] = {48, 68, 88, 122, 142, 162, 196, 216, 236, 272, 294};
 static SPISettings lcd_spi(40000000, MSBFIRST, SPI_MODE0);
 static bool ready;
+static int64_t wake_until_ms;
 static uint8_t pixels[LCD_WIDTH * ROW_HEIGHT * 2];
 static struct {
     char text[96];
@@ -128,13 +130,25 @@ bool display_start(void)
     ready = true;
     draw_text(12, "水伴杯垫 " FIRMWARE_VERSION, WHITE);
     line(0, "正在启动", AMBER);
-    digitalWrite(LCD_BL_PIN, HIGH);
     return true;
+}
+
+void display_wake(void)
+{
+    wake_until_ms = esp_timer_get_time() / 1000 + 15000;
 }
 
 void display_update(esp_err_t startup_result)
 {
     if (!ready) return;
+    // 亮屏只由按键续时，称重、配网和故障状态均不能自动唤醒。
+    bool awake = esp_timer_get_time() / 1000 < wake_until_ms;
+    static bool backlight = false;
+    if (awake != backlight) {
+        digitalWrite(LCD_BL_PIN, awake ? HIGH : LOW);
+        backlight = awake;
+    }
+    if (!awake) return;
     if (startup_result != ESP_OK) {
         char code[32];
         snprintf(code, sizeof(code), "错误码: 0x%x", unsigned(startup_result));
@@ -150,15 +164,6 @@ void display_update(esp_err_t startup_result)
     ble_provision_display_t ble;
     ble_provision_snapshot(&ble);
     bool provisioning = provisioning_busy();
-    bool awake = device.active || provisioning || ble.window_open || network.ap_ready || network.binding_code[0]
-        || !device.sensor_ready || !device.calibrated || device.unsaved_event || device.restart_required
-        || !isfinite(device.weight) || device.weight < -2 || device.weight > WEIGHING_MAX_GRAMS;
-    static bool backlight = true;
-    if (awake != backlight) {
-        digitalWrite(LCD_BL_PIN, awake ? HIGH : LOW);
-        backlight = awake;
-    }
-    if (!awake) return;
     if (ble.pairing) {
         char pin[24];
         snprintf(pin, sizeof(pin), "%06lu", (unsigned long)ble.passkey);

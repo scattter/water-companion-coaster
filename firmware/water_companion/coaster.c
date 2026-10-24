@@ -109,7 +109,7 @@ void device_wake(void)
 
 static void update_activity(float grams, int64_t now)
 {
-    // 累计变化超过 5 g 才唤醒，避免静置时的小幅噪声反复亮屏、加快心跳。
+    // 累计变化至少 5 g 才加快心跳，屏幕亮灭由按键独立控制。
     if (isfinite(grams) && (!isfinite(activity_weight) || fabsf(grams - activity_weight) >= 5)) {
         activity_weight = grams;
         last_activity_ms = now;

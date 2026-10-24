@@ -36,6 +36,7 @@ extern "C" void console_println(const char *text)
 
 void setup()
 {
+    rgbLedWrite(RGB_LED_PIN, 0, 0, 0);
     console_lock = xSemaphoreCreateMutex();
     Serial.setRxBufferSize(2048);
     Serial.setTxBufferSize(2048);
@@ -51,20 +52,28 @@ void setup()
 void loop()
 {
     if (startup_result != ESP_OK) {
-        Serial.printf("固件初始化失败：%s。发送 {\"cmd\":\"diagnostics\"} 查看启动阶段和内存；检查 OPI PSRAM，保留 Flash 数据。\n",
-                      esp_err_to_name(startup_result));
-        delay(2000);
+        static unsigned long last_error = 0;
+        if (millis() - last_error >= 2000) {
+            Serial.printf("固件初始化失败：%s。发送 {\"cmd\":\"diagnostics\"} 查看启动阶段和内存；检查 OPI PSRAM，保留 Flash 数据。\n",
+                          esp_err_to_name(startup_result));
+            last_error = millis();
+        }
     }
     static unsigned long pressed_at = 0;
-    static bool handled = false;
-    if (startup_result == ESP_OK && digitalRead(PROVISION_BUTTON_PIN) == LOW) {
-        if (!pressed_at) { pressed_at = millis(); device_wake(); }
-        if (!handled && millis() - pressed_at >= 3000) {
+    static bool pressed = false, handled = false;
+    if (digitalRead(PROVISION_BUTTON_PIN) == LOW) {
+        if (!pressed) {
+            pressed = true;
+            pressed_at = millis();
+            display_wake();
+            if (startup_result == ESP_OK) device_wake();
+        }
+        if (startup_result == ESP_OK && !handled && millis() - pressed_at >= 3000) {
             network_provision();
             ble_provision_open();
             handled = true;
         }
-    } else { pressed_at = 0; handled = false; }
+    } else { pressed = false; handled = false; }
     if (startup_result == ESP_OK) ble_provision_poll();
     display_update(startup_result);
     delay(100);
