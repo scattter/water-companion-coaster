@@ -27,7 +27,9 @@
     "test:firmware": "node scripts/test-firmware.mjs",
     "build:firmware": "node scripts/build-firmware.mjs",
     "admin": "npm run admin --workspace @coaster/server --",
-    "provisioning-key": "npm run provisioning-key --workspace @coaster/server --"
+    "provisioning-key": "npm run provisioning-key --workspace @coaster/server --",
+    "build:client:windows": "node scripts/build-client.mjs windows",
+    "build:client:android": "node scripts/build-client.mjs android"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

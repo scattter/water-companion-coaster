@@ -1,0 +1,22 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:background="@drawable/widget_background">
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="28dp" android:gravity="center_vertical">
+        <TextView android:id="@+id/widget_title" style="@style/WidgetCaption" android:layout_width="0dp"
+            android:layout_height="match_parent" android:layout_weight="1" android:gravity="center_vertical"
+            android:maxLines="2" android:text="今日饮水" />
+        <include layout="@layout/widget_refresh" android:layout_width="28dp" android:layout_height="28dp" />
+    </LinearLayout>
+    <TextView android:id="@+id/widget_amount" style="@style/WidgetAmount" android:layout_width="match_parent"
+        android:layout_height="36dp" android:autoSizeMaxTextSize="34sp" android:gravity="center_vertical" android:text="— ml" />
+    <ImageView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+        android:layout_marginVertical="4dp" android:src="@drawable/water_cap" android:scaleType="fitCenter"
+        android:contentDescription="陪你工作的小水豚" />
+    <TextView android:id="@+id/widget_sync" style="@style/WidgetCaption" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:maxLines="2" android:text="等待同步" android:textSize="10sp" />
+</LinearLayout>

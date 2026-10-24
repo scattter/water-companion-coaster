@@ -1,3 +1,5 @@
+import { platform } from './platform';
+
 export class ApiError extends Error {
   constructor(message: string, readonly status: number, readonly code?: string) {
     super(message);
@@ -6,6 +8,7 @@ export class ApiError extends Error {
 }
 
 export async function request<T>(path: string, body?: unknown, timeoutMs = 8000): Promise<T> {
+  if (platform.request) return platform.request<T>(path, body, timeoutMs);
   if (!path.startsWith('/api/') || path.includes('\\')) throw new Error('仅允许同源 API 请求。');
   const response = await fetch(path, {
     redirect: 'error',

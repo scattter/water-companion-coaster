@@ -103,6 +103,19 @@ fn tray_image(source: Image<'_>) -> Image<'static> {
                 .copy_from_slice(&source.rgba()[source_index..source_index + 4]);
         }
     }
+    #[cfg(target_os = "windows")]
+    {
+        let side = width.max(height);
+        let mut square = vec![0; (side * side * 4) as usize];
+        for y in 0..height {
+            let target = (((side - height) / 2 + y) * side * 4) as usize;
+            let source = (y * width * 4) as usize;
+            square[target..target + (width * 4) as usize]
+                .copy_from_slice(&rgba[source..source + (width * 4) as usize]);
+        }
+        return Image::new_owned(square, side, side);
+    }
+    #[cfg(not(target_os = "windows"))]
     Image::new_owned(rgba, width, height)
 }
 
@@ -138,6 +151,10 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                 ..
             } = event
             {
+                #[cfg(target_os = "windows")]
+                if crate::platform::consume_tray_blur() {
+                    return;
+                }
                 let app = tray.app_handle();
                 if let Some(panel) = app.get_webview_window("panel") {
                     if panel.is_visible().unwrap_or(false) {
@@ -177,7 +194,9 @@ pub fn render(app: &AppHandle, snapshot: &Snapshot, previous: Option<&Snapshot>)
         let _ = tray.set_title(Some(title(snapshot)));
     }
     if previous.is_none_or(|old| {
-        old.connection != snapshot.connection || old.last_synced_at != snapshot.last_synced_at
+        old.connection != snapshot.connection
+            || old.last_synced_at != snapshot.last_synced_at
+            || title(old) != title(snapshot)
     }) {
         let text = match snapshot.connection {
             Connection::Online => "饮水陪伴 · 已同步",
@@ -186,7 +205,7 @@ pub fn render(app: &AppHandle, snapshot: &Snapshot, previous: Option<&Snapshot>)
             Connection::SignedOut => "饮水陪伴 · 请登录",
             Connection::Unconfigured => "饮水陪伴 · 请配置服务器",
         };
-        let _ = tray.set_tooltip(Some(text));
+        let _ = tray.set_tooltip(Some(format!("{text} · {}", title(snapshot))));
     }
 }
 
@@ -198,7 +217,10 @@ mod tests {
     fn all_menu_frames_share_dimensions_and_retain_transparency() {
         let frames = Frames::load().unwrap();
         let size = (frames.0[0][0].width(), frames.0[0][0].height());
+        #[cfg(not(target_os = "windows"))]
         assert_eq!(size, (72, 36));
+        #[cfg(target_os = "windows")]
+        assert_eq!(size, (72, 72));
         for row in &frames.0 {
             for frame in row {
                 assert_eq!((frame.width(), frame.height()), size);

@@ -1,0 +1,27 @@
+{
+  "version": "0.1.5",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "饮水陪伴",
+        "visible": true,
+        "focus": true,
+        "resizable": true,
+        "decorations": true,
+        "alwaysOnTop": false,
+        "visibleOnAllWorkspaces": false,
+        "skipTaskbar": false
+      }
+    ]
+  },
+  "bundle": {
+    "targets": "all",
+    "android": {
+      "minSdkVersion": 26
+    }
+  },
+  "build": {
+    "frontendDist": "../dist/android"
+  }
+}

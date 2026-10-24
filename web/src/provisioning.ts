@@ -45,6 +45,7 @@ export interface ProvisionState {
   paused: boolean;
   complete: boolean;
   message: string;
+  messageKind: 'progress' | 'notice' | 'silent';
   error: string;
   wifiNetworks: WifiNetwork[];
   scanning: boolean;
@@ -108,7 +109,7 @@ export function provisionStorageKey(userId: string) { return `water-provision:v1
 export class ProvisionFlow {
   readonly state: ProvisionState = {
     info: null, operation: null, server: null, ble: null, connected: false, busy: false, paused: false,
-    complete: false, message: '', error: '',
+    complete: false, message: '', messageKind: 'progress', error: '',
     wifiNetworks: [], scanning: false, scanError: '',
   };
   private version = 0;
@@ -139,13 +140,17 @@ export class ProvisionFlow {
           || typeof value.deviceId !== 'string' || !Number.isFinite(value.expiresAt)) throw new Error();
         this.state.operation = { operationId: value.operationId, deploymentId: value.deploymentId, deviceId: value.deviceId, expiresAt: value.expiresAt,
           ...(value.protocolVersion === 2 ? { protocolVersion: 2, hardwareId: value.hardwareId } : {}) };
-        this.state.message = '找到上次配网，先查询同一次操作。刷新后无需重新发送密码。';
+        this.message('找到上次配网，先查询同一次操作。刷新后无需重新发送密码。');
         this.pollUntil = this.now() + 120000;
       }
     } catch { this.state.error = '无法读取上次配网编号。请先确认杯垫和账号状态，再开始新的配网。'; }
   }
 
   private publish() { if (!this.disposed) this.deps.changed({ ...this.state }); }
+  private message(text: string, kind: ProvisionState['messageKind'] = 'progress') {
+    this.state.message = text;
+    this.state.messageKind = kind;
+  }
   private valid(version: number) {
     return !this.disposed && version === this.version && sameBinding(this.initialSession, this.deps.currentSession());
   }
@@ -211,7 +216,7 @@ export class ProvisionFlow {
     this.state.wifiNetworks = [];
     this.state.scanError = '';
     this.state.error = '';
-    this.state.message = '请按系统提示确认配对，或输入杯垫屏幕上的配对码。';
+    this.message('请按系统提示确认配对，或输入杯垫屏幕上的配对码。');
     this.publish();
     try {
       // choose() is invoked synchronously from the click handler.
@@ -228,7 +233,7 @@ export class ProvisionFlow {
       this.state.connected = true;
       this.state.paused = false;
       this.pollUntil = this.now() + 120000;
-      this.state.message = '已连接杯垫。请使用 2.4 GHz Wi-Fi，并保持杯垫供电。';
+      this.message('已连接杯垫。请使用 2.4 GHz Wi-Fi，并保持杯垫供电。');
     } catch (cause) {
       if (!this.valid(version)) return;
       this.deps.transport.disconnect();
@@ -236,9 +241,11 @@ export class ProvisionFlow {
       this.state.info = null;
       const name = cause instanceof Error ? cause.name : '';
       this.state.error = name === 'NotFoundError' || name === 'AbortError' ? '已取消蓝牙选择或配对，可再次选择杯垫。'
+        : name === 'NotAllowedError' ? '蓝牙权限未开启，请在浏览器或系统应用设置中允许访问后重试。'
         : cause instanceof Error && cause.message === 'wrong-device' ? '所选杯垫不是本次操作或当前账号的设备，请选择同一台杯垫。'
         : cause instanceof Error && ['untrusted', 'wrong-deployment'].includes(cause.message) ? '当前为旧版配网固件，请升级至 0.7.0 或更新版本以自动注册绑定。'
         : '蓝牙连接失败或超时。请确认蓝牙已打开、杯垫处于配网窗口，并按系统提示完成配对。';
+      this.state.messageKind = 'silent';
     } finally {
       if (this.valid(version)) { this.state.busy = false; this.publish(); }
     }
@@ -258,7 +265,7 @@ export class ProvisionFlow {
     this.rejectedChallenge = null;
     this.deviceFailureConfirmed = false;
     this.state.error = '';
-    this.state.message = '正在向云端申请本次配网授权…';
+    this.message('正在向云端申请本次配网授权…');
     this.publish();
     let issued = false;
     this.issuing = true;
@@ -290,12 +297,12 @@ export class ProvisionFlow {
       this.authorizationChallenge = info.challenge;
       this.state.paused = false;
       this.pollUntil = this.now() + 120000;
-      this.state.message = '正在发送配置。密码不会保存到浏览器。';
+      this.message('正在发送配置。密码不会保存到浏览器。');
       this.publish();
       this.sentOnConnection = result.operationId;
       await this.deps.transport.send(this.config(result, info.challenge, ssid, password));
       if (!this.valid(version)) return;
-      this.state.message = '配置已发送，等待连接云端并持久保存。';
+      this.message('配置已发送，等待连接云端并持久保存。');
     } catch (cause) {
       if (!this.valid(version)) return;
       this.failure(cause, issued ? '配置发送结果尚未确认，请查询同一次操作。不要重复开始新的配网。'
@@ -320,12 +327,13 @@ export class ProvisionFlow {
     const version = this.version;
     this.state.busy = true;
     this.state.error = '';
+    if (this.state.messageKind !== 'progress') this.state.messageKind = 'silent';
     this.publish();
     try {
       validateWifi(ssid, password);
       this.sentOnConnection = this.state.operation.operationId;
       await this.deps.transport.send(this.config(this.authorization, this.authorizationChallenge!, ssid, password));
-      if (this.valid(version)) this.state.message = '已重发同一次配置，等待设备确认。';
+      if (this.valid(version)) this.message('已重发同一次配置，等待设备确认。');
     } catch (cause) {
       if (this.valid(version)) this.failure(cause, '重发结果未确认，请继续查询同一次操作。');
     } finally {
@@ -343,7 +351,7 @@ export class ProvisionFlow {
       || (this.state.ble && status.sequence <= this.state.ble.sequence)) return;
     this.state.ble = status;
     if (status.stage !== 'failed') this.deviceFailureConfirmed = false;
-    this.state.message = stages[status.stage];
+    this.message(stages[status.stage]);
     if (status.stage === 'failed') {
       this.rejectedChallenge ??= this.authorizationChallenge ?? this.state.info?.challenge ?? null;
       this.authorization = null;
@@ -362,7 +370,7 @@ export class ProvisionFlow {
     this.state.wifiNetworks = [];
     this.state.connected = false;
     this.sentOnConnection = null;
-    this.state.message = this.state.operation ? '蓝牙已断开；配网可能仍在继续，将查询云端结果。可重连同一台杯垫。' : '蓝牙已断开，请重新连接杯垫。';
+    this.message(this.state.operation ? '蓝牙已断开；配网可能仍在继续，将查询云端结果。可重连同一台杯垫。' : '蓝牙已断开，请重新连接杯垫。', 'notice');
     this.publish();
   }
 
@@ -379,11 +387,15 @@ export class ProvisionFlow {
     if (!operation || this.disposed || this.state.busy || this.state.complete || this.polling === version || (!manual && this.state.paused)) return;
     if (!manual && this.now() > this.pollUntil) {
       this.state.paused = true;
-      this.state.message = '等待超时，尚未确认结果。自动查询已暂停，可继续查询同一次配网。';
+      this.message('等待超时，尚未确认结果。自动查询已暂停，可继续查询同一次配网。', 'notice');
       this.publish();
       return;
     }
-    if (manual) { this.state.paused = false; this.pollUntil = this.now() + 120000; }
+    if (manual) {
+      this.state.paused = false;
+      this.pollUntil = this.now() + 120000;
+      if (this.state.messageKind !== 'progress') this.state.messageKind = 'silent';
+    }
     this.polling = version;
     const failureVersion = this.deviceFailureVersion;
     const current = () => this.valid(version) && this.state.operation?.operationId === operation.operationId;
@@ -414,7 +426,7 @@ export class ProvisionFlow {
           return;
         }
         this.state.complete = true;
-        this.state.message = '杯垫已保存配置并完成云端确认，配网成功。';
+        this.message('杯垫已保存配置并完成云端确认，配网成功。');
         this.authorization = null;
         try { this.deps.storage.removeItem(this.key); } catch { /* Confirmed IDs contain no secrets. */ }
         this.deps.completed(session);
@@ -424,8 +436,8 @@ export class ProvisionFlow {
         this.state.error = provisioningFailure(status.code) ?? (status.status === 'expired' ? '本次授权已过期，请重新连接杯垫并开始配网。'
           : status.status === 'cancelled' ? '本次操作已作废，请确认账号和设备归属后重新配网。' : '云端确认本次配网失败，请检查杯垫提示后重新配网。');
       } else {
-        this.state.message = this.deviceFailureConfirmed ? '杯垫已明确拒绝本次配置，云端确认尚未认领。请重连同一台杯垫，获取新的配网会话后重试。'
-          : status.status === 'claimed' ? '云端已认领，等待杯垫持久保存并提交完成。' : '授权已签发，等待杯垫连接云端。';
+        this.message(this.deviceFailureConfirmed ? '杯垫已明确拒绝本次配置，云端确认尚未认领。请重连同一台杯垫，获取新的配网会话后重试。'
+          : status.status === 'claimed' ? '云端已认领，等待杯垫持久保存并提交完成。' : '授权已签发，等待杯垫连接云端。');
         if (this.deps.transport.connected) {
           try {
             const ble = await this.deps.transport.readStatus();
@@ -441,7 +453,7 @@ export class ProvisionFlow {
     }
   }
 
-  pause() {
+  pause(notify = true) {
     ++this.version;
     ++this.scanVersion;
     this.state.scanning = false;
@@ -452,9 +464,9 @@ export class ProvisionFlow {
     this.sentOnConnection = null;
     this.authorization = null;
     this.deps.transport.disconnect();
-    this.state.message = this.state.operation ? '已停止本页等待。已发送的配网仍可能完成，编号已保留；继续查询可确认结果。' : '已停止蓝牙操作。';
+    this.message(this.state.operation ? '已停止本页等待。已发送的配网仍可能完成，编号已保留；继续查询可确认结果。' : '已停止蓝牙操作。', notify ? 'notice' : 'silent');
     this.publish();
   }
 
-  dispose() { this.pause(); this.disposed = true; }
+  dispose() { this.pause(false); this.disposed = true; }
 }

@@ -11,4 +11,12 @@ output/
 .playwright-cli/
 firmware/water_companion/build/
 client/src-tauri/target/
-client/src-tauri/gen/
+client/src-tauri/gen/*
+!client/src-tauri/gen/android/
+client/src-tauri/gen/android/app/src/main/jniLibs/
+client/src-tauri/gen/android/app/tauri.build.gradle.kts
+client/src-tauri/gen/android/app/tauri.properties
+client/src-tauri/gen/android/.kotlin/
+client/mobile/target/
+client/mobile/android/build/
+client/mobile/android/.tauri/

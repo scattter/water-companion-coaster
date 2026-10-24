@@ -1,0 +1,799 @@
+{
+  "checked_at": "2026-10-23T12:19:33+08:00",
+  "project": "杯垫电池底板 v1.1 MAX17048",
+  "project_uuid": "d05186734075d812b09c0337193380f96bacb70f8874411d36322325f6bbda7e",
+  "pcb_uuid": "80ac0c85b6a7364f",
+  "pcb_drc": {
+    "strict": true,
+    "result": []
+  },
+  "schematic_erc": {
+    "result": [
+      {
+        "type": "warn",
+        "count": 1
+      }
+    ],
+    "warning_detail_verified": true,
+    "note": "原理图界面已核对详细条目；保留 1 项供应商库属性警告和 7 条描述性位号格式提示，未自动标准化器件或关闭检查。",
+    "ui_checked_at": "2026-10-23T14:27:03+08:00",
+    "details_reviewed_at": "2026-10-23T14:45:17+08:00",
+    "ui_summary": {
+      "fatal_errors": 0,
+      "errors": 0,
+      "warnings": 1,
+      "information": 7
+    },
+    "warning": {
+      "message": "元件的属性与供应商编号不匹配。，建议使用器件标准化",
+      "components": [
+        "J_DEV_A",
+        "J_DEV_B",
+        "J_HX",
+        "J_BAT",
+        "R1",
+        "R2",
+        "R3",
+        "C1",
+        "C2",
+        "C3",
+        "LED1",
+        "J_I2C"
+      ],
+      "name_only_differences": [
+        {
+          "components": [
+            "C1",
+            "C2"
+          ],
+          "supplier_part": "C95841",
+          "current": "10uF 16V X7R",
+          "recommended": "10uF"
+        },
+        {
+          "components": [
+            "C3"
+          ],
+          "supplier_part": "C59782",
+          "current": "1uF 16V X7R",
+          "recommended": "1uF"
+        },
+        {
+          "components": [
+            "J_BAT"
+          ],
+          "supplier_part": "C131337",
+          "current": "PH2.0 电池",
+          "recommended": "B2B-PH-K-S(LF)(SN)"
+        },
+        {
+          "components": [
+            "J_DEV_A",
+            "J_DEV_B"
+          ],
+          "supplier_part": "C39576",
+          "current": [
+            "开发板 U2-1~9",
+            "开发板 U2-10~18"
+          ],
+          "recommended": "2.54-1*9P母"
+        },
+        {
+          "components": [
+            "J_HX",
+            "J_I2C"
+          ],
+          "supplier_part": "C2718488",
+          "current": [
+            "HX711 四针",
+            "Adafruit 5580 接口"
+          ],
+          "recommended": "2.54-1*4P母"
+        },
+        {
+          "components": [
+            "R1"
+          ],
+          "supplier_part": "C22975",
+          "current": "2k 1%",
+          "recommended": "2kΩ"
+        },
+        {
+          "components": [
+            "R2"
+          ],
+          "supplier_part": "C25803",
+          "current": "100k",
+          "recommended": "100kΩ"
+        },
+        {
+          "components": [
+            "R3"
+          ],
+          "supplier_part": "C4190",
+          "current": "2.2k",
+          "recommended": "2.2kΩ"
+        }
+      ],
+      "name_only_verified_fields": [
+        "supplier_part",
+        "manufacturer_part",
+        "footprint",
+        "manufacturer"
+      ],
+      "led1_review": {
+        "supplier_part": "C131244",
+        "manufacturer_part": "17-21SURC/S530-A2/TR8",
+        "current_footprint": "LED0805-RD",
+        "library_recommended_footprint": "LED0805-R-RD-1",
+        "current_manufacturer": "EVERLIGHT(台湾亿光)",
+        "library_manufacturer": "EVERLIGHT(亿光)",
+        "actual_pad_size_mm": [
+          1.0,
+          1.25
+        ],
+        "actual_pad_center_distance_mm": 2.2,
+        "datasheet_recommended_pad_size_mm": [
+          1.2,
+          1.2
+        ],
+        "datasheet_recommended_center_distance_mm": 2.1,
+        "datasheet_url": "https://media.distrelec.com/Web/Downloads/_t/ds/17-21SURC_S530-A2_eng_tds.pdf",
+        "datasheet_page": 2,
+        "datasheet_sha256": "0e00946376bbe7bf3fc8653451dba469f0c3810889cf213faa95397d8869c7ef",
+        "polarity": {
+          "1": "阴极 / CHG_STAT",
+          "2": "阳极 / LED_A"
+        },
+        "decision": "保留原 v1 封装；已核对尺寸和极性。焊盘不完全等同于手册建议，委托贴片时须由厂家确认差异及装配方向。"
+      }
+    },
+    "information": {
+      "message": "位号不符合软件建议的英文字母+数字或英文问号规则",
+      "components": [
+        "J_DEV_A",
+        "J_DEV_B",
+        "J_HX",
+        "J_BAT",
+        "U_CHG",
+        "U_ISO",
+        "J_I2C"
+      ],
+      "decision": "保留描述性位号及现有网表映射。"
+    }
+  },
+  "netlist": {
+    "schematic_matches_pcb": true,
+    "matches_design_pin_map": true,
+    "components": 14,
+    "connected_pins": 43,
+    "unconnected_pins": 10,
+    "pin_map": {
+      "J_DEV_A": {
+        "6": "GND",
+        "7": "BAT_DEV"
+      },
+      "J_DEV_B": {
+        "1": "USB_5V",
+        "2": "GND",
+        "3": "3V3",
+        "5": "HX_DT",
+        "7": "HX_SCK",
+        "8": "FG_SDA",
+        "9": "FG_SCL"
+      },
+      "J_BAT": {
+        "1": "BAT_CELL",
+        "2": "GND"
+      },
+      "J_HX": {
+        "1": "3V3",
+        "2": "GND",
+        "3": "HX_DT",
+        "4": "HX_SCK"
+      },
+      "U_CHG": {
+        "1": "CHG_STAT",
+        "2": "GND",
+        "3": "BAT_CELL",
+        "4": "USB_5V",
+        "5": "PROG"
+      },
+      "U_ISO": {
+        "1": "BAT_CELL",
+        "2": "GND",
+        "3": "USB_5V",
+        "5": "GND",
+        "6": "BAT_DEV"
+      },
+      "R1": {
+        "1": "PROG",
+        "2": "GND"
+      },
+      "R2": {
+        "1": "USB_5V",
+        "2": "GND"
+      },
+      "R3": {
+        "1": "USB_5V",
+        "2": "LED_A"
+      },
+      "C1": {
+        "1": "USB_5V",
+        "2": "GND"
+      },
+      "C2": {
+        "1": "BAT_CELL",
+        "2": "GND"
+      },
+      "C3": {
+        "1": "BAT_DEV",
+        "2": "GND"
+      },
+      "LED1": {
+        "1": "CHG_STAT",
+        "2": "LED_A"
+      },
+      "J_I2C": {
+        "1": "3V3",
+        "2": "GND",
+        "3": "FG_SDA",
+        "4": "FG_SCL"
+      }
+    }
+  },
+  "pcb": {
+    "size_mm": [
+      60,
+      45
+    ],
+    "layers": 2,
+    "components": 14,
+    "track_segments": 93,
+    "vias": 24,
+    "filled_ground_pours": 2,
+    "keepouts": [
+      {
+        "layer": 1,
+        "rectangle_mm": [
+          29.0,
+          26.0,
+          60.0,
+          40.5
+        ]
+      },
+      {
+        "layer": 2,
+        "rectangle_mm": [
+          29.0,
+          26.0,
+          60.0,
+          40.5
+        ]
+      },
+      {
+        "layer": 1,
+        "rectangle_mm": [
+          0.0,
+          29.0,
+          8.2,
+          37.2
+        ]
+      },
+      {
+        "layer": 2,
+        "rectangle_mm": [
+          0.0,
+          29.0,
+          8.2,
+          37.2
+        ]
+      }
+    ],
+    "tracks_clear_keepouts": true,
+    "mounting_holes_mm": [
+      [
+        3.0,
+        3.0,
+        3.2
+      ],
+      [
+        3.0,
+        21.0,
+        3.2
+      ],
+      [
+        32.04,
+        3.84,
+        2.7
+      ],
+      [
+        32.04,
+        19.08,
+        2.7
+      ],
+      [
+        52.36,
+        3.84,
+        2.7
+      ],
+      [
+        52.36,
+        19.08,
+        2.7
+      ],
+      [
+        57.0,
+        3.0,
+        3.2
+      ],
+      [
+        57.0,
+        21.0,
+        3.2
+      ]
+    ],
+    "module_outline_mm": [
+      29.5,
+      1.3,
+      54.9,
+      21.62
+    ],
+    "module_hole_pitch_mm": [
+      20.32,
+      15.24
+    ]
+  },
+  "gerber": {
+    "zip_integrity": true,
+    "files": [
+      "Gerber_TopLayer.GTL",
+      "Gerber_BottomLayer.GBL",
+      "Gerber_TopSilkscreenLayer.GTO",
+      "Gerber_BottomSilkscreenLayer.GBO",
+      "Gerber_TopSolderMaskLayer.GTS",
+      "Gerber_BottomSolderMaskLayer.GBS",
+      "Gerber_TopPasteMaskLayer.GTP",
+      "Gerber_BoardOutlineLayer.GKO",
+      "Gerber_DocumentLayer.GDL",
+      "Gerber_DrillDrawingLayer.GDD",
+      "Drill_PTH_Through.DRL",
+      "Drill_NPTH_Through.DRL",
+      "Drill_PTH_Through_Via.DRL",
+      "FlyingProbeTesting.json",
+      "PCB下单必读.txt"
+    ],
+    "copper_areas": {
+      "Gerber_TopLayer.GTL": 37,
+      "Gerber_BottomLayer.GBL": 22
+    },
+    "drills": {
+      "Drill_PTH_Through.DRL": [
+        {
+          "diameter_mm": 0.3,
+          "count": 24,
+          "centers_mm": [
+            [
+              20.7,
+              15.349
+            ],
+            [
+              23.0,
+              20.0
+            ],
+            [
+              16.1,
+              14.0
+            ],
+            [
+              10.0,
+              17.9
+            ],
+            [
+              19.4,
+              16.6
+            ],
+            [
+              26.5,
+              20.0
+            ],
+            [
+              10.754,
+              13.7
+            ],
+            [
+              29.8,
+              18.5
+            ],
+            [
+              16.8,
+              12.8
+            ],
+            [
+              23.0,
+              16.0
+            ],
+            [
+              6.0,
+              10.0
+            ],
+            [
+              5.0,
+              25.0
+            ],
+            [
+              12.0,
+              27.0
+            ],
+            [
+              18.0,
+              30.0
+            ],
+            [
+              24.0,
+              35.0
+            ],
+            [
+              28.0,
+              43.7
+            ],
+            [
+              38.0,
+              12.0
+            ],
+            [
+              43.0,
+              20.0
+            ],
+            [
+              57.0,
+              16.0
+            ],
+            [
+              56.0,
+              25.0
+            ],
+            [
+              40.0,
+              3.0
+            ],
+            [
+              3.0,
+              43.0
+            ],
+            [
+              55.0,
+              43.0
+            ],
+            [
+              35.0,
+              43.5
+            ]
+          ]
+        },
+        {
+          "diameter_mm": 1.001,
+          "count": 2,
+          "centers_mm": [
+            [
+              31.999,
+              8.0
+            ],
+            [
+              34.001,
+              8.0
+            ]
+          ]
+        },
+        {
+          "diameter_mm": 1.1,
+          "count": 26,
+          "centers_mm": [
+            [
+              31.63,
+              24.27
+            ],
+            [
+              29.09,
+              24.27
+            ],
+            [
+              26.55,
+              24.27
+            ],
+            [
+              24.01,
+              24.27
+            ],
+            [
+              21.47,
+              24.27
+            ],
+            [
+              18.93,
+              24.27
+            ],
+            [
+              16.39,
+              24.27
+            ],
+            [
+              13.85,
+              24.27
+            ],
+            [
+              11.31,
+              24.27
+            ],
+            [
+              11.31,
+              42.05
+            ],
+            [
+              13.85,
+              42.05
+            ],
+            [
+              16.39,
+              42.05
+            ],
+            [
+              18.93,
+              42.05
+            ],
+            [
+              21.47,
+              42.05
+            ],
+            [
+              24.01,
+              42.05
+            ],
+            [
+              26.55,
+              42.05
+            ],
+            [
+              29.09,
+              42.05
+            ],
+            [
+              31.63,
+              42.05
+            ],
+            [
+              46.19,
+              8.0
+            ],
+            [
+              48.73,
+              8.0
+            ],
+            [
+              51.27,
+              8.0
+            ],
+            [
+              53.81,
+              8.0
+            ],
+            [
+              37.19,
+              15.5
+            ],
+            [
+              39.73,
+              15.5
+            ],
+            [
+              42.27,
+              15.5
+            ],
+            [
+              44.81,
+              15.5
+            ]
+          ]
+        }
+      ],
+      "Drill_NPTH_Through.DRL": [
+        {
+          "diameter_mm": 2.7,
+          "count": 4,
+          "centers_mm": [
+            [
+              32.04,
+              3.84
+            ],
+            [
+              52.36,
+              3.84
+            ],
+            [
+              32.04,
+              19.08
+            ],
+            [
+              52.36,
+              19.08
+            ]
+          ]
+        },
+        {
+          "diameter_mm": 3.2,
+          "count": 4,
+          "centers_mm": [
+            [
+              3.0,
+              3.0
+            ],
+            [
+              57.0,
+              3.0
+            ],
+            [
+              3.0,
+              21.0
+            ],
+            [
+              57.0,
+              21.0
+            ]
+          ]
+        }
+      ],
+      "Drill_PTH_Through_Via.DRL": [
+        {
+          "diameter_mm": 0.3,
+          "count": 24,
+          "centers_mm": [
+            [
+              20.7,
+              15.349
+            ],
+            [
+              23.0,
+              20.0
+            ],
+            [
+              16.1,
+              14.0
+            ],
+            [
+              10.0,
+              17.9
+            ],
+            [
+              19.4,
+              16.6
+            ],
+            [
+              26.5,
+              20.0
+            ],
+            [
+              10.754,
+              13.7
+            ],
+            [
+              29.8,
+              18.5
+            ],
+            [
+              16.8,
+              12.8
+            ],
+            [
+              23.0,
+              16.0
+            ],
+            [
+              6.0,
+              10.0
+            ],
+            [
+              5.0,
+              25.0
+            ],
+            [
+              12.0,
+              27.0
+            ],
+            [
+              18.0,
+              30.0
+            ],
+            [
+              24.0,
+              35.0
+            ],
+            [
+              28.0,
+              43.7
+            ],
+            [
+              38.0,
+              12.0
+            ],
+            [
+              43.0,
+              20.0
+            ],
+            [
+              57.0,
+              16.0
+            ],
+            [
+              56.0,
+              25.0
+            ],
+            [
+              40.0,
+              3.0
+            ],
+            [
+              3.0,
+              43.0
+            ],
+            [
+              55.0,
+              43.0
+            ],
+            [
+              35.0,
+              43.5
+            ]
+          ]
+        }
+      ]
+    },
+    "via_drill_note": "Drill_PTH_Through_Via.DRL 是总 PTH 钻孔文件中过孔的子集，不是额外 24 个孔。"
+  },
+  "project_export": {
+    "zip_integrity": true,
+    "matches_checked_pcb": true,
+    "matches_checked_schematic": true,
+    "embedded_documents": 44
+  },
+  "manufacturing_tables": {
+    "encoding": "UTF-8",
+    "bom_components": 14,
+    "bom_entries": 13,
+    "placement_rows": 14
+  },
+  "module_source": {
+    "url": "https://github.com/adafruit/Adafruit-MAX17048-PCB/blob/main/Adafruit-MAX17048-STEMMA.brd",
+    "download_sha256": "01830495f0e61780aba63709bdb3ba2ddadd4f3bf83ce6022c07f68072542906"
+  },
+  "not_verified": [
+    "厂商 DFM（包括 LED1 焊盘与手册建议尺寸差异及贴片方向）",
+    "实物机械配合、焊接与接头极性",
+    "充放电、USB 插拔瞬态、温升和峰值电流",
+    "MAX17048 I2C 通信与固件电量显示"
+  ],
+  "pdf_review": {
+    "schematic_pages": 1,
+    "pcb_pages": 5,
+    "pcb_file": "pcb-review.pdf",
+    "schematic_method": "从最终原生 PNG 封装为 PDF，以保留中文；原生 SVG 与 epro2 另附。",
+    "pcb_method": "Gerbonara 1.6.3 解析最终 Gerber / Excellon，ReportLab 生成图纸，BOM 使用最终 CSV。",
+    "renderer_source": "https://gerbolyze.gitlab.io/gerbonara/",
+    "visually_reviewed": true,
+    "native_pcb_pdf_export": "锁屏期间原生导出超时；未交付旧版 PDF。",
+    "gerber_parser_notes": [
+      "Excellon G90 位于头结束后，解析器识别为绝对坐标。",
+      "底层没有贴片器件，因此无底层钢网文件。"
+    ],
+    "erc_annotation_updated_at": "2026-10-23T14:45:49+08:00"
+  },
+  "file_sha256": {
+    "carrier-v1.1.epro2": "307cbb7162b6f359fb7d4e9ee45518f511fceea00e671fa6d3e4d5b1d6124cff",
+    "gerber.zip": "fdda80c62c5bf13de19ae4e76a18f65e9abc3638f5b95a430fa063fe0c786a84",
+    "bom.csv": "76fffe9fb0c5553f0db47bcd32948fc12e8f1f6a2e7de7f9669558e6a2311e26",
+    "placement.csv": "b64948e3bf51292ae9d702fd1b6d3e8856e5f350626de3fce9da5a789bef75fd",
+    "schematic-netlist.json": "f87fc2e116fddb036ae5ff3290f0f2795b023ba122f708e6d92b5b66e99fd8cc",
+    "pcb-netlist.json": "fb64c99d6e60092a290e5c9ecc1beeed7b4fd7ecaff27abf7881038782d35951",
+    "schematic.pdf": "919fc01ef7b30bf9c57c99e0649d4bc86aa6556263e4831ca06cf81003693d47",
+    "pcb-review.pdf": "700431ac8fac4fa05ee3adb0d6255bfce6220b9f95fd7cb2198b2379441d4bec"
+  }
+}

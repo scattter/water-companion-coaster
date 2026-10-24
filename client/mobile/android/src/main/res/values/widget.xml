@@ -1,0 +1,36 @@
+<resources>
+    <color name="widget_ink">#253C2C</color>
+    <color name="widget_muted">#526451</color>
+    <color name="widget_accent">#326A4A</color>
+    <color name="widget_line">#DCE4D5</color>
+    <color name="widget_bar">#D3DFC9</color>
+    <style name="WidgetText">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textColor">@color/widget_ink</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:ellipsize">end</item>
+    </style>
+    <style name="WidgetCaption" parent="WidgetText">
+        <item name="android:textColor">@color/widget_muted</item>
+        <item name="android:textSize">11sp</item>
+    </style>
+    <style name="WidgetAmount" parent="WidgetText">
+        <item name="android:textSize">38sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:autoSizeTextType">uniform</item>
+        <item name="android:autoSizeMinTextSize">18sp</item>
+        <item name="android:autoSizeMaxTextSize">38sp</item>
+        <item name="android:autoSizeStepGranularity">1sp</item>
+    </style>
+    <style name="WidgetRefresh">
+        <item name="android:layout_width">36dp</item>
+        <item name="android:layout_height">36dp</item>
+        <item name="android:padding">7dp</item>
+        <item name="android:src">@android:drawable/ic_popup_sync</item>
+        <item name="android:tint">@color/widget_muted</item>
+        <item name="android:background">@android:color/transparent</item>
+        <item name="android:contentDescription">刷新饮水数据</item>
+    </style>
+</resources>

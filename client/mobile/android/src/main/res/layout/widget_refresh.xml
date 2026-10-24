@@ -1,0 +1,16 @@
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_refresh"
+    android:layout_width="36dp"
+    android:layout_height="30dp"
+    android:contentDescription="刷新饮水数据">
+    <ImageView android:id="@+id/widget_refresh_icon" style="@style/WidgetRefresh"
+        android:layout_width="match_parent" android:layout_height="match_parent"
+        android:padding="5dp" android:importantForAccessibility="no" />
+    <ProgressBar android:id="@+id/widget_refresh_progress"
+        android:layout_width="match_parent" android:layout_height="match_parent"
+        android:padding="5dp" android:visibility="gone" android:importantForAccessibility="no"
+        android:indeterminate="true" android:indeterminateDuration="900"
+        android:indeterminateBehavior="repeat" android:interpolator="@android:interpolator/linear"
+        android:indeterminateDrawable="@drawable/widget_refresh_spinner"
+        android:indeterminateTint="@color/widget_muted" />
+</FrameLayout>

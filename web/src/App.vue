@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import DeviceSetup from './DeviceSetup.vue';
 import DeviceOnboarding from './DeviceOnboarding.vue';
 import AdminPanel from './AdminPanel.vue';
 import { ApiError, errorMessage, request } from './api';
 import { sameBinding, type Session } from './session';
+import { platform } from './platform';
+import { useNotice } from './notices';
 import type { Dashboard, DrinkEvent } from '../../shared/dashboard';
+const props = withDefaults(defineProps<{ mobile?: boolean; active?: boolean }>(), { mobile: false, active: true });
 const session = ref<Session>({ user: null, deviceId: null, bindingId: null });
 const page = ref<'dashboard' | 'add' | 'admin'>('dashboard');
 const provisioningBusy = ref(false);
@@ -37,6 +40,23 @@ let requestId = 0;
 let sessionVersion = 0;
 let disposed = false;
 
+useNotice('web:session', () => sessionError.value, {
+  enabled: () => props.mobile && props.active && !sessionLoading.value,
+  action: () => ({ label: '重新连接', run: loadSession }),
+});
+useNotice('web:auth', () => authError.value, { enabled: () => props.mobile && props.active && !authBusy.value && !session.value.user });
+useNotice('web:binding', () => bindingError.value === actionError.value ? '' : bindingError.value, {
+  enabled: () => props.mobile && props.active && !bindingBusy.value && !authBusy.value,
+});
+useNotice('web:action', () => actionError.value, {
+  enabled: () => props.mobile && props.active && !authBusy.value && !unbindBusy.value && !revokePending.value,
+});
+useNotice('web:feedback', () => feedback.value, { enabled: () => props.mobile && props.active });
+useNotice('web:dashboard', () => dashboardError.value ? `${dashboardError.value}${dashboard.value ? ' · 下方保留上次成功同步的数据。' : ''}` : '', {
+  enabled: () => props.mobile && props.active,
+  action: () => ({ label: '刷新账号状态', run: loadSession }),
+});
+
 const isToday = computed(() => selectedDate.value === today.value);
 const online = computed(() => Boolean(dashboard.value?.device?.online) && !dashboardError.value);
 const needsFactoryService = computed(() => Boolean(dashboard.value?.device?.lastSeenAt) && dashboard.value?.device?.calibrated === false);
@@ -53,6 +73,7 @@ const weightState = computed(() => {
 });
 
 function resetDeviceState() {
+  if (props.mobile) platform.notices?.clear('web:');
   // 账号变更使先前的读取失效，避免迟到的响应显示上一位用户的数据。
   ++sessionVersion;
   ++requestId;
@@ -99,7 +120,7 @@ async function loadSession() {
     if (disposed || version !== sessionVersion) return;
     resetDeviceState();
     session.value = result;
-    page.value = result.user?.role === 'admin' ? 'admin' : 'dashboard';
+    page.value = !props.mobile && result.user?.role === 'admin' ? 'admin' : 'dashboard';
     if (result.user) void refresh();
   } catch (cause) {
     if (!disposed && version === sessionVersion) sessionError.value = `无法连接云端：${errorMessage(cause)}`;
@@ -119,7 +140,7 @@ async function authenticate() {
     resetDeviceState();
     session.value = result;
     password.value = '';
-    page.value = result.user?.role === 'admin' ? 'admin' : 'dashboard';
+    page.value = !props.mobile && result.user?.role === 'admin' ? 'admin' : 'dashboard';
     if (result.user) void refresh();
   } catch (cause) {
     if (!disposed && version === sessionVersion) authError.value = errorMessage(cause);
@@ -131,10 +152,14 @@ async function logout() {
   authBusy.value = true;
   actionError.value = '';
   bindingError.value = '';
+  const version = sessionVersion;
   try {
-    await request('/api/auth/logout', {});
+    const result = await request<{ message?: string }>('/api/auth/logout', {});
+    if (disposed || version !== sessionVersion) return;
     invalidateSession('');
+    if (props.mobile && result.message) platform.notices?.show({ source: 'web:logout', message: result.message });
   } catch (cause) {
+    if (disposed || version !== sessionVersion) return;
     if (!handleAccessError(cause)) {
       const message = `退出失败：${errorMessage(cause)}`;
       actionError.value = message;
@@ -316,7 +341,7 @@ async function refreshDashboard() {
 }
 
 async function refresh() {
-  if (!session.value.user || page.value === 'admin' || pollingVersion === sessionVersion) return;
+  if (!props.active || !session.value.user || page.value === 'admin' || pollingVersion === sessionVersion) return;
   const version = sessionVersion;
   pollingVersion = version;
   updateToday();
@@ -343,13 +368,23 @@ async function revoke(event: DrinkEvent) {
   }
 }
 
+watch(() => props.active, active => { if (active) void refresh(); });
+
+function back(event: Event) {
+  if (event.defaultPrevented) return;
+  if (settingsOpen.value) { settingsDialog.value?.close(); event.preventDefault(); }
+  else if (page.value !== 'dashboard') { page.value = 'dashboard'; event.preventDefault(); void refresh(); }
+}
 onMounted(() => {
+  if (props.mobile) window.addEventListener('companion-back', back);
   void loadSession();
   timer = setInterval(() => void refresh(), 5000);
 });
 
 onBeforeUnmount(() => {
   disposed = true;
+  if (props.mobile) platform.notices?.clear('web:');
+  window.removeEventListener('companion-back', back);
   clearInterval(timer);
   ++sessionVersion;
   ++requestId;
@@ -359,13 +394,13 @@ onBeforeUnmount(() => {
 <template>
   <div class="app-shell">
     <header class="topbar">
-      <a class="brand" href="/" aria-label="水伴首页">
+      <a class="brand" :href="mobile ? undefined : '/'" aria-label="水伴首页">
         <span class="brand-mark" aria-hidden="true"><span></span></span>
         <span>水伴<span class="brand-subtitle">让每一口，都有迹可循</span></span>
       </a>
       <div class="topbar-right">
         <span v-if="session.user" class="account-name">{{ session.user.username }}</span>
-        <button v-if="session.user?.role === 'admin'" class="settings-button" :disabled="provisioningBusy || bindingBusy" @click="page = page === 'admin' ? 'dashboard' : 'admin'; refresh()">{{ page === 'admin' ? '饮水记录' : '管理后台' }}</button>
+        <button v-if="!mobile && session.user?.role === 'admin'" class="settings-button" :disabled="provisioningBusy || bindingBusy" @click="page = page === 'admin' ? 'dashboard' : 'admin'; refresh()">{{ page === 'admin' ? '饮水记录' : '管理后台' }}</button>
         <button v-if="session.user && !session.deviceId" class="settings-button" :disabled="bindingBusy" @click="page = page === 'add' ? 'dashboard' : 'add'; refresh()">{{ page === 'add' ? '查看历史' : '添加杯垫' }}</button>
         <button v-if="session.user && session.deviceId" class="settings-button" :disabled="authBusy || unbindBusy" @click="openSettings">杯垫设置</button>
         <button v-if="session.user" class="text-button logout-button" :disabled="authBusy || bindingBusy || unbindBusy || provisioningBusy" @click="logout">{{ authBusy ? '请稍候…' : '退出登录' }}</button>
@@ -375,7 +410,7 @@ onBeforeUnmount(() => {
     <main v-if="sessionLoading || sessionError" class="welcome-main">
       <section class="panel account-panel" aria-live="polite">
         <h1>连接水伴云端</h1>
-        <p class="setup-description">{{ sessionLoading ? '正在确认登录状态…' : sessionError }}</p>
+        <p class="setup-description">{{ sessionLoading ? '正在确认登录状态…' : mobile ? '暂时未连接云端，可重新连接。' : sessionError }}</p>
         <button v-if="!sessionLoading" class="setup-action" @click="loadSession">重新连接</button>
       </section>
     </main>
@@ -390,20 +425,20 @@ onBeforeUnmount(() => {
           <p class="field-help">3–32 位中文、字母、数字或下划线，英文字母不区分大小写。</p>
           <label for="account-password">密码<input id="account-password" v-model="password" type="password" required minlength="8" maxlength="128" :autocomplete="authMode === 'login' ? 'current-password' : 'new-password'" :disabled="authBusy" /></label>
           <p class="field-help">8–128 位，请妥善保存账号与密码。</p>
-          <div v-if="authError" class="notice error" role="alert">{{ authError }}</div>
+          <div v-if="!mobile && authError" class="notice error" role="alert">{{ authError }}</div>
           <button class="setup-action" :disabled="authBusy">{{ authBusy ? '请稍候…' : authMode === 'login' ? '登录' : '注册并登录' }}</button>
           <button type="button" class="text-button account-switch" :disabled="authBusy" @click="authMode = authMode === 'login' ? 'register' : 'login'; authError = ''">{{ authMode === 'login' ? '还没有账号？注册' : '已有账号？登录' }}</button>
         </form>
       </section>
     </main>
 
-    <AdminPanel v-else-if="session.user.role === 'admin' && page === 'admin'" :key="session.user.id" @access-error="handleAccessError" />
+    <AdminPanel v-else-if="!mobile && session.user.role === 'admin' && page === 'admin'" :key="session.user.id" @access-error="handleAccessError" />
 
     <main v-else-if="!session.deviceId && page === 'add'" class="welcome-main">
       <section class="panel binding-panel" aria-labelledby="binding-title">
         <p class="eyebrow">连接杯垫</p><h1 id="binding-title">开启新的饮水日常</h1>
         <p class="setup-description">历史记录始终归你所有，<button class="text-button" @click="page = 'dashboard'; refresh()">返回查看自己的历史</button>。</p>
-        <DeviceOnboarding :key="session.user.id" :session="session" @completed="provisioningCompleted" @access-error="handleAccessError" @busy="provisioningBusy = $event" />
+        <DeviceOnboarding :active="active" :key="session.user.id" :session="session" @completed="provisioningCompleted" @access-error="handleAccessError" @busy="provisioningBusy = $event" />
         <details class="legacy-setup">
         <summary>旧版热点配网与 8 位绑定码</summary>
         <p class="setup-description">热点页只能更换 Wi-Fi，不能设置服务器地址或设备信任。旧固件若尚未配置服务器，请联系管理员通过 USB 设置；无法通过此网页填入地址。</p>
@@ -414,7 +449,7 @@ onBeforeUnmount(() => {
         </ol>
         <form class="account-form" @submit.prevent="bindDevice">
           <label for="binding-code">杯垫绑定码<input id="binding-code" v-model="bindingCode" required inputmode="numeric" pattern="[0-9]{8}" minlength="8" maxlength="8" autocomplete="off" placeholder="8 位数字" :disabled="bindingBusy || authBusy || provisioningBusy" /></label>
-          <div v-if="bindingError" class="notice error" role="alert">{{ bindingError }}</div>
+          <div v-if="!mobile && bindingError" class="notice error" role="alert">{{ bindingError }}</div>
           <button class="setup-action" :disabled="bindingBusy || authBusy || provisioningBusy || !/^[0-9]{8}$/.test(bindingCode)">{{ bindingBusy ? '正在绑定…' : '绑定杯垫' }}</button>
         </form>
         <p class="setup-description">绑定后无需再次连接热点。换 Wi-Fi 只需重新配网，账号绑定与历史记录会保留。</p>
@@ -428,6 +463,7 @@ onBeforeUnmount(() => {
         <div class="date-control"><label for="statistics-date">查看日期</label><input id="statistics-date" :value="selectedDate" aria-label="查看统计日期" type="date" :max="today" :disabled="!today" @change="selectDate" /><button v-if="!isToday" class="text-button" @click="changeDate(today)">回到今天</button></div>
       </section>
 
+      <slot name="companion" :dashboard="isToday ? dashboard : null" :session="session" :online="!dashboardError" />
       <section v-if="!session.deviceId" class="calibration-prompt" aria-labelledby="unbound-title">
         <div><h2 id="unbound-title">当前没有绑定杯垫</h2><p>你自己的历史饮水记录仍可按日期查看。添加杯垫后继续记录新的饮水日常。</p></div>
         <button class="setup-action" @click="page = 'add'">添加杯垫</button>
@@ -441,9 +477,9 @@ onBeforeUnmount(() => {
       </section>
 
       <div class="estimate-note"><span class="note-icon" aria-hidden="true">i</span><p><strong>饮水量根据真实称重差值估算</strong> · 清水按 1 g ≈ 1 ml 换算，倒水与喝水无法区分，喝完直接补水只记录净变化。</p></div>
-      <div v-if="dashboardError" class="notice error" role="alert">{{ dashboardError }}<span v-if="dashboard"> · 下方保留上次成功同步的数据。</span> <button class="text-button" @click="loadSession">刷新账号状态</button></div>
-      <div v-if="actionError" class="notice error" role="alert">{{ actionError }}</div>
-      <div v-if="feedback" class="notice success" role="status">{{ feedback }}</div>
+      <div v-if="!mobile && dashboardError" class="notice error" role="alert">{{ dashboardError }}<span v-if="dashboard"> · 下方保留上次成功同步的数据。</span> <button class="text-button" @click="loadSession">刷新账号状态</button></div>
+      <div v-if="!mobile && actionError" class="notice error" role="alert">{{ actionError }}</div>
+      <div v-if="!mobile && feedback" class="notice success" role="status">{{ feedback }}</div>
 
       <div class="dashboard-grid">
         <div class="main-column">
@@ -509,9 +545,9 @@ onBeforeUnmount(() => {
         <div><h2 id="settings-title">杯垫设置</h2><p>设置日常空杯，或为杯垫更换 Wi-Fi。</p></div>
         <button class="settings-close" aria-label="关闭设置" @click="settingsDialog?.close()">✕</button>
       </div>
-      <DeviceSetup :key="`${session.user.id}:${session.deviceId}:${session.bindingId}`" :online="online" :device-id="session.deviceId" :user-id="session.user.id" :binding-id="session.bindingId" :calibrated="dashboard?.device?.lastSeenAt ? dashboard.device.calibrated : undefined" :empty-cup-grams="dashboard?.device?.emptyCupGrams" :weight-grams="dashboard?.device?.weightGrams" :active="settingsOpen && !unbindBusy" @updated="refresh" @access-error="handleSetupAccessError" />
+      <DeviceSetup :key="`${session.user.id}:${session.deviceId}:${session.bindingId}`" :online="online" :device-id="session.deviceId" :user-id="session.user.id" :binding-id="session.bindingId" :calibrated="dashboard?.device?.lastSeenAt ? dashboard.device.calibrated : undefined" :empty-cup-grams="dashboard?.device?.emptyCupGrams" :weight-grams="dashboard?.device?.weightGrams" :active="active && settingsOpen && !unbindBusy" @updated="refresh" @access-error="handleSetupAccessError" />
       <div class="settings-section">
-        <DeviceOnboarding :key="`wifi:${session.user.id}:${session.deviceId}:${session.bindingId}`" :session="session" :active="settingsOpen && !unbindBusy" @completed="provisioningCompleted" @access-error="handleAccessError" @busy="provisioningBusy = $event" />
+        <DeviceOnboarding :key="`wifi:${session.user.id}:${session.deviceId}:${session.bindingId}`" :session="session" :active="active && settingsOpen && !unbindBusy" @completed="provisioningCompleted" @access-error="handleAccessError" @busy="provisioningBusy = $event" />
       </div>
       <section class="settings-section unbind-section">
         <h3>解绑杯垫</h3><p class="setup-description">解绑后杯垫可交给其他账号使用，当前配网授权与未完成命令会作废。你的登录和历史饮水记录会保留。</p>
@@ -521,7 +557,7 @@ onBeforeUnmount(() => {
           <button class="settings-button" :disabled="unbindBusy" @click="unbindConfirm = false">暂不解绑</button>
           <button class="setup-action" :disabled="unbindBusy || provisioningBusy" @click="unbind">{{ unbindBusy ? '正在确认…' : '确认解绑' }}</button>
         </div>
-        <p v-if="actionError" class="notice error" role="alert">{{ actionError }}</p>
+        <p v-if="!mobile && actionError" class="notice error" role="alert">{{ actionError }}</p>
       </section>
     </dialog>
   </div>

@@ -1,6 +1,23 @@
 # 单台杯垫接线与安装
 
-更新：2026-10-12。适用：微雪 ESP32-S3-LCD-1.47B + TAL220B 2 kg + 用户已确认支持 3.3 V 供电的单 VCC HX711 板。此文档对应 Arduino 固件 0.3.1 的 [board_config.h](../../firmware/water_companion/board_config.h)；实际接线逐项核对模块丝印。
+更新：2026-10-23（增加底板 v1.1 电量计接线）。适用：微雪 ESP32-S3-LCD-1.47B + TAL220B 2 kg + 用户已确认支持 3.3 V 供电的单 VCC HX711 板。HX711 引脚见 [board_config.h](../../firmware/water_companion/board_config.h)；实际接线逐项核对模块丝印。
+
+## 底板 v1.1 与电量计
+
+当前底板增加 Adafruit 5580（MAX17048）模块接口，完整工程、生产资料及装配位置见 [v1.1 说明](carrier-v1.1.md)。
+
+| 底板 J_I2C | Adafruit 5580 | 开发板 |
+| --- | --- | --- |
+| 1 / 3V3 | VIN | 3V3 |
+| 2 / GND | GND | GND |
+| 3 / SDA | SDA | GP5 / GPIO5 |
+| 4 / SCL | SCL | GP6 / GPIO6 |
+
+使用四根独立公母杜邦线按名称连接：5580 焊盘顺序是 VIN、GND、SCL、SDA，SDA / SCL 与底板顺序相反，不能直通插接。INT、QST 不接。
+
+电池 → 5580 任一电池口 → 另一电池口 → 底板 J_BAT。两个模块电池口内部并联；底板 J_BAT-1 为正、2 为负，与 5580 官方板 JST 的焊盘编号相反，必须测量正负极后配线。开发板原电池口留空，避免绕过底板充电隔离。原有 HX711 接线保持不变。
+
+本轮只完成硬件接口，固件尚未增加 MAX17048 驱动与电量显示；后续 I²C 地址为 0x36。
 
 ## HX711 与开发板
 

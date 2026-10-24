@@ -1,3 +1,4 @@
+#[cfg(target_os = "macos")]
 const SERVICE: &str = "com.watercompanion.client.session";
 
 #[cfg(target_os = "macos")]
@@ -96,15 +97,15 @@ pub fn remove(origin: &str) -> Result<(), String> {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn read(_: &str) -> Result<Option<String>, String> {
     Ok(None)
 }
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn save(_: &str, _: &str) -> Result<(), String> {
     Err("此版本仅提供 macOS 安全会话存储。".into())
 }
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn remove(_: &str) -> Result<(), String> {
     Ok(())
 }
@@ -158,5 +159,57 @@ mod tests {
         result.unwrap().unwrap();
         cleanup_current.unwrap();
         cleanup_legacy.unwrap();
+    }
+}
+
+#[cfg(target_os = "windows")]
+extern "C" {
+    fn coaster_credential_read(origin: *const std::ffi::c_char, token: *mut u8) -> u32;
+    fn coaster_credential_save(origin: *const std::ffi::c_char, token: *const u8) -> u32;
+    fn coaster_credential_remove(origin: *const std::ffi::c_char) -> u32;
+}
+#[cfg(target_os = "windows")]
+fn credential_origin(origin: &str) -> Result<std::ffi::CString, String> {
+    std::ffi::CString::new(origin).map_err(|_| "服务器地址无效。".into())
+}
+#[cfg(target_os = "windows")]
+fn windows_error(code: u32) -> String {
+    format!("无法访问 Windows 登录凭证（错误 {code}），请稍后重试。")
+}
+#[cfg(target_os = "windows")]
+pub fn read(origin: &str) -> Result<Option<String>, String> {
+    let origin = credential_origin(origin)?;
+    let mut bytes = [0u8; 64];
+    match unsafe { coaster_credential_read(origin.as_ptr(), bytes.as_mut_ptr()) } {
+        0 => {
+            let value = String::from_utf8(bytes.to_vec())
+                .map_err(|_| "保存的登录信息无效，请重新登录。")?;
+            if valid_token(&value) {
+                Ok(Some(value))
+            } else {
+                Err("保存的登录信息无效，请重新登录。".into())
+            }
+        }
+        1168 => Ok(None),
+        code => Err(windows_error(code)),
+    }
+}
+#[cfg(target_os = "windows")]
+pub fn save(origin: &str, token: &str) -> Result<(), String> {
+    if !valid_token(token) {
+        return Err("服务器返回的登录信息无效。".into());
+    }
+    let origin = credential_origin(origin)?;
+    match unsafe { coaster_credential_save(origin.as_ptr(), token.as_ptr()) } {
+        0 => Ok(()),
+        code => Err(windows_error(code)),
+    }
+}
+#[cfg(target_os = "windows")]
+pub fn remove(origin: &str) -> Result<(), String> {
+    let origin = credential_origin(origin)?;
+    match unsafe { coaster_credential_remove(origin.as_ptr()) } {
+        0 => Ok(()),
+        code => Err(windows_error(code)),
     }
 }

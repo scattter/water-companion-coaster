@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ApiError, errorMessage, request } from './api';
+import { operationStorage, platform } from './platform';
+import { useNotice } from './notices';
 import { commandStorageKey, type Session } from './session';
 
 const props = defineProps<{
@@ -32,10 +34,15 @@ let timer: ReturnType<typeof setInterval> | undefined;
 let disposed = false;
 const pending = computed(() => command.value?.status === 'pending');
 const canSetCup = computed(() => props.online && props.calibrated && !busy.value && !pending.value);
+const errorNotice = useNotice('web:cup:error', () => error.value, {
+  enabled: () => props.active && !busy.value,
+  action: () => pending.value ? { label: '查询设置结果', run: queryCommand } : undefined,
+});
+useNotice('web:cup:feedback', () => feedback.value, { enabled: () => props.active && !busy.value });
 
 function rememberCommand(value: Command) {
   // 先保存请求编号，响应丢失或刷新页面后仍能查询同一操作，避免重复写入。
-  sessionStorage.setItem(storageKey, JSON.stringify(value));
+  operationStorage.setItem(storageKey, JSON.stringify(value));
   command.value = value;
 }
 
@@ -49,11 +56,11 @@ function applyCommand(value: Command) {
   uncertain.value = false;
   error.value = '';
   if (value.status === 'pending') {
-    try { sessionStorage.setItem(storageKey, JSON.stringify(value)); }
+    try { operationStorage.setItem(storageKey, JSON.stringify(value)); }
     catch { error.value = '浏览器无法保存操作状态，请保持本页打开，直到确认结果。'; }
     return;
   }
-  try { sessionStorage.removeItem(storageKey); } catch { /* 已确认结果，不影响当前页面展示。 */ }
+  try { operationStorage.removeItem(storageKey); } catch { /* 已确认结果，不影响当前页面展示。 */ }
   if (value.status === 'succeeded') {
     feedback.value = '空杯设置成功，可以加水使用了。';
     emit('updated');
@@ -87,11 +94,19 @@ async function checkCommand(manual = false) {
       checkingStopped.value = true;
       if (!error.value) error.value = '尚未确认设备执行结果，自动查询已暂停。请点击“查询设置结果”继续确认。';
     }
+    if (!disposed) errorNotice.show();
   }
+}
+
+async function queryCommand() {
+  if (!props.active || !pending.value || busy.value || disposed) return;
+  errorNotice.reset();
+  await checkCommand(true);
 }
 
 async function submitCommand() {
   if (!command.value || busy.value) return;
+  errorNotice.reset();
   const id = command.value.id;
   busy.value = true;
   checkingStopped.value = false;
@@ -109,22 +124,24 @@ async function submitCommand() {
     if (disposed || accessError(cause)) return;
     if (cause instanceof ApiError && [400, 409, 422].includes(cause.status)) {
       command.value = null;
-      try { sessionStorage.removeItem(storageKey); } catch { /* 重试时仍使用服务器校验。 */ }
+      try { operationStorage.removeItem(storageKey); } catch { /* 重试时仍使用服务器校验。 */ }
       uncertain.value = false;
       error.value = errorMessage(cause);
     } else {
       uncertain.value = true;
       error.value = `请求结果未确认：${errorMessage(cause)}。将查询同一次操作，不会自动重新发送。`;
     }
-  } finally { busy.value = false; }
+  } finally { busy.value = false; if (!disposed) errorNotice.show(); }
 }
 
 async function setCup() {
   if (!canSetCup.value) return;
+  errorNotice.reset();
   try {
     rememberCommand({ id: crypto.randomUUID(), bindingId: props.bindingId, status: 'pending', message: null, expiresAt: Date.now() + 120000 });
   } catch {
     error.value = '浏览器无法保存操作状态。请允许此网站使用会话存储后重试，当前未发送设置请求。';
+    errorNotice.show();
     return;
   }
   await submitCommand();
@@ -132,7 +149,7 @@ async function setCup() {
 
 onMounted(() => {
   try {
-    const stored = sessionStorage.getItem(storageKey);
+    const stored = operationStorage.getItem(storageKey);
     if (stored) {
       const value = JSON.parse(stored) as Command;
       if (typeof value.id === 'string' && /^[0-9a-f-]{36}$/i.test(value.id) && value.status === 'pending' && value.bindingId === props.bindingId && Number.isFinite(value.expiresAt)) {
@@ -168,11 +185,11 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer); });
       <button class="primary" :disabled="!canSetCup" @click="setCup">{{ pending ? '正在等待设置结果…' : '记住这个杯子' }}</button>
       <p v-if="pending" class="setup-tip" role="status">等待杯垫确认，请保持空杯静置。关闭设置后可回来继续查询。</p>
       <div v-if="pending" class="command-actions">
-        <button :disabled="busy" @click="checkCommand(true)">{{ busy ? '正在确认…' : '查询设置结果' }}</button>
+        <button :disabled="busy" @click="queryCommand">{{ busy ? '正在确认…' : '查询设置结果' }}</button>
         <button v-if="uncertain" :disabled="busy || !online" @click="submitCommand">重试同一次请求</button>
       </div>
-      <div v-if="error" class="notice error" role="alert">{{ error }}</div>
-      <div v-if="feedback" class="notice success" role="status">{{ feedback }}</div>
+      <div v-if="!platform.mobile && error" class="notice error" role="alert">{{ error }}</div>
+      <div v-if="!platform.mobile && feedback" class="notice success" role="status">{{ feedback }}</div>
     </section>
     <details class="network-settings">
       <summary><strong>兼容方式：通过热点更换 Wi-Fi</strong></summary>
