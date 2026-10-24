@@ -249,7 +249,7 @@
         "2": {
           "name": "",
           "number": "2",
-          "net": "GND"
+          "net": "HX_SCK"
         },
         "3": {
           "name": "",
@@ -259,7 +259,7 @@
         "4": {
           "name": "",
           "number": "4",
-          "net": "HX_SCK"
+          "net": "GND"
         }
       }
     },
@@ -725,27 +725,45 @@
     },
     "J_I2C": {
       "props": {
-        "Footprint": "144f2c831ed192a1",
+        "Footprint": "c7c47026a9fb36c2",
         "Designator": "J_I2C",
+        "LCSC Part Name": "1x6P 间距:2.54mm 直插",
+        "Supplier Part": "C40877",
+        "Manufacturer": "BOOMELE(博穆精密)",
+        "Manufacturer Part": "2.54-1*6P母",
+        "Supplier Footprint": "插件,P=2.54mm",
+        "JLCPCB Part Class": "Extended Part",
+        "Datasheet": "https://item.szlcsc.com/datasheet/2.54-1*6P%25E6%25AF%258D/41861.html",
+        "Supplier": "LCSC",
         "Add into BOM": "yes",
-        "Supplier Part": "C2718488",
-        "Supplier Footprint": "插件",
-        "3D Model": "57daaad411c24bd7bd5d06edf5c4d16b|0819f05c4eef4c71ace90d822a990e87",
-        "3D Model Title": "HDR-TH_4P-P2.54-F-LI-1X4P",
-        "3D Model Transform": "415.7472,98.425,0,0,0,0,0,0,-118.11",
-        "Description": "",
-        "Device": "2ba40776a1c6d031",
-        "Name": "Adafruit 5580 接口",
+        "3D Model": "0f5bcf94dcda47d085f24cdca1696fe9|0819f05c4eef4c71ace90d822a990e87",
+        "3D Model Title": "HDR-TH_6P-P2.54-V-F",
+        "3D Model Transform": "619.684,94.488,0,0,0,0,0,0,-125.984",
+        "Holes Structure": "1x6P",
+        "Pitch": "2.54mm",
+        "Row Spacing": "-",
+        "Circular Hole / Square Hole": "方孔",
+        "Mounting Type": "直插",
+        "Number of Rows": "单排",
+        "Number of Positions": "6P",
+        "Current Rating": "3A",
+        "Voltage Rating (Max)": "-",
+        "Holes Direction": "顶部",
+        "Insulation Height": "8.5mm",
+        "Contact Material": "黄铜",
+        "Contact Plating": "金",
+        "Operating Temperature": "-40℃~+105℃",
+        "Supplementary Features": "-",
+        "PIN Length": "3.2mm",
+        "Name": "Adafruit 5580 六针直插",
+        "Description": "插孔结构:1x6P;间距:2.54mm;行距:-;圆孔/方孔:方孔;安装方式:直插;排数:单排;总孔位数:6P;额定电流:3A;额定电压:-;插孔方向:顶部;塑高:8.5mm;触头材质:黄铜;触头镀层:金;工作温度:-40℃~+105℃;",
+        "Device": "e82ea89c1f02f140",
         "Unique ID": "J_I2C",
         "Reuse Block": "",
         "Group ID": "",
         "Channel ID": "$1I52",
-        "Supplier": "LCSC",
-        "Manufacturer": "BOOMELE(博穆精密)",
-        "Manufacturer Part": "2.54-1*4P母",
-        "JLCPCB Part Class": "Extended Part",
-        "DeviceName": "HDR-F_2.54_1x4P",
-        "FootprintName": "HDR-TH_4P-P2.54-V-F",
+        "DeviceName": "2.54-1*6P母",
+        "FootprintName": "HDR-TH_6P-P2.54-V-F",
         "PCB Layer": "TopLayer",
         "Convert to PCB": "yes"
       },
@@ -767,12 +785,22 @@
         "3": {
           "name": "",
           "number": "3",
-          "net": "FG_SDA"
+          "net": "FG_SCL"
         },
         "4": {
           "name": "",
           "number": "4",
-          "net": "FG_SCL"
+          "net": "FG_SDA"
+        },
+        "5": {
+          "name": "",
+          "number": "5",
+          "net": ""
+        },
+        "6": {
+          "name": "",
+          "number": "6",
+          "net": ""
         }
       }
     }

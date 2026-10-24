@@ -241,7 +241,7 @@
         "2": {
           "name": "2",
           "number": "2",
-          "net": "GND",
+          "net": "HX_SCK",
           "props": {
             "Pin Number": "2"
           }
@@ -257,7 +257,7 @@
         "4": {
           "name": "4",
           "number": "4",
-          "net": "HX_SCK",
+          "net": "GND",
           "props": {
             "Pin Number": "4"
           }
@@ -822,27 +822,45 @@
       "props": {
         "Add into BOM": "yes",
         "Convert to PCB": "yes",
-        "Symbol": "6d3937458b8847f5",
+        "Symbol": "acb6409ada7e3040",
         "Designator": "J_I2C",
-        "Footprint": "144f2c831ed192a1",
-        "Supplier": "LCSC",
-        "Supplier Part": "C2718488",
+        "Device": "e82ea89c1f02f140",
+        "LCSC Part Name": "1x6P 间距:2.54mm 直插",
+        "Supplier Part": "C40877",
         "Manufacturer": "BOOMELE(博穆精密)",
-        "Manufacturer Part": "2.54-1*4P母",
+        "Manufacturer Part": "2.54-1*6P母",
+        "Supplier Footprint": "插件,P=2.54mm",
         "JLCPCB Part Class": "Extended Part",
-        "Device": "2ba40776a1c6d031",
+        "Datasheet": "https://item.szlcsc.com/datasheet/2.54-1*6P%25E6%25AF%258D/41861.html",
+        "Supplier": "LCSC",
+        "Footprint": "c7c47026a9fb36c2",
+        "3D Model": "0f5bcf94dcda47d085f24cdca1696fe9|0819f05c4eef4c71ace90d822a990e87",
+        "3D Model Title": "HDR-TH_6P-P2.54-V-F",
+        "3D Model Transform": "619.684,94.488,0,0,0,0,0,0,-125.984",
+        "Holes Structure": "1x6P",
+        "Pitch": "2.54mm",
+        "Row Spacing": "-",
+        "Circular Hole / Square Hole": "方孔",
+        "Mounting Type": "直插",
+        "Number of Rows": "单排",
+        "Number of Positions": "6P",
+        "Current Rating": "3A",
+        "Voltage Rating (Max)": "-",
+        "Holes Direction": "顶部",
+        "Insulation Height": "8.5mm",
+        "Contact Material": "黄铜",
+        "Contact Plating": "金",
+        "Operating Temperature": "-40℃~+105℃",
+        "Supplementary Features": "-",
+        "PIN Length": "3.2mm",
+        "Name": "Adafruit 5580 六针直插",
+        "Description": "插孔结构:1x6P;间距:2.54mm;行距:-;圆孔/方孔:方孔;安装方式:直插;排数:单排;总孔位数:6P;额定电流:3A;额定电压:-;插孔方向:顶部;塑高:8.5mm;触头材质:黄铜;触头镀层:金;工作温度:-40℃~+105℃;",
         "Unique ID": "J_I2C",
-        "Name": "Adafruit 5580 接口",
         "Reuse Block": "",
         "Group ID": "",
         "Channel ID": "$1I52",
-        "Supplier Footprint": "插件",
-        "Description": "",
-        "3D Model": "57daaad411c24bd7bd5d06edf5c4d16b|0819f05c4eef4c71ace90d822a990e87",
-        "3D Model Title": "HDR-TH_4P-P2.54-F-LI-1X4P",
-        "3D Model Transform": "415.7472,98.425,0,0,0,0,0,0,-118.11",
-        "DeviceName": "HDR-F_2.54_1x4P",
-        "FootprintName": "HDR-TH_4P-P2.54-V-F"
+        "DeviceName": "2.54-1*6P母",
+        "FootprintName": "HDR-TH_6P-P2.54-V-F"
       },
       "pinInfoMap": {
         "1": {
@@ -864,7 +882,7 @@
         "3": {
           "name": "3",
           "number": "3",
-          "net": "FG_SDA",
+          "net": "FG_SCL",
           "props": {
             "Pin Number": "3"
           }
@@ -872,9 +890,25 @@
         "4": {
           "name": "4",
           "number": "4",
-          "net": "FG_SCL",
+          "net": "FG_SDA",
           "props": {
             "Pin Number": "4"
+          }
+        },
+        "5": {
+          "name": "5",
+          "number": "5",
+          "net": "",
+          "props": {
+            "Pin Number": "5"
+          }
+        },
+        "6": {
+          "name": "6",
+          "number": "6",
+          "net": "",
+          "props": {
+            "Pin Number": "6"
           }
         }
       }
@@ -968,14 +1002,14 @@
           "TrackPhysics": ""
         }
       },
-      "FG_SDA": {
-        "net": "FG_SDA",
+      "FG_SCL": {
+        "net": "FG_SCL",
         "ruleMap": {
           "TrackPhysics": ""
         }
       },
-      "FG_SCL": {
-        "net": "FG_SCL",
+      "FG_SDA": {
+        "net": "FG_SDA",
         "ruleMap": {
           "TrackPhysics": ""
         }

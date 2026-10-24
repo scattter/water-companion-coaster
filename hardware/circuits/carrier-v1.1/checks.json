@@ -1,5 +1,5 @@
 {
-  "checked_at": "2026-10-23T12:19:33+08:00",
+  "checked_at": "2026-10-24T16:52:55+08:00",
   "project": "杯垫电池底板 v1.1 MAX17048",
   "project_uuid": "d05186734075d812b09c0337193380f96bacb70f8874411d36322325f6bbda7e",
   "pcb_uuid": "80ac0c85b6a7364f",
@@ -14,160 +14,15 @@
         "count": 1
       }
     ],
-    "warning_detail_verified": true,
-    "note": "原理图界面已核对详细条目；保留 1 项供应商库属性警告和 7 条描述性位号格式提示，未自动标准化器件或关闭检查。",
-    "ui_checked_at": "2026-10-23T14:27:03+08:00",
-    "details_reviewed_at": "2026-10-23T14:45:17+08:00",
-    "ui_summary": {
-      "fatal_errors": 0,
-      "errors": 0,
-      "warnings": 1,
-      "information": 7
-    },
-    "warning": {
-      "message": "元件的属性与供应商编号不匹配。，建议使用器件标准化",
-      "components": [
-        "J_DEV_A",
-        "J_DEV_B",
-        "J_HX",
-        "J_BAT",
-        "R1",
-        "R2",
-        "R3",
-        "C1",
-        "C2",
-        "C3",
-        "LED1",
-        "J_I2C"
-      ],
-      "name_only_differences": [
-        {
-          "components": [
-            "C1",
-            "C2"
-          ],
-          "supplier_part": "C95841",
-          "current": "10uF 16V X7R",
-          "recommended": "10uF"
-        },
-        {
-          "components": [
-            "C3"
-          ],
-          "supplier_part": "C59782",
-          "current": "1uF 16V X7R",
-          "recommended": "1uF"
-        },
-        {
-          "components": [
-            "J_BAT"
-          ],
-          "supplier_part": "C131337",
-          "current": "PH2.0 电池",
-          "recommended": "B2B-PH-K-S(LF)(SN)"
-        },
-        {
-          "components": [
-            "J_DEV_A",
-            "J_DEV_B"
-          ],
-          "supplier_part": "C39576",
-          "current": [
-            "开发板 U2-1~9",
-            "开发板 U2-10~18"
-          ],
-          "recommended": "2.54-1*9P母"
-        },
-        {
-          "components": [
-            "J_HX",
-            "J_I2C"
-          ],
-          "supplier_part": "C2718488",
-          "current": [
-            "HX711 四针",
-            "Adafruit 5580 接口"
-          ],
-          "recommended": "2.54-1*4P母"
-        },
-        {
-          "components": [
-            "R1"
-          ],
-          "supplier_part": "C22975",
-          "current": "2k 1%",
-          "recommended": "2kΩ"
-        },
-        {
-          "components": [
-            "R2"
-          ],
-          "supplier_part": "C25803",
-          "current": "100k",
-          "recommended": "100kΩ"
-        },
-        {
-          "components": [
-            "R3"
-          ],
-          "supplier_part": "C4190",
-          "current": "2.2k",
-          "recommended": "2.2kΩ"
-        }
-      ],
-      "name_only_verified_fields": [
-        "supplier_part",
-        "manufacturer_part",
-        "footprint",
-        "manufacturer"
-      ],
-      "led1_review": {
-        "supplier_part": "C131244",
-        "manufacturer_part": "17-21SURC/S530-A2/TR8",
-        "current_footprint": "LED0805-RD",
-        "library_recommended_footprint": "LED0805-R-RD-1",
-        "current_manufacturer": "EVERLIGHT(台湾亿光)",
-        "library_manufacturer": "EVERLIGHT(亿光)",
-        "actual_pad_size_mm": [
-          1.0,
-          1.25
-        ],
-        "actual_pad_center_distance_mm": 2.2,
-        "datasheet_recommended_pad_size_mm": [
-          1.2,
-          1.2
-        ],
-        "datasheet_recommended_center_distance_mm": 2.1,
-        "datasheet_url": "https://media.distrelec.com/Web/Downloads/_t/ds/17-21SURC_S530-A2_eng_tds.pdf",
-        "datasheet_page": 2,
-        "datasheet_sha256": "0e00946376bbe7bf3fc8653451dba469f0c3810889cf213faa95397d8869c7ef",
-        "polarity": {
-          "1": "阴极 / CHG_STAT",
-          "2": "阳极 / LED_A"
-        },
-        "decision": "保留原 v1 封装；已核对尺寸和极性。焊盘不完全等同于手册建议，委托贴片时须由厂家确认差异及装配方向。"
-      }
-    },
-    "information": {
-      "message": "位号不符合软件建议的英文字母+数字或英文问号规则",
-      "components": [
-        "J_DEV_A",
-        "J_DEV_B",
-        "J_HX",
-        "J_BAT",
-        "U_CHG",
-        "U_ISO",
-        "J_I2C"
-      ],
-      "decision": "保留描述性位号及现有网表映射。"
-    }
+    "warning_detail_verified": false,
+    "note": "本版 API 返回 1 项警告、无错误。此前 v1.1a 已确认库属性警告与描述性位号提示；本版未把 ERC 宣称为零警告。"
   },
   "netlist": {
     "schematic_matches_pcb": true,
     "matches_design_pin_map": true,
     "components": 14,
     "connected_pins": 43,
-    "unconnected_pins": 10,
+    "unconnected_pins": 12,
     "pin_map": {
       "J_DEV_A": {
         "6": "GND",
@@ -188,9 +43,9 @@
       },
       "J_HX": {
         "1": "3V3",
-        "2": "GND",
+        "2": "HX_SCK",
         "3": "HX_DT",
-        "4": "HX_SCK"
+        "4": "GND"
       },
       "U_CHG": {
         "1": "CHG_STAT",
@@ -237,8 +92,8 @@
       "J_I2C": {
         "1": "3V3",
         "2": "GND",
-        "3": "FG_SDA",
-        "4": "FG_SCL"
+        "3": "FG_SCL",
+        "4": "FG_SDA"
       }
     }
   },
@@ -249,8 +104,8 @@
     ],
     "layers": 2,
     "components": 14,
-    "track_segments": 93,
-    "vias": 24,
+    "track_segments": 100,
+    "vias": 25,
     "filled_ground_pours": 2,
     "keepouts": [
       {
@@ -342,7 +197,213 @@
     "module_hole_pitch_mm": [
       20.32,
       15.24
-    ]
+    ],
+    "all_components_top": true,
+    "component_centers_mm_rotation": {
+      "J_DEV_A": [
+        21.47,
+        24.27,
+        180
+      ],
+      "U_CHG": [
+        14.0,
+        14.0,
+        0
+      ],
+      "J_DEV_B": [
+        21.47,
+        42.05,
+        0
+      ],
+      "J_HX": [
+        12.0,
+        4.8,
+        0
+      ],
+      "J_BAT": [
+        24.0,
+        5.5,
+        0
+      ],
+      "R1": [
+        9.0,
+        13.0,
+        0
+      ],
+      "R2": [
+        27.0,
+        17.2,
+        0
+      ],
+      "R3": [
+        9.5,
+        9.5,
+        0
+      ],
+      "C1": [
+        8.0,
+        18.0,
+        0
+      ],
+      "C2": [
+        18.0,
+        18.0,
+        0
+      ],
+      "C3": [
+        24.0,
+        18.8,
+        0
+      ],
+      "LED1": [
+        15.5,
+        9.5,
+        0
+      ],
+      "U_ISO": [
+        23.0,
+        14.0,
+        0
+      ],
+      "J_I2C": [
+        42.2,
+        19.08,
+        180
+      ]
+    },
+    "esp32_top_view_pin_labels": {
+      "J_DEV_A_left_to_right": [
+        "TX",
+        "RX",
+        "BAT",
+        "GND",
+        "IO11",
+        "IO10",
+        "IO9",
+        "IO8",
+        "IO7"
+      ],
+      "J_DEV_B_left_to_right": [
+        "5V",
+        "GND",
+        "3V3",
+        "IO0",
+        "IO2",
+        "IO3",
+        "IO4",
+        "IO5",
+        "IO6"
+      ]
+    },
+    "module_mount": {
+      "side": "top",
+      "components_facing": "up",
+      "battery_sockets_toward": "y=0",
+      "header_part": "C40877",
+      "pins": 6,
+      "pin1": "right",
+      "header_center_mm": [
+        42.2,
+        19.08
+      ],
+      "matches_official_eagle_pads_and_holes": true,
+      "header_housing_height_mm": 8.5,
+      "spacer_height": "以所选公排针和排母完全插合后的板间距实测配高，通常约 11 mm；不可强用旧 6 mm。",
+      "module_overlap_excluding_header": false,
+      "min_module_to_other_component_box_mm": 1.343,
+      "min_other_component_box_spacing_mm": 1.033,
+      "nearest_component_pair": [
+        "C3",
+        "R2"
+      ],
+      "boxes_mm": {
+        "J_DEV_A": [
+          9.84000024,
+          22.969999719999997,
+          33.10000024,
+          25.56999972
+        ],
+        "U_CHG": [
+          12.049999940000001,
+          12.74999994,
+          15.94999994,
+          15.24999994
+        ],
+        "J_DEV_B": [
+          9.84000024,
+          40.74999972,
+          33.10000024,
+          43.34999971999999
+        ],
+        "J_HX": [
+          6.719999876,
+          3.500000052,
+          17.279999876,
+          6.1000000519999995
+        ],
+        "J_BAT": [
+          20.900000006,
+          2.4999999219999998,
+          27.100000006000002,
+          8.499999922
+        ],
+        "R1": [
+          7.843000033999999,
+          12.567999907999999,
+          10.157000034,
+          13.431999908
+        ],
+        "R2": [
+          25.843000102,
+          16.76799989,
+          28.157000102,
+          17.631999889999996
+        ],
+        "R3": [
+          8.34300005,
+          9.06800005,
+          10.65700005,
+          9.932000050000001
+        ],
+        "C1": [
+          6.295000001999998,
+          17.325000067999998,
+          9.705000001999998,
+          18.675000068
+        ],
+        "C2": [
+          16.295000068,
+          17.325000067999998,
+          19.705000067999997,
+          18.675000068
+        ],
+        "C3": [
+          22.900000006,
+          18.349999992,
+          25.100000006000002,
+          19.249999992
+        ],
+        "LED1": [
+          13.899999988,
+          8.874000050000001,
+          17.099999988,
+          10.12600005
+        ],
+        "U_ISO": [
+          21.449999973999997,
+          13.14999994,
+          24.549999974,
+          14.84999994
+        ],
+        "J_I2C": [
+          34.329999928,
+          17.82999994,
+          50.069999927999994,
+          20.32999994
+        ]
+      },
+      "mechanical_caution": "包络检查仅检查平面位置；接头、支柱高度、螺钉头和外壳仍须实物试装。"
+    }
   },
   "gerber": {
     "zip_integrity": true,
@@ -364,54 +425,58 @@
       "PCB下单必读.txt"
     ],
     "copper_areas": {
-      "Gerber_TopLayer.GTL": 37,
-      "Gerber_BottomLayer.GBL": 22
+      "Gerber_TopLayer.GTL": 40,
+      "Gerber_BottomLayer.GBL": 20
     },
     "drills": {
       "Drill_PTH_Through.DRL": [
         {
           "diameter_mm": 0.3,
-          "count": 24,
+          "count": 25,
           "centers_mm": [
             [
               20.7,
-              15.349
+              13.35
             ],
             [
-              23.0,
-              20.0
+              22.3,
+              18.8
+            ],
+            [
+              22.74,
+              22.0
+            ],
+            [
+              24.0,
+              21.8
             ],
             [
               16.1,
               14.0
             ],
             [
-              10.0,
-              17.9
+              9.0,
+              19.0
             ],
             [
-              19.4,
-              16.6
+              19.0,
+              17.0
             ],
             [
-              26.5,
-              20.0
+              25.0,
+              18.0
             ],
             [
-              10.754,
-              13.7
+              9.753,
+              14.0
             ],
             [
-              29.8,
-              18.5
-            ],
-            [
-              16.8,
-              12.8
+              27.75,
+              16.0
             ],
             [
               23.0,
-              16.0
+              14.0
             ],
             [
               6.0,
@@ -442,8 +507,8 @@
               12.0
             ],
             [
-              43.0,
-              20.0
+              46.0,
+              16.0
             ],
             [
               57.0,
@@ -476,18 +541,48 @@
           "count": 2,
           "centers_mm": [
             [
-              31.999,
-              8.0
+              22.999,
+              5.5
             ],
             [
-              34.001,
-              8.0
+              25.001,
+              5.5
+            ]
+          ]
+        },
+        {
+          "diameter_mm": 1.02,
+          "count": 6,
+          "centers_mm": [
+            [
+              35.85,
+              19.08
+            ],
+            [
+              38.39,
+              19.08
+            ],
+            [
+              40.93,
+              19.08
+            ],
+            [
+              43.47,
+              19.08
+            ],
+            [
+              46.01,
+              19.08
+            ],
+            [
+              48.55,
+              19.08
             ]
           ]
         },
         {
           "diameter_mm": 1.1,
-          "count": 26,
+          "count": 22,
           "centers_mm": [
             [
               31.63,
@@ -562,36 +657,20 @@
               42.05
             ],
             [
-              46.19,
-              8.0
+              8.19,
+              4.8
             ],
             [
-              48.73,
-              8.0
+              10.73,
+              4.8
             ],
             [
-              51.27,
-              8.0
+              13.27,
+              4.8
             ],
             [
-              53.81,
-              8.0
-            ],
-            [
-              37.19,
-              15.5
-            ],
-            [
-              39.73,
-              15.5
-            ],
-            [
-              42.27,
-              15.5
-            ],
-            [
-              44.81,
-              15.5
+              15.81,
+              4.8
             ]
           ]
         }
@@ -645,47 +724,51 @@
       "Drill_PTH_Through_Via.DRL": [
         {
           "diameter_mm": 0.3,
-          "count": 24,
+          "count": 25,
           "centers_mm": [
             [
               20.7,
-              15.349
+              13.35
             ],
             [
-              23.0,
-              20.0
+              22.3,
+              18.8
+            ],
+            [
+              22.74,
+              22.0
+            ],
+            [
+              24.0,
+              21.8
             ],
             [
               16.1,
               14.0
             ],
             [
-              10.0,
-              17.9
+              9.0,
+              19.0
             ],
             [
-              19.4,
-              16.6
+              19.0,
+              17.0
             ],
             [
-              26.5,
-              20.0
+              25.0,
+              18.0
             ],
             [
-              10.754,
-              13.7
+              9.753,
+              14.0
             ],
             [
-              29.8,
-              18.5
-            ],
-            [
-              16.8,
-              12.8
+              27.75,
+              16.0
             ],
             [
               23.0,
-              16.0
+              14.0
             ],
             [
               6.0,
@@ -716,8 +799,8 @@
               12.0
             ],
             [
-              43.0,
-              20.0
+              46.0,
+              16.0
             ],
             [
               57.0,
@@ -747,53 +830,181 @@
         }
       ]
     },
-    "via_drill_note": "Drill_PTH_Through_Via.DRL 是总 PTH 钻孔文件中过孔的子集，不是额外 24 个孔。"
+    "via_drill_note": "Drill_PTH_Through_Via.DRL 是总 PTH 钻孔文件中过孔的子集，不是额外 25 个孔。",
+    "flying_probe": {
+      "deduplicated_component_pins": 55,
+      "connected_pin_map_matches": true,
+      "unconnected_pins": 12,
+      "unconnected_net_ids_are_distinct": true,
+      "all_pin_coordinates_match_footprints": true,
+      "j_i2c_coordinates_mm": {
+        "1": [
+          48.55,
+          19.08
+        ],
+        "2": [
+          46.01,
+          19.08
+        ],
+        "3": [
+          43.47,
+          19.08
+        ],
+        "4": [
+          40.93,
+          19.08
+        ],
+        "5": [
+          38.39,
+          19.08
+        ],
+        "6": [
+          35.85,
+          19.08
+        ]
+      }
+    }
   },
   "project_export": {
     "zip_integrity": true,
     "matches_checked_pcb": true,
     "matches_checked_schematic": true,
-    "embedded_documents": 44
+    "embedded_documents": 47,
+    "serialization_note": "忽略原生导出的删除记录、默认 strikeout:false，以及隐藏库属性的 zIndex 重排；其余图元、属性、网络和坐标一致。"
   },
   "manufacturing_tables": {
     "encoding": "UTF-8",
     "bom_components": 14,
     "bom_entries": 13,
-    "placement_rows": 14
+    "placement_rows": 14,
+    "changed": "J_I2C 改 C40877 六针排母；更新元件坐标，14 个元件均在顶面。"
   },
   "module_source": {
     "url": "https://github.com/adafruit/Adafruit-MAX17048-PCB/blob/main/Adafruit-MAX17048-STEMMA.brd",
     "download_sha256": "01830495f0e61780aba63709bdb3ba2ddadd4f3bf83ce6022c07f68072542906"
   },
   "not_verified": [
-    "厂商 DFM（包括 LED1 焊盘与手册建议尺寸差异及贴片方向）",
-    "实物机械配合、焊接与接头极性",
+    "本版 ERC 警告明细",
+    "厂商 DFM，含既有 LED1 焊盘尺寸差异",
+    "实物机械配合、排针与隔离柱高度、焊接与电池线束极性",
     "充放电、USB 插拔瞬态、温升和峰值电流",
     "MAX17048 I2C 通信与固件电量显示"
   ],
+  "revision": "v1.2",
+  "pin_audit": {
+    "checked_at": "2026-10-24T16:35:01+08:00",
+    "revision": "v1.2",
+    "scope": "14 个底板元件：符号脚号、封装焊盘、方向、原理图/PCB/制造网表；外接模块依据指定型号官方资料和用户确认。",
+    "hx711": {
+      "evidence": "用户本轮明确确认从 VCC 端依次为 VCC、SCK、DT、GND。",
+      "pin_order": [
+        "VCC",
+        "SCK",
+        "DT",
+        "GND"
+      ],
+      "pin_2": "HX_SCK / GPIO4",
+      "pin_4": "GND",
+      "changes": [
+        "保留已确认 VCC/SCK/DT/GND 针序",
+        "接口移到 (12,4.8) mm",
+        "重布走线与双面铺铜",
+        "丝印保持明确顺序"
+      ],
+      "previous_revision_pin_order": [
+        "VCC",
+        "GND",
+        "DT",
+        "SCK"
+      ],
+      "old_board_note": "旧板须按信号名称逐根转接，不能直接插入本次确认的 HX711。"
+    },
+    "other_components": {
+      "U_CHG": "MCP73831T-2ACI/OT：1 STAT、2 VSS、3 VBAT、4 VDD、5 PROG；封装 0.95 mm 引脚间距，焊盘 1.1×0.6 mm，横向中心距 2.8 mm，与手册建议一致。",
+      "U_ISO": "LM66100DCKR：1 VIN、2 GND、3 CE、4 NC、5 ST、6 VOUT；ST 允许接地；焊盘 0.9×0.4 mm、引脚间距 0.65 mm、横向中心距 2.2 mm，与手册建议一致。",
+      "LED1": "1 阴极接 CHG_STAT、2 阳极接 LED_A；与器件极性标识对应。现有焊盘尺寸与建议尺寸差异仍须 DFM 确认。",
+      "J_DEV_A": "LCD 朝上/USB 朝左时，下排左到右 U2-9…1；6 GND、7 BAT_DEV，其余 NC。",
+      "J_DEV_B": "同一顶视方向，上排左到右 U2-10…18；GPIO2/4/5/6 映射与微雪原理图和实物背面引脚图一致。",
+      "J_I2C": "六针直插：1 VIN=3V3、2 GND、3 SCL=GPIO6、4 SDA=GPIO5、5 INT=NC、6 QST=NC；坐标与官方模块旋转 180 度后的焊盘逐一匹配。",
+      "J_BAT": "底板 1 BAT_CELL / 2 GND；5580 的 X1/X2 均为 2 VBAT / 1 GND。线束按正负极配线，不能按编号直通。",
+      "R1": "PROG / GND；无极性。",
+      "R2": "USB_5V / GND；无极性。",
+      "R3": "USB_5V / LED_A；无极性。",
+      "C1": "USB_5V / GND；指定陶瓷电容无极性。",
+      "C2": "BAT_CELL / GND；指定陶瓷电容无极性。",
+      "C3": "BAT_DEV / GND；指定陶瓷电容无极性。"
+    },
+    "physical_assembly_verified": false,
+    "pending": [
+      "电池线束实测极性",
+      "开发板 R30=0Ω / R31 不装的实物配置",
+      "LED1 焊盘 DFM 与实际贴装方向",
+      "传感器端实物引脚/线色与桥路接线"
+    ],
+    "sources": [
+      {
+        "title": "Microchip MCP73831 数据手册",
+        "url": "https://ww1.microchip.com/downloads/en/DeviceDoc/MCP73831-Family-Data-Sheet-DS20001984H.pdf",
+        "download_sha256": "75297f2a5235599368381adfb63df2652cc22d757f171f388147b2ab3d32776f"
+      },
+      {
+        "title": "TI LM66100 数据手册",
+        "url": "https://www.ti.com/lit/ds/symlink/lm66100.pdf",
+        "download_sha256": "83c17370a97b85ecebe20605da0b955d4ff6f9a474e9692b611a6685d7ad0f00"
+      },
+      {
+        "title": "Everlight LED 数据手册（分销商镜像）",
+        "url": "https://media.distrelec.com/Web/Downloads/_t/ds/17-21SURC_S530-A2_eng_tds.pdf",
+        "download_sha256": "0e00946376bbe7bf3fc8653451dba469f0c3810889cf213faa95397d8869c7ef"
+      },
+      {
+        "title": "微雪 ESP32-S3-LCD-1.47B 原理图",
+        "url": "https://files.waveshare.com/wiki/ESP32-S3-LCD-1.47B/ESP32-S3-LCD-1.47B_schematic_diagram.pdf",
+        "download_sha256": "43738d1480ef9c983bca3e7f1f7ad852c288a1bd00f1621f9ac3e6974e7539fd"
+      },
+      {
+        "title": "微雪开发板背面引脚图",
+        "url": "https://docs.waveshare.com/assets/images/ESP32-S3-LCD-1.47B-details-inter-610934cad708d11776afc4d86d8ae498.webp",
+        "download_sha256": "cdcf965dc958e5ff56cbc4899f5dcf10ff21898a74250b9e656533f9d28c354d"
+      },
+      {
+        "title": "Adafruit 5580 原始 PCB",
+        "url": "https://raw.githubusercontent.com/adafruit/Adafruit-MAX17048-PCB/main/Adafruit-MAX17048-STEMMA.brd",
+        "download_sha256": "01830495f0e61780aba63709bdb3ba2ddadd4f3bf83ce6022c07f68072542906"
+      },
+      {
+        "title": "JST PH 连接器数据手册（供应商镜像）",
+        "url": "https://atta.szlcsc.com/upload/public/pdf/source/20171026/C131337_15089839672461058811.pdf",
+        "download_sha256": "53d4704a03e4fc2bf756a24d6c0dfaa80e9ef3a41ed28621a4eeba632967e8b9"
+      }
+    ]
+  },
   "pdf_review": {
     "schematic_pages": 1,
     "pcb_pages": 5,
     "pcb_file": "pcb-review.pdf",
-    "schematic_method": "从最终原生 PNG 封装为 PDF，以保留中文；原生 SVG 与 epro2 另附。",
-    "pcb_method": "Gerbonara 1.6.3 解析最终 Gerber / Excellon，ReportLab 生成图纸，BOM 使用最终 CSV。",
-    "renderer_source": "https://gerbolyze.gitlab.io/gerbonara/",
+    "schematic_method": "最终原生 PNG 转为 PDF，保留中文；可编辑 epro2 和 SVG 同目录。",
+    "pcb_method": "Gerbonara 解析最终 Gerber / Excellon，Sharp 渲染到白底 PNG，ReportLab 按最终 BOM 与钻孔数据生成。",
     "visually_reviewed": true,
-    "native_pcb_pdf_export": "锁屏期间原生导出超时；未交付旧版 PDF。",
+    "scale_note": "不是 1:1 装配模板。",
     "gerber_parser_notes": [
       "Excellon G90 位于头结束后，解析器识别为绝对坐标。",
       "底层没有贴片器件，因此无底层钢网文件。"
-    ],
-    "erc_annotation_updated_at": "2026-10-23T14:45:49+08:00"
+    ]
   },
   "file_sha256": {
-    "carrier-v1.1.epro2": "307cbb7162b6f359fb7d4e9ee45518f511fceea00e671fa6d3e4d5b1d6124cff",
-    "gerber.zip": "fdda80c62c5bf13de19ae4e76a18f65e9abc3638f5b95a430fa063fe0c786a84",
-    "bom.csv": "76fffe9fb0c5553f0db47bcd32948fc12e8f1f6a2e7de7f9669558e6a2311e26",
-    "placement.csv": "b64948e3bf51292ae9d702fd1b6d3e8856e5f350626de3fce9da5a789bef75fd",
-    "schematic-netlist.json": "f87fc2e116fddb036ae5ff3290f0f2795b023ba122f708e6d92b5b66e99fd8cc",
-    "pcb-netlist.json": "fb64c99d6e60092a290e5c9ecc1beeed7b4fd7ecaff27abf7881038782d35951",
-    "schematic.pdf": "919fc01ef7b30bf9c57c99e0649d4bc86aa6556263e4831ca06cf81003693d47",
-    "pcb-review.pdf": "700431ac8fac4fa05ee3adb0d6255bfce6220b9f95fd7cb2198b2379441d4bec"
+    "README.md": "7ec29d979259e2853857082a1620bf10f3bea5248ce6953d870afbbc0ec62f19",
+    "bom.csv": "e3abe1b6f3af8c2848b997759d2b79c976d23fc6413a2b550315a54853371c0b",
+    "carrier-v1.1.epro2": "a84102229206a4b1966f482b710afb568faf39a891de171bee5b47b7e8fb033c",
+    "gerber.zip": "88e5fb74a8e710d04829c777db8c240ce2001b15b4288c790d42fae534288524",
+    "pcb-bottom.png": "aa1cf0b168e8c28a2c22fc157fc3ab664d507e1dd4f939ea8a606fcde58ae345",
+    "pcb-netlist.json": "40fbf857bb26b45e3bb86cd488b254d3e52a9194e275b02da0fe8f635ddd7bc8",
+    "pcb-review.pdf": "270955eb506fb5dbc6577abc05bdd65fc9cca8dacbaf1b984a7e4830379bff70",
+    "pcb-top.png": "d8e22480b208433d9ee3a5aa2b75ad83800fa0ec48db3eab385e53a4537058cb",
+    "placement.csv": "1d95d8fe8bc81a817ba59113143e109e3e4f2846c840e09a81d5d654a2b96ff9",
+    "schematic-netlist.json": "81dfb8ce8788b6ea2d5490252c2c14565ff199e89e8303876ab8e51132f107c7",
+    "schematic.pdf": "9aa83c86d009bb471d16b8e81152ea0870e960ab2cebb8392f9070ece0858f71",
+    "schematic.png": "582df9ca3e0ac680dc4cbcdec968af6cfbed3b5ff52c9162d31069c46891298e",
+    "schematic.svg": "ac64997aab3d95aa5c9a8c5cf45d4993be9345e3a0f84c1645269fde028b3cd0"
   }
 }
