@@ -63,7 +63,7 @@ internal data class WidgetData(
                 val time = runCatching { Instant.parse(event.optString("occurredAt")) }.getOrNull() ?: return@mapNotNull null
                 if (time.atZone(zone).toLocalDate() != date) return@mapNotNull null
                 time to WidgetDrink(DateTimeFormatter.ofPattern("HH:mm").withZone(zone).format(time), "${amount(value)} ml")
-            }.sortedByDescending { it.first }.take(2).map { it.second }
+            }.sortedByDescending { it.first }.map { it.second }
             val history = data?.optJSONArray("week").objects().associate { it.optString("date") to it.number("drinkMl") }
             val week = date?.let { end -> (6L downTo 0L).map { offset ->
                 val day = end.minusDays(offset)

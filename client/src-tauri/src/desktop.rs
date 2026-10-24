@@ -1,4 +1,4 @@
-use crate::model::{Connection, Settings, Snapshot};
+use crate::model::{Connection, Dashboard, Settings, Snapshot};
 use crate::runtime::Backend;
 use crate::{platform, tray};
 use std::sync::Arc;
@@ -41,6 +41,15 @@ async fn refresh(app: AppHandle, backend: State<'_, Arc<Backend>>) -> Result<Sna
 }
 
 #[tauri::command]
+async fn get_dashboard(
+    app: AppHandle,
+    backend: State<'_, Arc<Backend>>,
+    date: String,
+) -> Result<Dashboard, String> {
+    backend.dashboard_at(&app, &date).await
+}
+
+#[tauri::command]
 async fn update_settings(
     app: AppHandle,
     backend: State<'_, Arc<Backend>>,
@@ -51,7 +60,7 @@ async fn update_settings(
 }
 
 pub fn show_panel(app: &AppHandle, page: &str) -> Result<(), String> {
-    if !matches!(page, "dashboard" | "settings") {
+    if !matches!(page, "dashboard" | "settings" | "history") {
         return Err("未知页面。".into());
     }
     let window = app
@@ -107,6 +116,7 @@ pub fn run() {
             login,
             logout,
             refresh,
+            get_dashboard,
             update_settings,
             resize_panel,
             hide_panel,

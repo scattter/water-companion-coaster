@@ -16,6 +16,10 @@
         <item name="android:textColor">@color/widget_muted</item>
         <item name="android:textSize">11sp</item>
     </style>
+    <style name="WidgetFooter" parent="WidgetCaption">
+        <item name="android:textSize">10sp</item>
+        <item name="android:gravity">center_vertical</item>
+    </style>
     <style name="WidgetAmount" parent="WidgetText">
         <item name="android:textSize">38sp</item>
         <item name="android:fontFamily">sans-serif-medium</item>

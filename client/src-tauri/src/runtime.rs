@@ -14,7 +14,7 @@ use crate::{
     api::Api,
     credentials,
     engine::Engine,
-    model::{CompanionState, Connection, Settings, Snapshot},
+    model::{CompanionState, Connection, Dashboard, Settings, Snapshot},
     platform,
     storage::{Preferences, Storage},
 };
@@ -273,6 +273,37 @@ impl Backend {
         }
         self.publish(app);
         Ok(self.snapshot())
+    }
+
+    pub async fn dashboard_at(&self, app: &AppHandle, date: &str) -> Result<Dashboard, String> {
+        let (server, token, epoch, cancel) = {
+            let inner = self.inner.lock().unwrap();
+            let server = inner.preferences.server.clone().ok_or("请先连接服务器。")?;
+            let token = inner.token.clone().ok_or("请先登录。")?;
+            (server, token, inner.epoch, inner.cancel.clone())
+        };
+        let result = cancel
+            .run_until_cancelled(self.api.dashboard_at(&server, &token, date))
+            .await
+            .ok_or("账号或连接已变化，请重新查询。")?;
+        let mut inner = self.inner.lock().unwrap();
+        if inner.epoch != epoch || cancel.is_cancelled() {
+            return Err("账号或连接已变化，请重新查询。".into());
+        }
+        match result {
+            // 历史数据只返回给记录视图，不进入今日快照和陪伴状态机。
+            Ok(dashboard) => Ok(dashboard),
+            Err(error) if error.unauthorized => {
+                let removal = credentials::remove(&server);
+                inner.clear_session();
+                let message = removal.err().unwrap_or(error.message);
+                inner.snapshot.error = Some(message.clone());
+                drop(inner);
+                self.publish(app);
+                Err(message)
+            }
+            Err(error) => Err(error.message),
+        }
     }
 
     pub async fn sync(self: &Arc<Self>, app: &AppHandle, force: bool) {

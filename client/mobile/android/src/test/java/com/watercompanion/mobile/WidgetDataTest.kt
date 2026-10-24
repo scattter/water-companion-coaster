@@ -29,7 +29,20 @@ class WidgetDataTest {
         assertEquals("1,280", data.amount)
         assertEquals(6, data.count)
         assertEquals("10/23 14:32 同步", data.sync)
-        assertEquals(listOf(WidgetDrink("14:20", "180 ml"), WidgetDrink("12:45", "240.5 ml")), data.recent)
+        assertEquals(listOf(WidgetDrink("14:20", "180 ml"), WidgetDrink("12:45", "240.5 ml"), WidgetDrink("11:10", "160 ml")), data.recent)
+    }
+
+    @Test fun recentDrinksKeepEveryValidRecordForScrolling() {
+        val cache = cache()
+        val first = Instant.parse("2026-10-23T05:00:00Z")
+        cache.getJSONObject("data").put("events", JSONArray().apply {
+            repeat(40) { put(drink(first.plusSeconds(it * 60L).toString())) }
+        })
+        val data = WidgetData.from(cache, true, now)
+        assertEquals(40, data.recent.size)
+        assertEquals("13:39", data.recent.first().time)
+        assertEquals("13:00", data.recent.last().time)
+        assertTrue(WidgetData.from(cache, false, now).recent.isEmpty())
     }
 
     @Test fun offlineSnapshotKeepsItsDateAfterMidnight() {

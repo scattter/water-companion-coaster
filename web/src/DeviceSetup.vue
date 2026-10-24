@@ -177,8 +177,8 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer); });
       <h3 id="cup-title">日常空杯设置</h3>
       <p class="setup-tip">放上日常使用的空杯，静置至少 3 秒后点击“记住这个杯子”。无需输入重量；以后换杯时重复这一步。</p>
       <div class="device-reading">
-        <span>当前总重 <strong>{{ online && weightGrams != null ? `${weightGrams.toFixed(1)} g` : '—' }}</strong></span>
-        <span>已记住的空杯 <strong>{{ emptyCupGrams != null ? `${emptyCupGrams.toFixed(1)} g` : '尚未设置' }}</strong></span>
+        <div><span>当前总重</span><strong>{{ online && weightGrams != null ? `${weightGrams.toFixed(1)} g` : '—' }}</strong></div>
+        <div><span>已记住的空杯</span><strong>{{ emptyCupGrams != null ? `${emptyCupGrams.toFixed(1)} g` : '尚未设置' }}</strong></div>
       </div>
       <p v-if="calibrated === false" class="notice error" role="alert">杯垫尚未完成出厂标定，请联系售后。你无需准备砝码或自行校准。</p>
       <p v-else-if="calibrated === undefined" class="setup-tip">正在读取杯垫状态…</p>
@@ -207,20 +207,26 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer); });
 </template>
 
 <style scoped>
-.setup-panel { margin:0; padding:22px 26px; border:0; border-radius:0; }
+.setup-panel { margin:0; padding:22px var(--settings-inline-padding, 26px); border:0; border-radius:0; }
 .setup-panel > .section-heading h2 { font-size:17px; }
 .setup-panel > .section-heading .connection-badge { font-size:12px; padding:5px 9px; }
 .setup-tip { color:#5d7568; font-size:13px; line-height:1.8; margin:12px 0; overflow-wrap:anywhere; }
 .setup-tip li { margin:8px 0; }
 h3 { margin:0; font-size:15px; }
 .cup-setup,.network-settings { border-top:1px solid #e5eadf; margin-top:20px; padding-top:20px; }
-.device-reading { display:flex; flex-wrap:wrap; gap:10px 22px; padding:10px 0 18px; font-size:13px; }
+.cup-setup { display:grid; gap:14px; }
+.cup-setup > .setup-tip,.cup-setup > .notice { margin:0; }
+.device-reading { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; padding:14px; border-radius:10px; background:#f4f7f0; font-size:13px; }
+.device-reading > div { display:flex; flex-direction:column; gap:6px; min-width:0; overflow-wrap:anywhere; }
+.device-reading span { color:#5d7568; font-size:12px; }
+.device-reading strong { font-size:17px; font-weight:600; }
+.cup-setup > button { justify-self:start; }
 button { padding:10px 15px; min-height:40px; background:#edf3e9; border:1px solid #d8e1d5; border-radius:8px; color:#263d35; font-size:13px; }
 button.primary { background:#43745d; color:#fff; border-color:#43745d; }
-.command-actions { display:flex; flex-wrap:wrap; gap:10px; }
+.command-actions { display:flex; flex-wrap:wrap; gap:12px; }
 .notice { margin:14px 0 0; }
 summary { cursor:pointer; line-height:1.7; }
 summary:focus-visible { outline:2px solid #43745d; outline-offset:3px; }
 .hotspot-link { display:inline-flex; align-items:center; min-height:40px; color:#43745d; font-size:13px; text-decoration:underline; text-underline-offset:3px; }
-@media(max-width:760px) { .setup-panel { padding:18px; } }
+@media(max-width:560px) { .cup-setup > button { width:100%; min-height:44px; } }
 </style>

@@ -102,6 +102,30 @@ impl Api {
             .map(|(_, data)| data)
     }
 
+    fn dated_dashboard(&self, origin: &str, token: &str, date: &str) -> Result<RequestBuilder, ApiError> {
+        let parsed = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            .map_err(|_| ApiError::message("日期无效。"))?;
+        if parsed.format("%Y-%m-%d").to_string() != date {
+            return Err(ApiError::message("日期无效。"));
+        }
+        Ok(self
+            .get(origin, "/api/dashboard", Some(token))
+            .query(&[("date", date)]))
+    }
+
+    pub async fn dashboard_at(
+        &self,
+        origin: &str,
+        token: &str,
+        date: &str,
+    ) -> Result<Dashboard, ApiError> {
+        let (_, data): (_, Dashboard) = read(self.dated_dashboard(origin, token, date)?).await?;
+        if data.date != date {
+            return Err(ApiError::message("服务器返回的日期与所选日期不一致。"));
+        }
+        Ok(data)
+    }
+
     pub async fn logout(&self, origin: &str, token: &str) -> Result<(), ApiError> {
         let request = Self::with_session(
             self.client.post(format!("{origin}/api/auth/logout")),
@@ -200,6 +224,32 @@ async fn read<T: DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn history_request_uses_existing_session_and_valid_calendar_date() {
+        let api = Api::new().unwrap();
+        let token = "a1".repeat(32);
+        let request = api
+            .dated_dashboard("https://water.example", &token, "2024-02-29")
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(
+            request.url().as_str(),
+            "https://water.example/api/dashboard?date=2024-02-29"
+        );
+        assert_eq!(
+            request.headers()[header::COOKIE],
+            format!("coaster_session={token}")
+        );
+        for date in [
+            "2026-02-30", "2026-13-01", "2026-1-01", "2026-01-01&other=value",
+        ] {
+            assert!(api
+                .dated_dashboard("https://water.example", &token, date)
+                .is_err());
+        }
+    }
+
     #[test]
     fn accepts_only_one_well_formed_session_cookie() {
         let mut headers = header::HeaderMap::new();

@@ -9,30 +9,31 @@
     <LinearLayout android:layout_width="0dp" android:layout_height="match_parent"
         android:layout_weight="1" android:orientation="vertical" android:layout_marginEnd="12dp">
         <TextView style="@style/WidgetText" android:layout_width="match_parent" android:layout_height="24dp"
-            android:gravity="center_vertical" android:text="饮水陪伴" android:textStyle="bold" android:textSize="15sp" />
+            android:gravity="center_vertical" android:text="饮水陪伴" android:textStyle="bold" android:textSize="14sp" />
         <ImageView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
             android:layout_marginVertical="4dp" android:src="@drawable/water_cap" android:scaleType="fitCenter"
             android:contentDescription="陪你工作的小水豚" />
-        <TextView style="@style/WidgetCaption" android:layout_width="match_parent" android:layout_height="18dp"
-            android:gravity="center_vertical" android:text="我陪你一起工作" />
+        <TextView style="@style/WidgetFooter" android:layout_width="match_parent" android:layout_height="20dp"
+            android:text="我陪你一起工作" />
     </LinearLayout>
 
     <ImageView android:layout_width="1dp" android:layout_height="match_parent"
-        android:layout_marginVertical="6dp" android:background="@color/widget_line" android:importantForAccessibility="no" />
+        android:layout_marginVertical="4dp" android:background="@color/widget_line" android:importantForAccessibility="no" />
 
     <LinearLayout android:layout_width="0dp" android:layout_height="match_parent"
         android:layout_weight="1.15" android:orientation="vertical" android:layout_marginStart="12dp">
-        <LinearLayout android:layout_width="match_parent" android:layout_height="30dp" android:gravity="center_vertical">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="24dp" android:gravity="center_vertical">
             <TextView android:id="@+id/widget_title" style="@style/WidgetCaption" android:layout_width="0dp"
-                android:layout_height="match_parent" android:layout_weight="1" android:gravity="center_vertical"
-                android:maxLines="2" android:text="今日饮水" />
-            <include layout="@layout/widget_refresh" />
+                android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center_vertical"
+                android:maxLines="2" android:text="今日饮水" android:textSize="12sp" />
+            <include layout="@layout/widget_refresh" android:layout_width="36dp" android:layout_height="24dp" />
         </LinearLayout>
         <TextView android:id="@+id/widget_amount" style="@style/WidgetAmount" android:layout_width="match_parent"
-            android:layout_height="0dp" android:layout_weight="1" android:gravity="center_vertical" android:text="— ml" />
+            android:layout_height="0dp" android:layout_weight="1" android:layout_marginTop="4dp"
+            android:autoSizeMaxTextSize="32sp" android:gravity="top" android:text="— ml" />
         <TextView android:id="@+id/widget_recent" style="@style/WidgetCaption" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:layout_marginTop="5dp" android:text="暂无饮水记录" android:textSize="10sp" />
-        <TextView android:id="@+id/widget_sync" style="@style/WidgetCaption" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:layout_marginTop="7dp" android:maxLines="2" android:text="等待同步" android:textSize="10sp" />
+            android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="暂无饮水记录" android:textSize="10sp" />
+        <TextView android:id="@+id/widget_sync" style="@style/WidgetFooter" android:layout_width="match_parent"
+            android:layout_height="20dp" android:layout_marginTop="4dp" android:text="等待同步" />
     </LinearLayout>
 </LinearLayout>

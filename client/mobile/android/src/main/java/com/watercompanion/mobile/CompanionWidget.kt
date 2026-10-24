@@ -7,6 +7,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Typeface
@@ -15,10 +16,13 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.text.SpannableString
 import android.text.Spanned
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
 import android.util.SizeF
+import android.util.TypedValue
 import android.view.View
 import android.widget.RemoteViews
 import androidx.core.content.ContextCompat
@@ -28,6 +32,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
 
 class CompanionWidget : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
@@ -52,6 +57,7 @@ class CompanionWidget : AppWidgetProvider() {
         private const val ONCE = "companion-widget-refresh"
         private const val REFRESH = "com.watercompanion.mobile.REFRESH"
         private val refreshing = WidgetRefresh()
+        private var petBitmap: Bitmap? = null
         private fun ids(context: Context) = AppWidgetManager.getInstance(context).getAppWidgetIds(ComponentName(context, CompanionWidget::class.java))
         fun reconcile(context: Context) {
             renderAll(context)
@@ -105,30 +111,36 @@ class CompanionWidget : AppWidgetProvider() {
         fun renderAll(context: Context) {
             render(context, AppWidgetManager.getInstance(context), ids(context))
         }
+        @Suppress("DEPRECATION")
         private fun render(context: Context, manager: AppWidgetManager, ids: IntArray) {
             if (ids.isEmpty()) return
             val repository = Repository.get(context)
+            val generation = repository.status().getLong("generation")
             val signedIn = repository.signedIn()
             val data = WidgetData.from(repository.cache(), signedIn)
             val progress = refreshing.message().takeIf { signedIn }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val views = RemoteViews(WidgetSize.values().associate { size ->
-                    SizeF(size.width.toFloat(), size.height.toFloat()) to layout(context, size, data, progress)
-                })
-                manager.updateAppWidget(ids, views)
-            } else {
-                ids.forEach { id ->
-                    val options = manager.getAppWidgetOptions(id)
-                    // 旧版桌面分别给出横竖屏边界，不能把两个最小值拼成同一个尺寸。
-                    val portrait = WidgetSize.forBounds(options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 250),
-                        options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 140))
-                    val landscape = WidgetSize.forBounds(options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, 250),
-                        options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 140))
-                    manager.updateAppWidget(id, RemoteViews(layout(context, landscape, data, progress), layout(context, portrait, data, progress)))
+            ids.forEach { id ->
+                val options = manager.getAppWidgetOptions(id)
+                // 横竖屏边界需要成对使用；真实高度也用于记录尾部留白和小卡片居中。
+                val portrait = SizeF(options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 250).toFloat(),
+                    options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 140).toFloat())
+                val landscape = SizeF(options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, 250).toFloat(),
+                    options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 140).toFloat())
+                fun view(bounds: SizeF) = layout(context, bounds, data, progress, id, generation)
+                val views = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    val sizes = options.getParcelableArrayList<SizeF>(AppWidgetManager.OPTION_APPWIDGET_SIZES)
+                        ?.takeIf { it.isNotEmpty() } ?: listOf(portrait, landscape)
+                    RemoteViews(sizes.associateWith(::view))
+                } else {
+                    RemoteViews(view(landscape), view(portrait))
                 }
+                if (repository.status().getLong("generation") != generation) return
+                manager.updateAppWidget(id, views)
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) manager.notifyAppWidgetViewDataChanged(id, R.id.widget_records)
             }
         }
-        private fun layout(context: Context, size: WidgetSize, data: WidgetData, progress: String?): RemoteViews {
+        private fun layout(context: Context, bounds: SizeF, data: WidgetData, progress: String?, id: Int, generation: Long): RemoteViews {
+            val size = WidgetSize.forBounds(bounds.width.roundToInt(), bounds.height.roundToInt())
             val layout = when (size) {
                 WidgetSize.SMALL -> R.layout.companion_widget_small
                 WidgetSize.MEDIUM -> R.layout.companion_widget
@@ -137,7 +149,7 @@ class CompanionWidget : AppWidgetProvider() {
             val views = RemoteViews(context.packageName, layout)
             val count = data.count.takeIf { size != WidgetSize.SMALL }
             val title = if (count == null) data.title else "${data.title} $count 次"
-            views.setTextViewText(R.id.widget_title, SpannableString(title).apply {
+            val titleText = SpannableString(title).apply {
                 if (count != null) {
                     val start = data.title.length + 1
                     val end = start + count.toString().length
@@ -145,7 +157,8 @@ class CompanionWidget : AppWidgetProvider() {
                     setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                     setSpan(RelativeSizeSpan(1.18f), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
-            })
+            }
+            views.setTextViewText(R.id.widget_title, titleText)
             views.setTextViewText(R.id.widget_amount, SpannableString("${data.amount} ml").apply {
                 setSpan(RelativeSizeSpan(0.45f), length - 2, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             })
@@ -153,6 +166,13 @@ class CompanionWidget : AppWidgetProvider() {
             views.setViewVisibility(R.id.widget_refresh_icon, if (progress == null) View.VISIBLE else View.GONE)
             views.setViewVisibility(R.id.widget_refresh_progress, if (progress == null) View.GONE else View.VISIBLE)
             views.setContentDescription(R.id.widget_refresh, progress ?: "刷新饮水数据")
+            if (size == WidgetSize.SMALL) {
+                val density = context.resources.displayMetrics.density
+                // 高度足够时给图案上下相同的空间；最小卡片仍为标题和同步文字留出位置。
+                val bottom = if (bounds.height - 24 - 128 >= 32) 64 else 24
+                views.setViewPadding(R.id.widget_pet, 0, (64 * density).roundToInt(), 0, (bottom * density).roundToInt())
+                views.setImageViewBitmap(R.id.widget_pet, pet(context))
+            }
             if (size == WidgetSize.MEDIUM) {
                 views.setTextViewText(R.id.widget_recent, data.recent.firstOrNull()?.let { "最近 ${it.time} · ${it.amount}" } ?: data.empty)
             }
@@ -167,17 +187,20 @@ class CompanionWidget : AppWidgetProvider() {
                         "${it.date}：${it.amount?.let { value -> "${WidgetData.amount(value)} 毫升" } ?: "暂无数据"}"
                     })
                 }
-                listOf(
-                    Triple(R.id.widget_record_first, R.id.widget_time_first, R.id.widget_amount_first),
-                    Triple(R.id.widget_record_second, R.id.widget_time_second, R.id.widget_amount_second),
-                ).forEachIndexed { index, (row, time, amount) ->
-                    val drink = data.recent.getOrNull(index)
-                    views.setViewVisibility(row, if (drink == null) View.GONE else View.VISIBLE)
-                    if (drink != null) {
-                        views.setTextViewText(time, drink.time)
-                        views.setTextViewText(amount, drink.amount)
-                    }
+                // 旧快照日期或大字体可能使标题换行，尾注需要扣除统计区增加的高度。
+                val metrics = context.resources.displayMetrics
+                val titlePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                    textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 12f, metrics)
+                    typeface = Typeface.create("sans-serif", Typeface.NORMAL)
                 }
+                val titleWidth = ((bounds.width - 28) * metrics.density * 1.1f / 2.1f).toInt().coerceAtLeast(1)
+                val titleHeight = StaticLayout.Builder.obtain(titleText, 0, titleText.length, titlePaint, titleWidth)
+                    .setIncludePad(false).setMaxLines(2).build().height / metrics.density
+                val summaryExtra = (titleHeight + 4 + 34 - 56).coerceAtLeast(0f)
+                val recordHeight = if (size == WidgetSize.COMPACT) bounds.height - 157 - summaryExtra else 32 + (bounds.height - 245 - summaryExtra) / 3
+                WidgetRecords.bind(context, views, id, generation, data.recent, recordHeight)
+                views.setEmptyView(R.id.widget_records, R.id.widget_records_empty)
+                views.setViewVisibility(R.id.widget_records, if (data.recent.isEmpty()) View.GONE else View.VISIBLE)
                 views.setViewVisibility(R.id.widget_records_empty, if (data.recent.isEmpty()) View.VISIBLE else View.GONE)
                 views.setTextViewText(R.id.widget_records_empty, data.empty)
             }
@@ -186,11 +209,37 @@ class CompanionWidget : AppWidgetProvider() {
                 launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 val open = PendingIntent.getActivity(context, 1, launch, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                 views.setOnClickPendingIntent(R.id.widget_root, open)
-                if (size == WidgetSize.COMPACT || size == WidgetSize.LARGE) views.setOnClickPendingIntent(R.id.widget_open, open)
+                if (size == WidgetSize.COMPACT || size == WidgetSize.LARGE) {
+                    views.setOnClickPendingIntent(R.id.widget_open, open)
+                    val template = PendingIntent.getActivity(context, 3, launch, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                    views.setPendingIntentTemplate(R.id.widget_records, template)
+                }
             }
             views.setOnClickPendingIntent(R.id.widget_refresh, PendingIntent.getBroadcast(context, 2,
                 Intent(context, CompanionWidget::class.java).setAction(REFRESH), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
             return views
+        }
+        private fun pet(context: Context): Bitmap = synchronized(this) {
+            petBitmap ?: run {
+                val source = BitmapFactory.decodeResource(context.resources, R.drawable.water_cap, BitmapFactory.Options().apply { inScaled = false })
+                val pixels = IntArray(source.width * source.height)
+                source.getPixels(pixels, 0, source.width, 0, 0, source.width, source.height)
+                var left = source.width
+                var top = source.height
+                var right = 0
+                var bottom = 0
+                pixels.forEachIndexed { index, pixel ->
+                    if (pixel ushr 24 != 0) {
+                        val x = index % source.width
+                        val y = index / source.width
+                        left = minOf(left, x); right = maxOf(right, x)
+                        top = minOf(top, y); bottom = maxOf(bottom, y)
+                    }
+                }
+                // 素材透明边缘不对称，按可见图案居中，避免只居中图片画布。
+                (if (left <= right && top <= bottom) Bitmap.createBitmap(source, left, top, right - left + 1, bottom - top + 1) else source)
+                    .also { petBitmap = it }
+            }
         }
         private fun chart(context: Context, week: List<WidgetDay>): Bitmap {
             val bitmap = Bitmap.createBitmap(630, 120, Bitmap.Config.ARGB_8888)

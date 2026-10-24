@@ -27,4 +27,4 @@ async function tick() {
 onMounted(() => { void tick(); timer = setInterval(() => void tick(), 1000); });
 onBeforeUnmount(() => { clearInterval(timer); ++version; });
 </script>
-<template><section v-if="dashboard" class="mobile-companion"><img :src="framePath(state, frame)" alt="陪你喝水的小水豚" /><div><strong>{{ stateText[state] }}</strong><p>慢慢喝，慢慢来</p></div></section></template>
+<template><section v-if="dashboard" class="mobile-companion"><img :src="framePath(state, frame)" alt="陪你喝水的小水豚" /><span>{{ stateText[state] }}</span></section></template>

@@ -188,6 +188,7 @@ button:not(:disabled):hover {
 }
 
 .settings-dialog {
+  --settings-inline-padding:26px;
   width:min(760px,calc(100% - 32px));
   max-height:calc(100dvh - 48px);
   padding:0;
@@ -211,7 +212,7 @@ button:not(:disabled):hover {
   justify-content:space-between;
   align-items:center;
   gap:16px;
-  padding:20px 26px;
+  padding:20px var(--settings-inline-padding, 26px);
   border-bottom:1px solid #e5eadf;
   background:#fff;
 }
@@ -292,6 +293,8 @@ h1 span {
   min-height:39px;
   min-width:140px;
 }
+
+.date-step { display:grid; place-items:center; min-width:36px; min-height:40px; padding:0 8px; border-radius:8px; background:#edf3e9; color:#43745d; font-size:23px; }
 
 .text-button {
   background:none;
@@ -587,6 +590,10 @@ h1 span {
 }
 
 .chart-column {
+  padding:0;
+  background:transparent;
+  color:inherit;
+  border-radius:6px;
   display:flex;
   align-items:center;
   flex-direction:column;
@@ -1252,9 +1259,7 @@ h1 span {
     gap:14px;
     padding:16px;
   }
-  .settings-header {
-    padding:18px;
-  }
+  .settings-dialog { --settings-inline-padding:18px; }
   main {
     padding-top:25px;
   }

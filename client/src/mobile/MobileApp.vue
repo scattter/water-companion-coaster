@@ -74,7 +74,12 @@ async function pin() {
   } catch (error) { if (!disposed) notices.show({ source: 'widget', message: message(error) }); }
   finally { pinning.value = false; }
 }
-function back(event: Event) { if (!event.defaultPrevented && settings.value && server.value) { settings.value = false; event.preventDefault(); } }
+function back(event: Event) {
+  if (!event.defaultPrevented && settings.value && server.value) {
+    if (!busy.value) settings.value = false;
+    event.preventDefault();
+  }
+}
 onMounted(async () => {
   window.addEventListener('companion-back', noticeBack, true);
   window.addEventListener('companion-back', back);
@@ -102,14 +107,14 @@ onBeforeUnmount(() => {
 </script>
 <template>
   <div class="mobile-root">
-    <header class="mobile-toolbar"><strong>饮水陪伴</strong><button class="text-button" :disabled="!loaded || pinning" @click="pin">添加桌面组件</button><button class="text-button" @click="settings = !settings">{{ settings ? '返回' : '服务设置' }}</button></header>
+    <header v-if="!loaded || !server || settings" class="mobile-toolbar"><strong>饮水陪伴</strong><button v-if="server" class="text-button" :disabled="busy" @click="settings = false">返回</button></header>
     <section v-if="!loaded" class="mobile-config">正在读取本机设置…</section>
     <section v-else-if="!server || settings" class="panel mobile-config">
       <h1>连接你的饮水服务</h1><p>填写服务根地址，登录后可查看记录、配网并添加桌面小组件。</p>
       <form class="account-form" @submit.prevent="configure"><label>服务器地址<input v-model="address" type="text" inputmode="url" autocomplete="url" autocapitalize="none" spellcheck="false" placeholder="https://water.example.com" required :disabled="busy" /></label><p class="field-help">安装版使用 HTTPS，支持域名、IP 和端口，无需添加 /api。切换服务器后需重新登录。</p><button class="setup-action" :disabled="busy">{{ busy ? '正在连接…' : '连接服务器' }}</button></form>
     </section>
-    <WebApp v-else :key="server" mobile :active="active">
-      <template #companion="{ dashboard, session, online }"><MobileCompanion :dashboard="dashboard" :identity="`${server}:${session.user?.id ?? ''}`" :active="active && online" /></template>
+    <WebApp v-if="loaded && server" v-show="!settings" :key="server" mobile :active="active && !settings" :widget-busy="pinning" @service-settings="settings = true" @add-widget="pin">
+      <template #companion="{ dashboard, session, online }"><MobileCompanion :dashboard="dashboard" :identity="`${server}:${session.user?.id ?? ''}`" :active="active && !settings && online && Boolean(dashboard)" /></template>
     </WebApp>
     <dialog ref="noticeDialog" class="settings-dialog mobile-message-dialog" aria-labelledby="mobile-message-title" aria-describedby="mobile-message-text" @cancel.prevent="dismissNotice">
       <div class="settings-header"><h2 id="mobile-message-title">提示</h2><button type="button" class="settings-close" aria-label="关闭提示" autofocus @click="dismissNotice">✕</button></div>

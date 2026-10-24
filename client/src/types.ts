@@ -3,7 +3,7 @@ import type { Session } from '../../web/src/session';
 
 export type CompanionState = 'working' | 'sleeping' | 'drinking' | 'reminding' | 'idle';
 export type Connection = 'unconfigured' | 'signedOut' | 'connecting' | 'online' | 'offline';
-export type Page = 'dashboard' | 'settings';
+export type Page = 'dashboard' | 'settings' | 'history';
 
 export interface Settings {
   autoRest: boolean;

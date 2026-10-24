@@ -4,6 +4,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import { native, errorMessage, newerSnapshot } from './native';
 import { amount, clockTime, dayLabel, deviceStatus, framePath, recentDrink, stateText } from './display';
 import type { Page, Settings, Snapshot } from './types';
+import HistoryView from './HistoryView.vue';
 
 const snapshot = ref<Snapshot>({
   revision: 0,
@@ -166,7 +167,7 @@ onBeforeUnmount(() => {
         <p class="brand">饮水陪伴</p>
         <p class="brand-caption">有水喝，有小伙伴</p>
       </div>
-      <button v-if="page === 'settings' && snapshot.server" class="quiet-button" :disabled="busy" @click="selectPage('dashboard')">返回</button>
+      <button v-if="page !== 'dashboard' && snapshot.server" class="quiet-button" :disabled="busy" @click="selectPage('dashboard')">返回</button>
       <button v-else-if="snapshot.server" class="quiet-button" :disabled="busy" @click="selectPage('settings')">设置</button>
     </header>
 
@@ -214,6 +215,8 @@ onBeforeUnmount(() => {
         <p class="server-origin" :title="snapshot.server">{{ snapshot.server }}</p>
       </section>
 
+      <HistoryView v-else-if="page === 'history'" :identity="`${snapshot.server}:${snapshot.session.user?.id}`" :time-zone="zone" />
+
       <section v-else class="dashboard-view">
         <div class="dashboard-summary">
           <div class="companion-summary">
@@ -236,7 +239,8 @@ onBeforeUnmount(() => {
           <span>{{ snapshot.lastSyncedAt ? `同步于 ${clockTime(snapshot.lastSyncedAt, zone)}` : '等待首次同步' }}</span>
           <button class="text-button" :disabled="busy" @click="perform(native.refresh)">{{ busy ? '处理中…' : '刷新' }}</button>
         </div>
-        <button class="secondary-button website-button" :disabled="busy" @click="perform(native.website)">{{ dashboard && !dashboard.device ? '前往网页绑定杯垫' : '打开记录与设备设置' }}</button>
+        <button class="secondary-button website-button" :disabled="busy || !dashboard" @click="selectPage('history')">饮水记录</button>
+        <button class="text-button website-button" :disabled="busy" @click="perform(native.website)">{{ dashboard && !dashboard.device ? '前往网页绑定杯垫' : '打开网页与设备设置' }}</button>
       </section>
 
       <p v-if="shownError" class="error-message" role="alert">{{ shownError }}</p>
