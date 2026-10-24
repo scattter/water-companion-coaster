@@ -107,6 +107,16 @@ function sameEvent(existing: EventRow, event: DeviceEvent): boolean {
     && existing.occurredAt === event.occurredAt && existing.bindingId === event.bindingId;
 }
 
+function eventTotals(events: EventRow[]) {
+  const totals = { drinkMl: 0, refillMl: 0, drinkCount: 0 };
+  for (const event of events) {
+    if (event.revokedAt !== null) continue;
+    if (event.kind === 'drink') { totals.drinkMl += event.amountMl; totals.drinkCount += 1; }
+    else totals.refillMl += event.amountMl;
+  }
+  return totals;
+}
+
 export function createApp(options: AppOptions) {
   const timeZone = options.timeZone ?? 'Asia/Shanghai';
   const dateFormatter = new Intl.DateTimeFormat('en-CA', {
@@ -138,6 +148,28 @@ export function createApp(options: AppOptions) {
   const getDevice = db.prepare('SELECT last_seen_at AS lastSeenAt, payload, binding_id AS bindingId FROM device_status WHERE id = ?');
   const saveDevice = db.prepare(`INSERT INTO device_status (id, last_seen_at, payload, binding_id) VALUES (?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET last_seen_at = excluded.last_seen_at, payload = excluded.payload, binding_id = excluded.binding_id`);
+
+  let summaryDay = { date: '', expiresAtMs: 0 };
+  function dailySummary(userId: string, currentTime: Date) {
+    const date = localDate(currentTime);
+    if (summaryDay.date !== date) {
+      // 直接寻找配置时区的下一天边界，不能用固定 24 小时代替夏令时日长。
+      let low = currentTime.getTime(), high = low + 2 * dayMs;
+      while (high - low > 1) {
+        const middle = Math.floor((low + high) / 2);
+        if (localDate(new Date(middle)) === date) low = middle;
+        else high = middle;
+      }
+      summaryDay = { date, expiresAtMs: high };
+    }
+    const rows = getEvents.all(userId, `${shiftDate(date, -1)}T00:00:00.000Z`,
+      `${shiftDate(date, 2)}T00:00:00.000Z`) as unknown as EventRow[];
+    const events = rows.filter(event => localDate(event.occurredAt) === date);
+    const totals = eventTotals(events);
+    const last = events.find(event => event.kind === 'drink' && event.revokedAt === null);
+    return { ...summaryDay, drinkMl: totals.drinkMl, drinkCount: totals.drinkCount,
+      lastDrink: last ? { amountMl: last.amountMl, occurredAtMs: Date.parse(last.occurredAt) } : null };
+  }
 
   const app = Fastify({
     logger: options.logger ?? false,
@@ -300,7 +332,9 @@ export function createApp(options: AppOptions) {
       }
       const command = canCommand ? db.prepare(`SELECT id, expires_at AS expiresAt, binding_id AS bindingId FROM device_commands
         WHERE device_id = ? AND binding_id = ? AND status = 'pending'`).get(deviceId, device.bindingId) : undefined;
-      return { ok: true, serverTimeMs: timestamp, bound: device.userId !== null, bindingId: device.bindingId, command: command ? { ...command, cmd: 'cup' } : null };
+      return { ok: true, serverTimeMs: timestamp, bound: device.userId !== null, bindingId: device.bindingId,
+        command: command ? { ...command, cmd: 'cup' } : null,
+        dailySummary: matches && device.userId && device.bindingId ? dailySummary(device.userId, currentTime) : null };
     });
   });
 
@@ -398,7 +432,6 @@ export function createApp(options: AppOptions) {
     const rows = getEvents.all(user.id, `${shiftDate(week[0].date, -1)}T00:00:00.000Z`,
       `${shiftDate(date, 2)}T00:00:00.000Z`) as unknown as EventRow[];
     const events: EventRow[] = [];
-    const totals = { drinkMl: 0, refillMl: 0, drinkCount: 0 };
     for (const event of rows) {
       const eventDate = localDate(event.occurredAt);
       if (eventDate === date) events.push(event);
@@ -407,11 +440,8 @@ export function createApp(options: AppOptions) {
         const day = week.find((item) => item.date === eventDate);
         if (day) day.drinkMl += event.amountMl;
       }
-      if (eventDate === date) {
-        if (event.kind === 'drink') { totals.drinkMl += event.amountMl; totals.drinkCount += 1; }
-        else totals.refillMl += event.amountMl;
-      }
     }
+    const totals = eventTotals(events);
     const stored = deviceId ? getDevice.get(deviceId) as unknown as DeviceRow | undefined : undefined;
     const row = stored?.bindingId === user.bindingId ? stored : undefined;
     const status = row ? JSON.parse(row.payload) as Heartbeat : undefined;

@@ -200,6 +200,10 @@ enum { LOW, HIGH, OUTPUT, INPUT_PULLUP, RED, GRAY, WHITE, AMBER, GREEN, WIFI_REA
 ${structure('device.h','device_status_t')}
 ${structure('network.h','network_status_t')}
 ${structure('ble_provision.h','ble_provision_display_t')}
+${structure('daily_summary.h','daily_summary_t')}
+struct binding_state_t { char binding_id[37]; };
+struct device_config_t {};
+struct daily_view_t {};
 static bool ready;
 static int state_lock, console_lock, brightness = LOW, paints, lit, rgb_writes, error_logs;
 static int button = HIGH, ap_opens, ble_opens;
@@ -235,6 +239,11 @@ static void draw_pixels(int, int) {}
 static void draw_text(int, const char *, uint16_t) { ++paints; }
 static void line(int, const char *, int) { ++paints; }
 static void storage_counts(unsigned *a, unsigned *b) { *a = *b = 0; }
+static void device_config_snapshot(device_config_t *, binding_state_t *binding) { binding->binding_id[0] = 0; }
+static void network_daily_summary(daily_summary_t *summary, const char *) { *summary = {}; }
+static void select_page(int) {}
+static daily_view_t daily_view(const device_status_t &, const network_status_t &, const daily_summary_t &, unsigned, unsigned) { return {}; }
+static void show_daily(const daily_view_t &) { ++paints; }
 static int xSemaphoreCreateMutex() { return 1; }
 static int device_start() { return ESP_OK; }
 static const char *esp_err_to_name(int) { return "test error"; }

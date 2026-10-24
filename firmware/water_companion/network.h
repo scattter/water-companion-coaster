@@ -2,6 +2,7 @@
 #include "storage.h"
 #include "esp_wifi.h"
 #include "cJSON.h"
+#include "daily_summary.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -44,6 +45,7 @@ esp_err_t network_start(const device_config_t *config);
 void network_provision(void);
 esp_err_t network_request_binding(void);
 void network_snapshot(network_status_t *status);
+void network_daily_summary(daily_summary_t *summary, const char *binding_id);
 esp_err_t network_scan(wifi_ap_record_t *records, uint16_t *count);
 bool network_has_time(void);
 int64_t network_epoch_ms(void);

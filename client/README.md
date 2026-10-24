@@ -114,6 +114,8 @@ npm run test:client:native
 
 ## 验收边界
 
+2026-10-24 按用户要求完整打包安卓 0.1.6（versionCode 1006），包含统一组件间距与底栏对齐、“查看更多”、可滚动记录和尾注、窄高小卡片水豚居中等调整。客户端类型检查及 Android release 构建通过；APK 与 0.1.5 同签名，更新后的布局与前端资源已确认入包，16 KB 对齐及 SHA-256 校验通过。产物覆盖 `output/client/water-companion-android-arm64.apk`，未另存历史安装包；手机覆盖安装、滚动和实际布局待用户实机验证。
+
 2026-10-23 为较矮的小组件增加紧凑记录布局：250×190 dp 起显示最近两条记录，250×250 dp 起显示七日趋势；饮水量与水豚区域固定为 64 dp，左右边距统一为 12 dp，“最近饮水”与上方横线间距调整为 6 dp。7 项相关数据与尺寸测试、Kotlin 编译和资源校验通过，尺寸示意图更新至 `output/playwright/widget-sizes-records.png`。已按用户要求完整打包安卓 0.1.5（versionCode 1005），覆盖 `output/client/water-companion-android-arm64.apk`；客户端类型检查、与 0.1.4 同签名、更新后的布局资源入包、16 KB 对齐及 SHA-256 校验通过。未新增历史安装包备份，手机覆盖安装与小组件实机显示仍待验收。
 
 2026-10-23 将中、大尺寸小组件的次数合并到饮水标题，数字以绿色、粗体和 1.18 倍字号突出，并移除独立次数行。18 项安卓单元测试、Kotlin release 编译和资源链接校验通过。已更新尺寸对比示意图 `output/playwright/widget-sizes-inline-count.png`，随后按用户要求完整打包安卓 0.1.4（versionCode 1004）；客户端类型检查、同签名、组件资源入包、16 KB 对齐和 SHA-256 校验通过。产物覆盖 `output/client/water-companion-android-arm64.apk`。后续按用户要求删除 0.1.0、0.1.1、0.1.2 的历史包和附属校验文件，释放约 53 MiB，并重新构建 0.1.4；交付目录仅保留当前安卓 APK。手机覆盖安装、实际字体与布局尚待验收。
