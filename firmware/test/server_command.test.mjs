@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
-test('USB server 实际 C 命令支持分步配置并保留安全边界', async (t) => {
+test('实际 C 配置命令支持分步配置、空杯设置并保留安全边界', async (t) => {
   const device = readFileSync(new URL('../water_companion/coaster.c', import.meta.url), 'utf8');
   const network = readFileSync(new URL('../water_companion/network.c', import.meta.url), 'utf8');
   function actual(source, signature) {
@@ -341,6 +341,29 @@ static void pending_protection(void) {
     unsaved_event = false; reboot_at_ms = 2000;
     rejected(command(new_url, NULL, NULL), 0); rejected(command(NULL, new_id, new_token), 0);
 }
+static void cup_config(void) {
+    prepare(false);
+    config.counts_per_gram = -100;
+    sensor_ready = true; raw_count = WEIGHING_SAMPLES; last_sample_ms = 1000;
+    for (unsigned i = 0; i < WEIGHING_SAMPLES; ++i) raw_samples[i] = config.zero - 12000;
+    machine.removed = true;
+    for (int failure = 1; failure >= 0; --failure) {
+        cJSON *json = cJSON_CreateObject(); cJSON_AddStringToObject(json, "cmd", "cup");
+        save_error = failure ? -1 : 0;
+        if (failure) rejected(json, 1);
+        else run_command(json, true);
+    }
+    assert(config.empty_cup == 120 && persisted.empty_cup == 120 && !restart_required);
+    unsigned events = 0;
+    for (unsigned i = 0; i < 60; ++i) {
+        weight_change_t change;
+        if (weighing_sample(&machine, 320, 1000 + i * 100, &change)) {
+            ++events;
+            assert(!change.drink && change.amount == 200 && change.before == 120 && change.after == 320);
+        }
+    }
+    assert(events == 1);
+}
 int main(int argc, char **argv) {
     assert(argc == 2);
     if (!strcmp(argv[1], "full")) full_config();
@@ -351,6 +374,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[1], "boundaries")) url_boundaries();
     else if (!strcmp(argv[1], "save-failure")) save_failure();
     else if (!strcmp(argv[1], "pending")) pending_protection();
+    else if (!strcmp(argv[1], "cup")) cup_config();
     else assert(!"unknown test");
     return 0;
 }
@@ -372,6 +396,7 @@ int main(int argc, char **argv) {
       ['boundaries', 'HTTPS 源地址及私网 HTTP 接受，公网 HTTP 与坏地址拒绝'],
       ['save-failure', '保存失败保留内存、持久配置、称重和重启状态'],
       ['pending', 'pending 禁止改 ID，允许同 ID 更新及仅 URL 更新'],
+      ['cup', '空杯保存失败保留旧基准，成功后立即加水只记一次补水'],
     ];
     for (const [name, description] of cases) {
       await t.test(description, () => {

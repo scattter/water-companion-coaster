@@ -457,6 +457,11 @@ cJSON *device_command(const cJSON *json)
             if (!strcmp(name, "wifi") || !strcmp(name, "server")) restart_required = true;
             if (reset_weighing || restart_required) {
                 weighing_init(&machine, config.empty_cup);
+                if (!strcmp(name, "cup")) {
+                    // 空杯已通过稳定采样确认，保留基准以识别设置成功后立即加水。
+                    machine.baseline = config.empty_cup;
+                    machine.has_baseline = true;
+                }
                 activity_weight = NAN;
                 last_activity_ms = esp_timer_get_time() / 1000;
             }
