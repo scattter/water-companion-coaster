@@ -1,0 +1,230 @@
+{
+  "checked_at": "2026-10-15T19:40:06+08:00",
+  "project": "杯垫电池底板 v1 定稿",
+  "project_uuid": "eb8121d661e473d42b32b1bc208ffc35a612bfd783bd96ac190e1989426ecd13",
+  "pcb_uuid": "80ac0c85b6a7364f",
+  "pcb_drc": {
+    "strict": true,
+    "result": []
+  },
+  "schematic_erc": {
+    "result": [
+      {
+        "type": "warn",
+        "count": 1
+      }
+    ],
+    "fatal_errors": 0,
+    "errors": 0,
+    "warning": "元件属性与供应商编号不匹配，建议使用器件标准化。来自中文用途/参数名称与标准库元数据不同；涉及11个系统库器件。",
+    "info": "另有6项位号命名格式提示；保留J_DEV_A、U_CHG等明确用途名称。"
+  },
+  "netlist": {
+    "schematic_matches_pcb": true,
+    "matches_design_pin_map": true,
+    "components": 13,
+    "connected_pins": 37,
+    "unconnected_pins": 12,
+    "pin_map": {
+      "J_DEV_A": {
+        "6": "GND",
+        "7": "BAT_DEV"
+      },
+      "J_DEV_B": {
+        "1": "USB_5V",
+        "2": "GND",
+        "3": "3V3",
+        "5": "HX_DT",
+        "7": "HX_SCK"
+      },
+      "J_BAT": {
+        "1": "BAT_CELL",
+        "2": "GND"
+      },
+      "J_HX": {
+        "1": "3V3",
+        "2": "GND",
+        "3": "HX_DT",
+        "4": "HX_SCK"
+      },
+      "U_CHG": {
+        "1": "CHG_STAT",
+        "2": "GND",
+        "3": "BAT_CELL",
+        "4": "USB_5V",
+        "5": "PROG"
+      },
+      "U_ISO": {
+        "1": "BAT_CELL",
+        "2": "GND",
+        "3": "USB_5V",
+        "5": "GND",
+        "6": "BAT_DEV"
+      },
+      "R1": {
+        "1": "PROG",
+        "2": "GND"
+      },
+      "R2": {
+        "1": "USB_5V",
+        "2": "GND"
+      },
+      "R3": {
+        "1": "USB_5V",
+        "2": "LED_A"
+      },
+      "C1": {
+        "1": "USB_5V",
+        "2": "GND"
+      },
+      "C2": {
+        "1": "BAT_CELL",
+        "2": "GND"
+      },
+      "C3": {
+        "1": "BAT_DEV",
+        "2": "GND"
+      },
+      "LED1": {
+        "1": "CHG_STAT",
+        "2": "LED_A"
+      }
+    }
+  },
+  "pcb": {
+    "size_mm": [
+      60.0,
+      45.0
+    ],
+    "layers": 2,
+    "components": 13,
+    "track_segments": 72,
+    "vias": 24,
+    "filled_ground_pours": 2,
+    "keepouts": [
+      {
+        "layers": [
+          "top",
+          "bottom"
+        ],
+        "purpose": "antenna",
+        "rectangle_mm": [
+          29,
+          26,
+          60,
+          40.5
+        ]
+      },
+      {
+        "layers": [
+          "top",
+          "bottom"
+        ],
+        "purpose": "USB",
+        "rectangle_mm": [
+          0,
+          29,
+          8.2,
+          37.2
+        ]
+      }
+    ]
+  },
+  "gerber": {
+    "files": [
+      "Gerber_TopLayer.GTL",
+      "Gerber_BottomLayer.GBL",
+      "Gerber_TopSilkscreenLayer.GTO",
+      "Gerber_BottomSilkscreenLayer.GBO",
+      "Gerber_TopSolderMaskLayer.GTS",
+      "Gerber_BottomSolderMaskLayer.GBS",
+      "Gerber_TopPasteMaskLayer.GTP",
+      "Gerber_BoardOutlineLayer.GKO",
+      "Gerber_DocumentLayer.GDL",
+      "Gerber_DrillDrawingLayer.GDD",
+      "Drill_PTH_Through.DRL",
+      "Drill_NPTH_Through.DRL",
+      "Drill_PTH_Through_Via.DRL",
+      "FlyingProbeTesting.json",
+      "PCB下单必读.txt"
+    ],
+    "copper": {
+      "Gerber_TopLayer.GTL": {
+        "copper_areas": 33,
+        "regions": 2
+      },
+      "Gerber_BottomLayer.GBL": {
+        "copper_areas": 16,
+        "regions": 1
+      }
+    },
+    "pth_hole_counts": {
+      "0.3": 24,
+      "1.001": 2,
+      "1.1": 22
+    },
+    "npth_holes": [
+      {
+        "diameter_mm": 3.200001,
+        "x_mm": 2.999999,
+        "y_mm": 2.999999
+      },
+      {
+        "diameter_mm": 3.200001,
+        "x_mm": 57.0,
+        "y_mm": 2.999999
+      },
+      {
+        "diameter_mm": 3.200001,
+        "x_mm": 2.999999,
+        "y_mm": 21.000001
+      },
+      {
+        "diameter_mm": 3.200001,
+        "x_mm": 57.0,
+        "y_mm": 21.000001
+      }
+    ],
+    "via_drill_count": 24,
+    "outline_mm": [
+      60.0,
+      45.0
+    ],
+    "top_and_bottom_clearances": "核对原生顶底层图与Gerber几何：天线和USB禁布区域没有铜、走线或过孔。"
+  },
+  "physical_validation": "尚未进行实物装配、充放电、USB插拔瞬态、温升、低电和无线性能测试；当前文件用于工程评审与样机准备。",
+  "open_items": [
+    "电池接头配合与Pin1正极",
+    "开发板R30=0Ω/R31不装及U2-10接VBUS",
+    "排母装配尺寸与方向",
+    "C1/C2在直流偏压、温度及容差下的有效容量至少4.7uF",
+    "USB输入及插拔瞬态、电池反向电流",
+    "充电电流、终止和温升",
+    "Wi-Fi与屏幕峰值电流不超过电池正常0.75A限制",
+    "低电稳定性和实际续航"
+  ],
+  "exports": {
+    "schematic_pdf_pages": 1,
+    "pcb_pdf_pages": 5,
+    "pcb_pdf_order": [
+      "top assembly",
+      "BOM",
+      "top copper and silkscreen",
+      "mirrored bottom copper",
+      "drill drawing"
+    ],
+    "final_pdf_pages_rendered_and_reviewed": true,
+    "bom_entries": 12,
+    "bom_total_components": 13
+  },
+  "file_sha256": {
+    "carrier-v1.epro2": "e4addd060e2368b953f74741a512dfadaff0c231b4ce4b1e4ae87d65c8699542",
+    "gerber.zip": "ea5833d90a759b28553c20a0d0232a68524f70fbd8c3c752f133f83dee2aa464",
+    "schematic.pdf": "05ed623313291d84ac465c8ed367799f04b7b99f37a7e3762adac5469a282ccf",
+    "pcb.pdf": "577cefc0f4dbf6aa5c1b13b14924d7c4131f08384a373a767e1eb58110efc175",
+    "bom.csv": "5e8b7b8d9c3cb0a1ff55a7f8f5c629d2696d6e4fc4c9d77772a9a1e94b79c1e1",
+    "placement.csv": "6f9354d89e37ec2dff0586a5f85f97c2cb2f6564088a10504d975f6ce221f825",
+    "schematic-netlist.json": "3e2dc659ec7d7640da2f924870a7f4af375e8a3ea3e153c4f8aa6e2f1900a41e",
+    "pcb-netlist.json": "7de7c43d9bbac24b553ea44c6b5e39efd4c0b8ad596d6af5d31988d6134267ed"
+  }
+}

@@ -1,0 +1,14 @@
+﻿Designator,Device,Footprint,Mid X,Mid Y,Ref X,Ref Y,Pad X,Pad Y,Pins,Layer,Rotation,SMD,Comment,Value,Type,Supplier,Datasheet
+J_DEV_A,HDR-F_2.54_1x9P,HDR-TH_9P-P2.54-V-F-1,21.47mm,24.27mm,21.47mm,24.27mm,31.63mm,24.27mm,9,T,180,No,开发板 U2-1~9,,,LCSC,
+U_CHG,MCP73831T-2ACI/OT,COASTER_MCP73831_FOOTPRINT,14mm,14mm,14mm,14mm,15.4mm,13.05mm,5,T,0,Yes,MCP73831T-2ACI/OT,,,,
+J_DEV_B,HDR-F_2.54_1x9P,HDR-TH_9P-P2.54-V-F-1,21.47mm,42.05mm,21.47mm,42.05mm,11.31mm,42.05mm,9,T,0,No,开发板 U2-10~18,,,LCSC,
+J_HX,HDR-F_2.54_1x4P,HDR-TH_4P-P2.54-V-F,50mm,8mm,50mm,8mm,46.19mm,8mm,4,T,0,No,HX711 四针,,,LCSC,
+J_BAT,B2B-PH-K-S(LF)(SN),CONN-TH_B2B-PH-K-S,33mm,8mm,33mm,8mm,34.001mm,8mm,2,T,0,No,PH2.0 电池,,,LCSC,https://atta.szlcsc.com/upload/public/pdf/source/20171026/C131337_15089839672461058811.pdf
+R1,0603WAF2001T5E,R0603,10mm,12.8mm,10mm,12.8mm,9.247mm,12.8mm,2,T,0,Yes,2k 1%,2kΩ,厚膜电阻,LCSC,https://atta.szlcsc.com/upload/public/pdf/source/20200306/C422600_1E6D84923E4A46A82E41ADD87F860B5C.pdf
+R2,0603WAF1003T5E,R0603,28mm,18.5mm,28mm,18.5mm,27.247mm,18.5mm,2,T,0,Yes,100k,100kΩ,厚膜电阻,LCSC,https://atta.szlcsc.com/upload/public/pdf/source/20200306/C422600_1E6D84923E4A46A82E41ADD87F860B5C.pdf
+R3,0603WAF2201T5E,R0603,10mm,6mm,10mm,6mm,9.247mm,6mm,2,T,0,Yes,2.2k,2.2kΩ,厚膜电阻,LCSC,https://atta.szlcsc.com/upload/public/pdf/source/20200306/C422600_1E6D84923E4A46A82E41ADD87F860B5C.pdf
+C1,CL21B106KOQNNNE,C0805,9mm,17mm,9mm,17mm,8mm,17mm,2,T,0,Yes,10uF 16V X7R,10uF,,LCSC,https://atta.szlcsc.com/upload/public/pdf/source/20170228/1488267683307.pdf
+C2,CL21B106KOQNNNE,C0805,18mm,17mm,18mm,17mm,17mm,17mm,2,T,0,Yes,10uF 16V X7R,10uF,,LCSC,https://atta.szlcsc.com/upload/public/pdf/source/20170228/1488267683307.pdf
+C3,CL10B105KO8NNNC,C0603,25mm,20mm,25mm,20mm,24.3mm,20mm,2,T,0,Yes,1uF 16V X7R,1uF,,LCSC,https://atta.szlcsc.com/upload/public/pdf/source/20160103/1457707740971.pdf
+LED1,17-21SURC/S530-A2/TR8,LED0805-RD,14mm,6mm,14mm,6mm,12.9mm,6mm,2,T,0,Yes,17-21SURC/S530-A2/TR8,,,LCSC,https://atta.szlcsc.com/upload/public/pdf/source/20170918/C131244_1505726880590976254.pdf
+U_ISO,LM66100DCKR,COASTER_LM66100_FOOTPRINT,23mm,16mm,23mm,16mm,24.1mm,15.35mm,6,T,0,Yes,LM66100DCKR,,,,

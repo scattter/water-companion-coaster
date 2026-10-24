@@ -35,6 +35,7 @@ static device_config_t settings;
 static const char *TAG = "coaster-network";
 static portMUX_TYPE status_lock = portMUX_INITIALIZER_UNLOCKED;
 static network_status_t network_status;
+static daily_summary_t daily_summary;
 static uint32_t connection_generation;
 static int64_t last_confirmed_ms;
 static cloud_command_t cloud_command;
@@ -98,6 +99,15 @@ void network_snapshot(network_status_t *status)
     }
     status->waiting_for_time = status->server_configured
         && strncmp(settings.server_url, "https://", 8) == 0 && !network_has_time();
+}
+
+void network_daily_summary(daily_summary_t *summary, const char *binding_id)
+{
+    daily_summary_t cached;
+    portENTER_CRITICAL(&status_lock);
+    cached = daily_summary;
+    portEXIT_CRITICAL(&status_lock);
+    daily_summary_read(&cached, summary, binding_id, esp_timer_get_time() / 1000);
 }
 
 static esp_err_t on_http(esp_http_client_event_t *event)
@@ -217,6 +227,8 @@ void network_apply_config(const device_config_t *config)
 {
     settings = *config;
     portENTER_CRITICAL(&status_lock);
+    ++connection_generation;
+    memset(&daily_summary, 0, sizeof(daily_summary));
     strcpy(network_status.cloud_url, settings.server_url);
     strcpy(network_status.wifi_ssid, settings.ssid);
     network_status.wifi_configured = settings.ssid[0] != 0;
@@ -351,14 +363,15 @@ static bool heartbeat(void)
     if (!confirmed && result == ESP_OK) result = ESP_ERR_INVALID_RESPONSE;
     portENTER_CRITICAL(&status_lock);
     // 断线前发出的请求不能把重新连接后的状态误标为成功。
-    if (generation == connection_generation && network_status.wifi_connected) {
+    bool current = generation == connection_generation && network_status.wifi_connected;
+    if (current) {
         network_status.server_connected = confirmed;
         network_status.server_error = result;
         network_status.http_status = http_status;
         if (confirmed) last_confirmed_ms = esp_timer_get_time() / 1000;
     }
     portEXIT_CRITICAL(&status_lock);
-    if (confirmed) {
+    if (confirmed && current && !provisioning_busy()) {
         cJSON *server_time = cJSON_GetObjectItemCaseSensitive(reply, "serverTimeMs");
         // 局域网调试可用电脑时间启动时钟；HTTPS 需先由 SNTP 或手机完成校时。
         if (!network_has_time() && cJSON_IsNumber(server_time)
@@ -381,9 +394,29 @@ static bool heartbeat(void)
         if (sent_result) cloud_command_ack(&cloud_command, storage_save_command);
         const cJSON *owner = cJSON_GetObjectItemCaseSensitive(reply, "bindingId");
         bool owner_valid = cJSON_IsNull(owner) || (cJSON_IsString(owner) && provision_uuid(owner->valuestring));
+        if (owner_valid && (!cJSON_IsString(owner) || strcmp(binding.binding_id, owner->valuestring))) {
+            // 云端归属已变化时先隐藏旧主人的统计，即使本地绑定暂时保存失败。
+            portENTER_CRITICAL(&status_lock);
+            if (generation == connection_generation) memset(&daily_summary, 0, sizeof(daily_summary));
+            portEXIT_CRITICAL(&status_lock);
+        }
         // No commands or ownership writes from an in-flight response after BLE starts.
         if (owner_valid && !provisioning_busy()
-            && device_change_binding(cJSON_IsString(owner) ? owner->valuestring : "") == ESP_OK) receive_command(reply);
+            && device_change_binding(cJSON_IsString(owner) ? owner->valuestring : "") == ESP_OK) {
+            const char *owner_id = cJSON_IsString(owner) ? owner->valuestring : "";
+            daily_summary_t summary = {0};
+            if (owner_id[0] && !strcmp(binding.binding_id, owner_id)) {
+                int64_t timestamp = cJSON_IsNumber(server_time) && isfinite(server_time->valuedouble)
+                    && server_time->valuedouble >= 1704067200000.0 && server_time->valuedouble < 4102444800000.0
+                    ? (int64_t)server_time->valuedouble : 0;
+                daily_summary_parse(&summary, cJSON_GetObjectItemCaseSensitive(reply, "dailySummary"),
+                    owner_id, timestamp, esp_timer_get_time() / 1000);
+            }
+            portENTER_CRITICAL(&status_lock);
+            if (generation == connection_generation) daily_summary = summary;
+            portEXIT_CRITICAL(&status_lock);
+            receive_command(reply);
+        }
     } else ESP_LOGW(TAG, "心跳未确认：%s", esp_err_to_name(result));
     cJSON_Delete(reply);
     cJSON_Delete(body);
@@ -431,6 +464,12 @@ static esp_err_t upload_one(void)
             }
         }
         result = acknowledged ? storage_ack(sequence) : ESP_ERR_INVALID_RESPONSE;
+        if (result == ESP_OK) {
+            portENTER_CRITICAL(&status_lock);
+            // 上传完成后，等下一次心跳确认统计再显示“已同步”。
+            daily_summary.synced = false;
+            portEXIT_CRITICAL(&status_lock);
+        }
     }
     cJSON_Delete(reply);
     cJSON_Delete(body);

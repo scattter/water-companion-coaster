@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ApiError, errorMessage, request } from './api';
+import { operationStorage, platform } from './platform';
+import { useNotice } from './notices';
 import { commandStorageKey, type Session } from './session';
 
 const props = defineProps<{
@@ -32,10 +34,15 @@ let timer: ReturnType<typeof setInterval> | undefined;
 let disposed = false;
 const pending = computed(() => command.value?.status === 'pending');
 const canSetCup = computed(() => props.online && props.calibrated && !busy.value && !pending.value);
+const errorNotice = useNotice('web:cup:error', () => error.value, {
+  enabled: () => props.active && !busy.value,
+  action: () => pending.value ? { label: '查询设置结果', run: queryCommand } : undefined,
+});
+useNotice('web:cup:feedback', () => feedback.value, { enabled: () => props.active && !busy.value });
 
 function rememberCommand(value: Command) {
   // 先保存请求编号，响应丢失或刷新页面后仍能查询同一操作，避免重复写入。
-  sessionStorage.setItem(storageKey, JSON.stringify(value));
+  operationStorage.setItem(storageKey, JSON.stringify(value));
   command.value = value;
 }
 
@@ -49,11 +56,11 @@ function applyCommand(value: Command) {
   uncertain.value = false;
   error.value = '';
   if (value.status === 'pending') {
-    try { sessionStorage.setItem(storageKey, JSON.stringify(value)); }
+    try { operationStorage.setItem(storageKey, JSON.stringify(value)); }
     catch { error.value = '浏览器无法保存操作状态，请保持本页打开，直到确认结果。'; }
     return;
   }
-  try { sessionStorage.removeItem(storageKey); } catch { /* 已确认结果，不影响当前页面展示。 */ }
+  try { operationStorage.removeItem(storageKey); } catch { /* 已确认结果，不影响当前页面展示。 */ }
   if (value.status === 'succeeded') {
     feedback.value = '空杯设置成功，可以加水使用了。';
     emit('updated');
@@ -87,11 +94,19 @@ async function checkCommand(manual = false) {
       checkingStopped.value = true;
       if (!error.value) error.value = '尚未确认设备执行结果，自动查询已暂停。请点击“查询设置结果”继续确认。';
     }
+    if (!disposed) errorNotice.show();
   }
+}
+
+async function queryCommand() {
+  if (!props.active || !pending.value || busy.value || disposed) return;
+  errorNotice.reset();
+  await checkCommand(true);
 }
 
 async function submitCommand() {
   if (!command.value || busy.value) return;
+  errorNotice.reset();
   const id = command.value.id;
   busy.value = true;
   checkingStopped.value = false;
@@ -109,22 +124,24 @@ async function submitCommand() {
     if (disposed || accessError(cause)) return;
     if (cause instanceof ApiError && [400, 409, 422].includes(cause.status)) {
       command.value = null;
-      try { sessionStorage.removeItem(storageKey); } catch { /* 重试时仍使用服务器校验。 */ }
+      try { operationStorage.removeItem(storageKey); } catch { /* 重试时仍使用服务器校验。 */ }
       uncertain.value = false;
       error.value = errorMessage(cause);
     } else {
       uncertain.value = true;
       error.value = `请求结果未确认：${errorMessage(cause)}。将查询同一次操作，不会自动重新发送。`;
     }
-  } finally { busy.value = false; }
+  } finally { busy.value = false; if (!disposed) errorNotice.show(); }
 }
 
 async function setCup() {
   if (!canSetCup.value) return;
+  errorNotice.reset();
   try {
     rememberCommand({ id: crypto.randomUUID(), bindingId: props.bindingId, status: 'pending', message: null, expiresAt: Date.now() + 120000 });
   } catch {
     error.value = '浏览器无法保存操作状态。请允许此网站使用会话存储后重试，当前未发送设置请求。';
+    errorNotice.show();
     return;
   }
   await submitCommand();
@@ -132,7 +149,7 @@ async function setCup() {
 
 onMounted(() => {
   try {
-    const stored = sessionStorage.getItem(storageKey);
+    const stored = operationStorage.getItem(storageKey);
     if (stored) {
       const value = JSON.parse(stored) as Command;
       if (typeof value.id === 'string' && /^[0-9a-f-]{36}$/i.test(value.id) && value.status === 'pending' && value.bindingId === props.bindingId && Number.isFinite(value.expiresAt)) {
@@ -160,19 +177,19 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer); });
       <h3 id="cup-title">日常空杯设置</h3>
       <p class="setup-tip">放上日常使用的空杯，静置至少 3 秒后点击“记住这个杯子”。无需输入重量；以后换杯时重复这一步。</p>
       <div class="device-reading">
-        <span>当前总重 <strong>{{ online && weightGrams != null ? `${weightGrams.toFixed(1)} g` : '—' }}</strong></span>
-        <span>已记住的空杯 <strong>{{ emptyCupGrams != null ? `${emptyCupGrams.toFixed(1)} g` : '尚未设置' }}</strong></span>
+        <div><span>当前总重</span><strong>{{ online && weightGrams != null ? `${weightGrams.toFixed(1)} g` : '—' }}</strong></div>
+        <div><span>已记住的空杯</span><strong>{{ emptyCupGrams != null ? `${emptyCupGrams.toFixed(1)} g` : '尚未设置' }}</strong></div>
       </div>
       <p v-if="calibrated === false" class="notice error" role="alert">杯垫尚未完成出厂标定，请联系售后。你无需准备砝码或自行校准。</p>
       <p v-else-if="calibrated === undefined" class="setup-tip">正在读取杯垫状态…</p>
       <button class="primary" :disabled="!canSetCup" @click="setCup">{{ pending ? '正在等待设置结果…' : '记住这个杯子' }}</button>
       <p v-if="pending" class="setup-tip" role="status">等待杯垫确认，请保持空杯静置。关闭设置后可回来继续查询。</p>
       <div v-if="pending" class="command-actions">
-        <button :disabled="busy" @click="checkCommand(true)">{{ busy ? '正在确认…' : '查询设置结果' }}</button>
+        <button :disabled="busy" @click="queryCommand">{{ busy ? '正在确认…' : '查询设置结果' }}</button>
         <button v-if="uncertain" :disabled="busy || !online" @click="submitCommand">重试同一次请求</button>
       </div>
-      <div v-if="error" class="notice error" role="alert">{{ error }}</div>
-      <div v-if="feedback" class="notice success" role="status">{{ feedback }}</div>
+      <div v-if="!platform.mobile && error" class="notice error" role="alert">{{ error }}</div>
+      <div v-if="!platform.mobile && feedback" class="notice success" role="status">{{ feedback }}</div>
     </section>
     <details class="network-settings">
       <summary><strong>兼容方式：通过热点更换 Wi-Fi</strong></summary>
@@ -190,20 +207,26 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer); });
 </template>
 
 <style scoped>
-.setup-panel { margin:0; padding:22px 26px; border:0; border-radius:0; }
+.setup-panel { margin:0; padding:22px var(--settings-inline-padding, 26px); border:0; border-radius:0; }
 .setup-panel > .section-heading h2 { font-size:17px; }
 .setup-panel > .section-heading .connection-badge { font-size:12px; padding:5px 9px; }
 .setup-tip { color:#5d7568; font-size:13px; line-height:1.8; margin:12px 0; overflow-wrap:anywhere; }
 .setup-tip li { margin:8px 0; }
 h3 { margin:0; font-size:15px; }
 .cup-setup,.network-settings { border-top:1px solid #e5eadf; margin-top:20px; padding-top:20px; }
-.device-reading { display:flex; flex-wrap:wrap; gap:10px 22px; padding:10px 0 18px; font-size:13px; }
+.cup-setup { display:grid; gap:14px; }
+.cup-setup > .setup-tip,.cup-setup > .notice { margin:0; }
+.device-reading { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; padding:14px; border-radius:10px; background:#f4f7f0; font-size:13px; }
+.device-reading > div { display:flex; flex-direction:column; gap:6px; min-width:0; overflow-wrap:anywhere; }
+.device-reading span { color:#5d7568; font-size:12px; }
+.device-reading strong { font-size:17px; font-weight:600; }
+.cup-setup > button { justify-self:start; }
 button { padding:10px 15px; min-height:40px; background:#edf3e9; border:1px solid #d8e1d5; border-radius:8px; color:#263d35; font-size:13px; }
 button.primary { background:#43745d; color:#fff; border-color:#43745d; }
-.command-actions { display:flex; flex-wrap:wrap; gap:10px; }
+.command-actions { display:flex; flex-wrap:wrap; gap:12px; }
 .notice { margin:14px 0 0; }
 summary { cursor:pointer; line-height:1.7; }
 summary:focus-visible { outline:2px solid #43745d; outline-offset:3px; }
 .hotspot-link { display:inline-flex; align-items:center; min-height:40px; color:#43745d; font-size:13px; text-decoration:underline; text-underline-offset:3px; }
-@media(max-width:760px) { .setup-panel { padding:18px; } }
+@media(max-width:560px) { .cup-setup > button { width:100%; min-height:44px; } }
 </style>

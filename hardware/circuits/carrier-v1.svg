@@ -1,0 +1,181 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1720" height="1440" viewBox="0 0 1720 1440" role="img" aria-labelledby="title desc">
+<title id="title">杯垫底板 v1 电气连接设计</title>
+<desc id="desc">复用开发板 Type-C，用 MCP73831 以约 0.5 A 充电，用 CE 接 USB 5 V 的 LM66100 隔离原板充电器。HX711 为四针 2.54 mm 接口。</desc>
+<style>
+text { font-family: "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #152a3a; }
+.wire { fill: none; stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
+.component { fill: #ffffff; stroke: #36536a; stroke-width: 2.5; }
+</style>
+<rect width="1720" height="1440" fill="#ffffff"/>
+
+<text x="60" y="70" font-size="38" text-anchor="start" style="fill:#152a3a" font-weight="650">杯垫电池底板 v1</text>
+<text x="60" y="112" font-size="23" text-anchor="start" style="fill:#738496" font-weight="400">电气连接设计 · 开发板不改动 · 复用原 Type-C · 603759 / 1500 mAh</text>
+<text x="1660" y="70" font-size="22" text-anchor="end" style="fill:#738496" font-weight="400">2026-10-15</text>
+<rect x="60" y="160" width="300" height="1080" rx="6" fill="#f3f6f9" stroke="#36536a" stroke-width="2.5"/>
+<text x="85" y="205" font-size="25" text-anchor="start" style="fill:#152a3a" font-weight="650">J_DEV  开发板排母</text>
+<text x="85" y="240" font-size="21" text-anchor="start" style="fill:#152a3a" font-weight="400">ESP32-S3-LCD-1.47B</text>
+<rect x="100" y="270" width="220" height="95" rx="6" fill="#e7f0f8" stroke="#176bb2" stroke-width="2.5"/>
+<text x="210" y="309" font-size="24" text-anchor="middle" style="fill:#152a3a" font-weight="600">现有 Type-C</text>
+<text x="210" y="342" font-size="23" text-anchor="middle" style="fill:#176bb2" font-weight="400">5 V 输入</text>
+<polyline points="210,365 210,600" class="wire" stroke="#738496" style="stroke-width:3"/>
+<polyline points="210,400 360,400" class="wire" stroke="#176bb2" style="stroke-width:3"/>
+<circle cx="210" cy="400" r="5" fill="#176bb2"/>
+<text x="345" y="390" font-size="20" text-anchor="end" style="fill:#176bb2" font-weight="400">10  USB_5V</text>
+<text x="85" y="470" font-size="20" text-anchor="start" style="fill:#738496" font-weight="400">U2-10 需接 VBUS</text>
+<text x="85" y="502" font-size="18" text-anchor="start" style="fill:#738496" font-weight="400">原板 R30=0Ω，R31=NC</text>
+<rect x="95" y="600" width="230" height="125" rx="6" fill="#edf0f3" stroke="#738496" stroke-width="2.5"/>
+<text x="210" y="633" font-size="23" text-anchor="middle" style="fill:#152a3a" font-weight="400">原板 ETA6098</text>
+<text x="210" y="666" font-size="21" text-anchor="middle" style="fill:#152a3a" font-weight="400">R5 保持原样</text>
+<text x="210" y="701" font-size="18" text-anchor="middle" style="fill:#152a3a" font-weight="400">输出仍在 BAT_DEV 侧</text>
+<polyline points="210,725 210,830 360,830" class="wire" stroke="#738496" style="stroke-width:3"/>
+<text x="345" y="818" font-size="20" text-anchor="end" style="fill:#ba5a12" font-weight="400">7  BAT_DEV</text>
+<text x="85" y="895" font-size="21" text-anchor="start" style="fill:#152a3a" font-weight="400">原有电源切换、稳压</text>
+<text x="85" y="926" font-size="21" text-anchor="start" style="fill:#152a3a" font-weight="400">与固件接线继续使用</text>
+<text x="85" y="988" font-size="18" text-anchor="start" style="fill:#738496" font-weight="400">以下编号沿用官方 U2</text>
+<text x="340" y="1061" font-size="21" text-anchor="end" style="fill:#152a3a" font-weight="400">12  3V3</text>
+<text x="340" y="1101" font-size="21" text-anchor="end" style="fill:#152a3a" font-weight="400">6 / 11  GND</text>
+<text x="340" y="1141" font-size="21" text-anchor="end" style="fill:#152a3a" font-weight="400">14  GPIO2</text>
+<text x="340" y="1181" font-size="21" text-anchor="end" style="fill:#152a3a" font-weight="400">16  GPIO4</text>
+<rect x="750" y="270" width="330" height="270" rx="6" fill="#f7fbff" stroke="#176bb2" stroke-width="2.5"/>
+<text x="915" y="307" font-size="25" text-anchor="middle" style="fill:#152a3a" font-weight="650">U_CHG</text>
+<text x="915" y="392" font-size="23" text-anchor="middle" style="fill:#152a3a" font-weight="600">MCP73831T-2ACI/OT</text>
+<text x="915" y="427" font-size="25" text-anchor="middle" style="fill:#176bb2" font-weight="400">4.2 V · 约 0.5 A</text>
+<text x="770" y="344" font-size="21" text-anchor="start" style="fill:#152a3a" font-weight="400">4 VDD</text>
+<text x="1060" y="344" font-size="21" text-anchor="end" style="fill:#152a3a" font-weight="400">VBAT 3</text>
+<text x="770" y="503" font-size="21" text-anchor="start" style="fill:#152a3a" font-weight="400">1 STAT</text>
+<text x="810" y="524" font-size="20" text-anchor="middle" style="fill:#152a3a" font-weight="400">2 VSS</text>
+<text x="970" y="524" font-size="20" text-anchor="middle" style="fill:#152a3a" font-weight="400">5 PROG</text>
+<polyline points="360,400 490,400 490,340 750,340" class="wire" stroke="#176bb2" style="stroke-width:3"/>
+<circle cx="490" cy="400" r="5" fill="#176bb2"/>
+<circle cx="650" cy="340" r="5" fill="#176bb2"/>
+<polyline points="650,340 650,374.5" class="wire" stroke="#176bb2" style="stroke-width:3"/>
+<polyline points="632,374.5 668,374.5" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="632,390.5 668,390.5" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="650,390.5 650,425" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="650,425 650,437" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="630,437 670,437" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="637,445 663,445" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="644,453 656,453" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<text x="510" y="385.5" font-size="21" text-anchor="start" style="fill:#152a3a" font-weight="400">C1  10µF</text>
+<polyline points="490,400 490,500 520,500" class="wire" stroke="#176bb2" style="stroke-width:3"/>
+<rect x="520" y="488" width="60" height="24" rx="0" fill="#ffffff" stroke="#36536a" stroke-width="2.5"/>
+<polyline points="580,500 605,500" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<path d="M605 485 L630 500 L605 515 Z" fill="#fbe9e6" stroke="#a23c2b" stroke-width="2.5"/>
+<polyline points="633,484 633,516" class="wire" stroke="#a23c2b" style="stroke-width:3"/>
+<polyline points="633,500 750,500" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="620,478 631,467" class="wire" stroke="#a23c2b" style="stroke-width:2"/>
+<polyline points="631,467 625,468" class="wire" stroke="#a23c2b" style="stroke-width:2"/>
+<polyline points="632,485 643,474" class="wire" stroke="#a23c2b" style="stroke-width:2"/>
+<text x="550" y="552" font-size="20" text-anchor="middle" style="fill:#152a3a" font-weight="400">R3 2.2kΩ</text>
+<text x="661" y="552" font-size="20" text-anchor="middle" style="fill:#152a3a" font-weight="400">LED1</text>
+<text x="660" y="580" font-size="19" text-anchor="middle" style="fill:#738496" font-weight="400">充电指示</text>
+<polyline points="810,540 810,645" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="810,645 810,657" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="790,657 830,657" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="797,665 823,665" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="804,673 816,673" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="970,540 970,565.0" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<rect x="959" y="565.0" width="22" height="50" rx="0" fill="#ffffff" stroke="#36536a" stroke-width="2.5"/>
+<polyline points="970,615.0 970,640" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<text x="1005" y="597.0" font-size="21" text-anchor="start" style="fill:#152a3a" font-weight="400">R1  2.00kΩ / 1%</text>
+<polyline points="970,640 970,652" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="950,652 990,652" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="957,660 983,660" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="964,668 976,668" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="1080,340 1480,340" class="wire" stroke="#ba5a12" style="stroke-width:3"/>
+<circle cx="1250" cy="340" r="5" fill="#ba5a12"/>
+<circle cx="1350" cy="340" r="5" fill="#ba5a12"/>
+<text x="1320" y="316" font-size="22" text-anchor="middle" style="fill:#ba5a12" font-weight="600">BAT_CELL</text>
+<polyline points="1250,340 1250,397.0" class="wire" stroke="#ba5a12" style="stroke-width:3"/>
+<polyline points="1232,397.0 1268,397.0" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="1232,413.0 1268,413.0" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="1250,413.0 1250,470" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="1250,470 1250,482" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="1230,482 1270,482" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="1237,490 1263,490" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="1244,498 1256,498" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<text x="1088" y="408.0" font-size="21" text-anchor="start" style="fill:#152a3a" font-weight="400">C2  10µF</text>
+<rect x="1480" y="260" width="190" height="240" rx="6" fill="#fff8ed" stroke="#ba5a12" stroke-width="2.5"/>
+<text x="1575" y="298" font-size="25" text-anchor="middle" style="fill:#152a3a" font-weight="650">J_BAT</text>
+<text x="1495" y="344" font-size="23" text-anchor="start" style="fill:#ba5a12" font-weight="400">1  BAT+</text>
+<text x="1495" y="434" font-size="23" text-anchor="start" style="fill:#152a3a" font-weight="400">2  BAT−</text>
+<text x="1575" y="478" font-size="20" text-anchor="middle" style="fill:#152a3a" font-weight="400">PH 2.0 / 2P</text>
+<polyline points="1480,430 1400,430 1400,475" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="1400,475 1400,487" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="1380,487 1420,487" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="1387,495 1413,495" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="1394,503 1406,503" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<text x="1480" y="545" font-size="20" text-anchor="start" style="fill:#152a3a" font-weight="400">603759 · 1500mAh</text>
+<text x="1480" y="575" font-size="18" text-anchor="start" style="fill:#738496" font-weight="400">按实物核对插头极性</text>
+<rect x="840" y="680" width="340" height="250" rx="6" fill="#fff9f2" stroke="#ba5a12" stroke-width="2.5"/>
+<text x="1010" y="710" font-size="25" text-anchor="middle" style="fill:#152a3a" font-weight="650">U_ISO</text>
+<text x="1010" y="778" font-size="24" text-anchor="middle" style="fill:#152a3a" font-weight="600">LM66100DCKR</text>
+<text x="1010" y="807" font-size="20" text-anchor="middle" style="fill:#ba5a12" font-weight="400">USB 控制充电隔离</text>
+<text x="1160" y="727" font-size="21" text-anchor="end" style="fill:#152a3a" font-weight="400">VIN 1</text>
+<text x="860" y="837" font-size="21" text-anchor="start" style="fill:#152a3a" font-weight="400">6 VOUT</text>
+<text x="1160" y="857" font-size="21" text-anchor="end" style="fill:#152a3a" font-weight="400">CE 3</text>
+<text x="900" y="914" font-size="19" text-anchor="middle" style="fill:#152a3a" font-weight="400">2 GND</text>
+<text x="1030" y="914" font-size="19" text-anchor="middle" style="fill:#152a3a" font-weight="400">5 ST</text>
+<text x="1140" y="914" font-size="19" text-anchor="middle" style="fill:#152a3a" font-weight="400">4 NC</text>
+<polyline points="1350,340 1350,720 1180,720" class="wire" stroke="#ba5a12" style="stroke-width:3"/>
+<polyline points="840,830 360,830" class="wire" stroke="#ba5a12" style="stroke-width:3"/>
+<circle cx="650" cy="830" r="5" fill="#ba5a12"/>
+<text x="575" y="804" font-size="22" text-anchor="start" style="fill:#ba5a12" font-weight="600">BAT_DEV</text>
+<polyline points="650,830 650,879.5" class="wire" stroke="#ba5a12" style="stroke-width:3"/>
+<polyline points="632,879.5 668,879.5" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="632,895.5 668,895.5" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="650,895.5 650,945" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="650,945 650,957" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="630,957 670,957" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="637,965 663,965" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="644,973 656,973" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<text x="690" y="890.5" font-size="21" text-anchor="start" style="fill:#152a3a" font-weight="400">C3  1µF</text>
+<polyline points="1180,850 1460,850" class="wire" stroke="#176bb2" style="stroke-width:3"/>
+<circle cx="1320" cy="850" r="5" fill="#176bb2"/>
+<text x="1460" y="837" font-size="22" text-anchor="end" style="fill:#176bb2" font-weight="600">USB_5V</text>
+<polyline points="1320,850 1320,880.0" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<rect x="1309" y="880.0" width="22" height="50" rx="0" fill="#ffffff" stroke="#36536a" stroke-width="2.5"/>
+<polyline points="1320,930.0 1320,960" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<text x="1350" y="912.0" font-size="21" text-anchor="start" style="fill:#152a3a" font-weight="400">R2 100kΩ</text>
+<polyline points="1320,960 1320,972" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="1300,972 1340,972" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="1307,980 1333,980" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="1314,988 1326,988" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="900,930 900,985" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="900,985 900,997" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="880,997 920,997" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="887,1005 913,1005" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="894,1013 906,1013" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="1030,930 1030,985" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="1030,985 1030,997" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="1010,997 1050,997" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="1017,1005 1043,1005" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="1024,1013 1036,1013" class="wire" stroke="#36536a" style="stroke-width:2"/>
+<polyline points="1140,930 1140,957" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<polyline points="1134,951 1146,963" class="wire" stroke="#738496" style="stroke-width:2"/>
+<polyline points="1134,963 1146,951" class="wire" stroke="#738496" style="stroke-width:2"/>
+<rect x="1410" y="635" width="260" height="140" rx="6" fill="#f3f6f9" stroke="#d7e0e8" stroke-width="2.5"/>
+<text x="1430" y="671" font-size="22" text-anchor="start" style="fill:#152a3a" font-weight="600">CE = USB_5V</text>
+<text x="1430" y="710" font-size="21" text-anchor="start" style="fill:#152a3a" font-weight="400">插 USB：阻断回灌</text>
+<text x="1430" y="748" font-size="21" text-anchor="start" style="fill:#152a3a" font-weight="400">拔 USB：电池供电</text>
+<rect x="840" y="1040" width="340" height="200" rx="6" fill="#f1faf6" stroke="#238062" stroke-width="2.5"/>
+<text x="1115" y="1078" font-size="25" text-anchor="middle" style="fill:#152a3a" font-weight="650">J_HX</text>
+<text x="1115" y="1112" font-size="21" text-anchor="middle" style="fill:#152a3a" font-weight="400">1×4 排母</text>
+<text x="1115" y="1147" font-size="21" text-anchor="middle" style="fill:#152a3a" font-weight="400">2.54 mm</text>
+<text x="1115" y="1182" font-size="24" text-anchor="middle" style="fill:#152a3a" font-weight="600">HX711</text>
+<polyline points="360,1070 840,1070" class="wire" stroke="#238062" style="stroke-width:3"/>
+<text x="860" y="1077" font-size="22" text-anchor="start" style="fill:#152a3a" font-weight="400">1  VCC</text>
+<polyline points="360,1110 840,1110" class="wire" stroke="#36536a" style="stroke-width:3"/>
+<text x="860" y="1117" font-size="22" text-anchor="start" style="fill:#152a3a" font-weight="400">2  GND</text>
+<polyline points="360,1150 840,1150" class="wire" stroke="#238062" style="stroke-width:3"/>
+<text x="860" y="1157" font-size="22" text-anchor="start" style="fill:#152a3a" font-weight="400">3  DT</text>
+<polyline points="360,1190 840,1190" class="wire" stroke="#238062" style="stroke-width:3"/>
+<text x="860" y="1197" font-size="22" text-anchor="start" style="fill:#152a3a" font-weight="400">4  SCK</text>
+<text x="1240" y="1082" font-size="23" text-anchor="start" style="fill:#238062" font-weight="400">沿用固件 GP2 / GP4</text>
+<text x="1240" y="1122" font-size="21" text-anchor="start" style="fill:#152a3a" font-weight="400">模块按丝印逐脚对应</text>
+<text x="1240" y="1160" font-size="21" text-anchor="start" style="fill:#152a3a" font-weight="400">顺序不同则用短线转接</text>
+<polyline points="60,1290 1660,1290" class="wire" stroke="#d7e0e8" style="stroke-width:2"/>
+<text x="60" y="1330" font-size="22" text-anchor="start" style="fill:#152a3a" font-weight="600">关键连接：BAT_CELL 与 BAT_DEV 不得短接；U_ISO 的 CE 必须连接 USB_5V。</text>
+<text x="60" y="1370" font-size="20" text-anchor="start" style="fill:#738496" font-weight="400">此图采用原板 U2 编号；已完成 PCB 与 EDA 检查，详见 carrier-v1.md；实物装配和上电测试待完成。</text>
+<text x="1660" y="1410" font-size="18" text-anchor="end" style="fill:#738496" font-weight="400">详细参数与网络表：carrier-v1.md</text>
+</svg>

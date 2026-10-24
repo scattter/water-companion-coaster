@@ -1,0 +1,7 @@
+{
+  "identifier": "android",
+  "description": "安卓本地界面、原生蓝牙与桌面小组件",
+  "platforms": ["android"],
+  "windows": ["main"],
+  "permissions": ["core:default", "coaster-mobile:default", "opener:default"]
+}

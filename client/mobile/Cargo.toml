@@ -1,0 +1,11 @@
+[package]
+name = "coaster-mobile"
+version = "0.1.0"
+edition = "2021"
+links = "coaster-mobile"
+
+[dependencies]
+tauri = { version = "2.10", features = [] }
+
+[build-dependencies]
+tauri-plugin = { version = "2.5", features = ["build"] }

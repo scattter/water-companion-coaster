@@ -1,0 +1,788 @@
+{
+  "revision": "v1.3",
+  "checked_at": "2026-10-24T17:15:09+08:00",
+  "project": "杯垫电池底板 v1.3 ADC",
+  "project_uuid": "57735453536913e45f96722cf6b4f41f6e9f8c32680a896ce4c340af4fe3530a",
+  "pcb_drc": {
+    "strict": true,
+    "result": []
+  },
+  "schematic_erc": {
+    "result": [
+      {
+        "type": "warn",
+        "count": 1
+      }
+    ],
+    "fatal_errors": 0,
+    "errors": 0,
+    "warning_detail_verified": true,
+    "warning": "元件的属性与供应商编号不匹配，建议器件标准化。",
+    "affected_designators": [
+      "J_DEV_A",
+      "J_DEV_B",
+      "J_HX",
+      "J_BAT",
+      "R1",
+      "R2",
+      "R3",
+      "C1",
+      "C2",
+      "C3",
+      "LED1",
+      "R4",
+      "R5",
+      "R6"
+    ],
+    "note": "继承的用途名称/属性及封装提示；新增电阻复用 R2。LED1 既有焊盘尺寸差异需厂商 DFM 确认。另有 6 个描述性位号的信息提示。"
+  },
+  "netlist": {
+    "schematic_matches_pcb": true,
+    "matches_design_pin_map": true,
+    "components": 17,
+    "connected_pins": 46,
+    "unconnected_pins": 11,
+    "pin_map": {
+      "J_DEV_A": {
+        "6": "GND",
+        "7": "BAT_DEV"
+      },
+      "J_DEV_B": {
+        "1": "USB_5V",
+        "2": "GND",
+        "3": "3V3",
+        "5": "HX_DT",
+        "7": "HX_SCK",
+        "8": "BAT_SENSE"
+      },
+      "J_BAT": {
+        "1": "BAT_CELL",
+        "2": "GND"
+      },
+      "J_HX": {
+        "1": "3V3",
+        "2": "HX_SCK",
+        "3": "HX_DT",
+        "4": "GND"
+      },
+      "U_CHG": {
+        "1": "CHG_STAT",
+        "2": "GND",
+        "3": "BAT_CELL",
+        "4": "USB_5V",
+        "5": "PROG"
+      },
+      "U_ISO": {
+        "1": "BAT_CELL",
+        "2": "GND",
+        "3": "USB_5V",
+        "5": "GND",
+        "6": "BAT_DEV"
+      },
+      "R1": {
+        "1": "PROG",
+        "2": "GND"
+      },
+      "R2": {
+        "1": "USB_5V",
+        "2": "GND"
+      },
+      "R3": {
+        "1": "USB_5V",
+        "2": "LED_A"
+      },
+      "C1": {
+        "1": "USB_5V",
+        "2": "GND"
+      },
+      "C2": {
+        "1": "BAT_CELL",
+        "2": "GND"
+      },
+      "C3": {
+        "1": "BAT_DEV",
+        "2": "GND"
+      },
+      "LED1": {
+        "1": "CHG_STAT",
+        "2": "LED_A"
+      },
+      "R4": {
+        "1": "BAT_CELL",
+        "2": "BAT_DIV_MID"
+      },
+      "R5": {
+        "1": "BAT_DIV_MID",
+        "2": "BAT_SENSE"
+      },
+      "R6": {
+        "1": "BAT_SENSE",
+        "2": "GND"
+      },
+      "C4": {
+        "1": "BAT_SENSE",
+        "2": "GND"
+      }
+    }
+  },
+  "adc": {
+    "input_net": "BAT_CELL",
+    "output_net": "BAT_SENSE",
+    "pin": "J_DEV_B.8 / GPIO5 / ADC1_CH4",
+    "upper_ohm": 200000,
+    "upper_parts": [
+      "R4",
+      "R5"
+    ],
+    "lower_ohm": 100000,
+    "lower_part": "R6",
+    "filter_farad": 1e-07,
+    "ratio_nominal": 0.3333333333333333,
+    "input_at_4v2_battery": 1.4,
+    "divider_current_uA_at_4v2": 14,
+    "time_constant_ms": 6.666666666666665,
+    "firmware_implemented": false
+  },
+  "pcb": {
+    "size_mm": [
+      60,
+      45
+    ],
+    "layers": 2,
+    "components": 17,
+    "all_components_top": true,
+    "component_centers_mm_rotation": {
+      "J_DEV_A": [
+        21.47,
+        24.27,
+        180
+      ],
+      "U_CHG": [
+        14.0,
+        14.0,
+        0
+      ],
+      "J_DEV_B": [
+        21.47,
+        42.05,
+        0
+      ],
+      "J_HX": [
+        12.0,
+        4.8,
+        0
+      ],
+      "J_BAT": [
+        24.0,
+        5.5,
+        0
+      ],
+      "R1": [
+        9.0,
+        13.0,
+        0
+      ],
+      "R2": [
+        27.0,
+        17.2,
+        0
+      ],
+      "R3": [
+        9.5,
+        9.5,
+        0
+      ],
+      "C1": [
+        8.0,
+        18.0,
+        0
+      ],
+      "C2": [
+        18.0,
+        18.0,
+        0
+      ],
+      "C3": [
+        24.0,
+        18.8,
+        0
+      ],
+      "LED1": [
+        15.5,
+        9.5,
+        0
+      ],
+      "U_ISO": [
+        23.0,
+        14.0,
+        0
+      ],
+      "C4": [
+        42.0,
+        12.5,
+        0
+      ],
+      "R4": [
+        35.0,
+        16.0,
+        0
+      ],
+      "R5": [
+        39.0,
+        16.0,
+        0
+      ],
+      "R6": [
+        45.0,
+        16.0,
+        0
+      ]
+    },
+    "track_segments": 99,
+    "vias": 28,
+    "filled_ground_pours": 2,
+    "keepouts": [
+      {
+        "layer": 1,
+        "rectangle_mm": [
+          29.0,
+          26.0,
+          60.0,
+          40.5
+        ]
+      },
+      {
+        "layer": 2,
+        "rectangle_mm": [
+          29.0,
+          26.0,
+          60.0,
+          40.5
+        ]
+      },
+      {
+        "layer": 1,
+        "rectangle_mm": [
+          0.0,
+          29.0,
+          8.2,
+          37.2
+        ]
+      },
+      {
+        "layer": 2,
+        "rectangle_mm": [
+          0.0,
+          29.0,
+          8.2,
+          37.2
+        ]
+      }
+    ],
+    "tracks_clear_keepouts": true,
+    "mounting_holes_mm": [
+      [
+        3.0,
+        3.0,
+        3.2
+      ],
+      [
+        3.0,
+        21.0,
+        3.2
+      ],
+      [
+        57.0,
+        3.0,
+        3.2
+      ],
+      [
+        57.0,
+        21.0,
+        3.2
+      ]
+    ],
+    "module_connector_and_holes_removed": true
+  },
+  "gerber": {
+    "zip_integrity": true,
+    "files": [
+      "Gerber_TopLayer.GTL",
+      "Gerber_BottomLayer.GBL",
+      "Gerber_TopSilkscreenLayer.GTO",
+      "Gerber_BottomSilkscreenLayer.GBO",
+      "Gerber_TopSolderMaskLayer.GTS",
+      "Gerber_BottomSolderMaskLayer.GBS",
+      "Gerber_TopPasteMaskLayer.GTP",
+      "Gerber_BoardOutlineLayer.GKO",
+      "Gerber_DocumentLayer.GDL",
+      "Gerber_DrillDrawingLayer.GDD",
+      "Drill_PTH_Through.DRL",
+      "Drill_NPTH_Through.DRL",
+      "Drill_PTH_Through_Via.DRL",
+      "FlyingProbeTesting.json",
+      "PCB下单必读.txt"
+    ],
+    "copper_areas": {
+      "Gerber_TopLayer.GTL": 43,
+      "Gerber_BottomLayer.GBL": 14
+    },
+    "drills": {
+      "Drill_PTH_Through.DRL": [
+        {
+          "diameter_mm": 0.3,
+          "count": 25,
+          "centers_mm": [
+            [
+              16.1,
+              14.0
+            ],
+            [
+              9.0,
+              19.0
+            ],
+            [
+              19.0,
+              17.0
+            ],
+            [
+              25.0,
+              18.0
+            ],
+            [
+              9.753,
+              14.0
+            ],
+            [
+              23.0,
+              14.0
+            ],
+            [
+              6.0,
+              10.0
+            ],
+            [
+              5.0,
+              25.0
+            ],
+            [
+              12.0,
+              27.0
+            ],
+            [
+              18.0,
+              30.0
+            ],
+            [
+              24.0,
+              35.0
+            ],
+            [
+              28.0,
+              43.7
+            ],
+            [
+              38.0,
+              12.0
+            ],
+            [
+              46.0,
+              16.0
+            ],
+            [
+              57.0,
+              16.0
+            ],
+            [
+              56.0,
+              25.0
+            ],
+            [
+              40.0,
+              3.0
+            ],
+            [
+              3.0,
+              43.0
+            ],
+            [
+              20.7,
+              13.35
+            ],
+            [
+              22.3,
+              18.8
+            ],
+            [
+              22.74,
+              22.0
+            ],
+            [
+              24.0,
+              21.8
+            ],
+            [
+              27.75,
+              16.0
+            ],
+            [
+              55.0,
+              43.0
+            ],
+            [
+              35.0,
+              43.5
+            ]
+          ]
+        },
+        {
+          "diameter_mm": 0.3,
+          "count": 3,
+          "centers_mm": [
+            [
+              41.0,
+              16.0
+            ],
+            [
+              47.0,
+              16.0
+            ],
+            [
+              43.5,
+              12.5
+            ]
+          ]
+        },
+        {
+          "diameter_mm": 1.001,
+          "count": 2,
+          "centers_mm": [
+            [
+              22.999,
+              5.5
+            ],
+            [
+              25.001,
+              5.5
+            ]
+          ]
+        },
+        {
+          "diameter_mm": 1.1,
+          "count": 22,
+          "centers_mm": [
+            [
+              31.63,
+              24.27
+            ],
+            [
+              29.09,
+              24.27
+            ],
+            [
+              26.55,
+              24.27
+            ],
+            [
+              24.01,
+              24.27
+            ],
+            [
+              21.47,
+              24.27
+            ],
+            [
+              18.93,
+              24.27
+            ],
+            [
+              16.39,
+              24.27
+            ],
+            [
+              13.85,
+              24.27
+            ],
+            [
+              11.31,
+              24.27
+            ],
+            [
+              11.31,
+              42.05
+            ],
+            [
+              13.85,
+              42.05
+            ],
+            [
+              16.39,
+              42.05
+            ],
+            [
+              18.93,
+              42.05
+            ],
+            [
+              21.47,
+              42.05
+            ],
+            [
+              24.01,
+              42.05
+            ],
+            [
+              26.55,
+              42.05
+            ],
+            [
+              29.09,
+              42.05
+            ],
+            [
+              31.63,
+              42.05
+            ],
+            [
+              8.19,
+              4.8
+            ],
+            [
+              10.73,
+              4.8
+            ],
+            [
+              13.27,
+              4.8
+            ],
+            [
+              15.81,
+              4.8
+            ]
+          ]
+        }
+      ],
+      "Drill_NPTH_Through.DRL": [
+        {
+          "diameter_mm": 3.2,
+          "count": 4,
+          "centers_mm": [
+            [
+              3.0,
+              3.0
+            ],
+            [
+              57.0,
+              3.0
+            ],
+            [
+              3.0,
+              21.0
+            ],
+            [
+              57.0,
+              21.0
+            ]
+          ]
+        }
+      ],
+      "Drill_PTH_Through_Via.DRL": [
+        {
+          "diameter_mm": 0.3,
+          "count": 25,
+          "centers_mm": [
+            [
+              16.1,
+              14.0
+            ],
+            [
+              9.0,
+              19.0
+            ],
+            [
+              19.0,
+              17.0
+            ],
+            [
+              25.0,
+              18.0
+            ],
+            [
+              9.753,
+              14.0
+            ],
+            [
+              23.0,
+              14.0
+            ],
+            [
+              6.0,
+              10.0
+            ],
+            [
+              5.0,
+              25.0
+            ],
+            [
+              12.0,
+              27.0
+            ],
+            [
+              18.0,
+              30.0
+            ],
+            [
+              24.0,
+              35.0
+            ],
+            [
+              28.0,
+              43.7
+            ],
+            [
+              38.0,
+              12.0
+            ],
+            [
+              46.0,
+              16.0
+            ],
+            [
+              57.0,
+              16.0
+            ],
+            [
+              56.0,
+              25.0
+            ],
+            [
+              40.0,
+              3.0
+            ],
+            [
+              3.0,
+              43.0
+            ],
+            [
+              20.7,
+              13.35
+            ],
+            [
+              22.3,
+              18.8
+            ],
+            [
+              22.74,
+              22.0
+            ],
+            [
+              24.0,
+              21.8
+            ],
+            [
+              27.75,
+              16.0
+            ],
+            [
+              55.0,
+              43.0
+            ],
+            [
+              35.0,
+              43.5
+            ]
+          ]
+        },
+        {
+          "diameter_mm": 0.3,
+          "count": 3,
+          "centers_mm": [
+            [
+              41.0,
+              16.0
+            ],
+            [
+              47.0,
+              16.0
+            ],
+            [
+              43.5,
+              12.5
+            ]
+          ]
+        }
+      ]
+    },
+    "via_drill_note": "Drill_PTH_Through_Via.DRL 是总 PTH 的过孔子集，不应重复钻孔。",
+    "flying_probe": {
+      "deduplicated_component_pins": 57,
+      "connected_pin_map_matches": true,
+      "all_pin_coordinates_match_footprints": true,
+      "unconnected_pins": 11,
+      "unconnected_net_ids_are_distinct": true,
+      "native_net_name_aliases": {
+        "BAT_DIV_MID": "NET_11"
+      }
+    },
+    "new_component_paste_aperture_presence": {
+      "C4.2": true,
+      "C4.1": true,
+      "R4.2": true,
+      "R4.1": true,
+      "R5.2": true,
+      "R5.1": true,
+      "R6.2": true,
+      "R6.1": true
+    }
+  },
+  "project_export": {
+    "zip_integrity": true,
+    "matches_checked_pcb": true,
+    "matches_checked_schematic": true,
+    "embedded_documents": 50,
+    "serialization_note": "比较实际图元、属性、网络与坐标，忽略删除记录、默认 strikeout:false 和隐藏属性 zIndex 重排。"
+  },
+  "manufacturing_tables": {
+    "encoding": "UTF-8",
+    "delimiter": ",",
+    "bom_components": 17,
+    "bom_entries": 13,
+    "placement_rows": 17
+  },
+  "not_verified": [
+    "厂商 DFM，含既有 LED1 焊盘尺寸差异",
+    "实物装配、焊接、电池线束极性及开发板 R30/R31 配置",
+    "供电、充放电、USB 插拔瞬态、温升与峰值电流",
+    "ADC 实测校准、不同负载和充电状态下的电压变化",
+    "几格电量显示与低电提醒固件"
+  ],
+  "pdf_review": {
+    "schematic_pages": 1,
+    "pcb_pages": 5,
+    "visually_reviewed": true,
+    "schematic_method": "最终原生 PNG 转为 PDF，保留中文；可编辑工程和 SVG 同目录。",
+    "pcb_method": "解析最终 Gerber/Excellon 并渲染，按最终 BOM 和钻孔数据生成核对 PDF。",
+    "scale_note": "不是 1:1 装配模板。"
+  },
+  "sources": {
+    "adc": "https://docs.espressif.com/projects/esp-idf/en/v4.4.7/esp32s3/api-reference/peripherals/adc.html",
+    "mcu": "https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf",
+    "resistor": "https://www.lcsc.com/product-detail/C25803.html",
+    "capacitor": "https://www.lcsc.com/product-detail/C14663.html"
+  },
+  "file_sha256": {
+    "README.md": "a67513123f84cdedb3802e3f3f98356e9ea446c0e682a57c7f15a90e3a15c01c",
+    "bom.csv": "1d0ccc02c239a327cc41ef85da8e21fc359dbbde8296db9befd90a18b1dd02c5",
+    "carrier-v1.3.epro2": "f0b32f4834b8b980a8ef097b0c35bbaf601bf9c4109711aefaa0103f4f995468",
+    "gerber.zip": "15cca0a83de653d43e113f1cbf7652ab66d0cf177f5081afe0d2f80ea4a64543",
+    "pcb-bottom.png": "04737b6d78a2d95d1e1c5d55d55aa531e87c4ed8654886622c465609367ae4af",
+    "pcb-netlist.json": "e8dff71f6aec71344108f6a03fbe9c06734329965aa2bd2a0420a473cb2b50e5",
+    "pcb-review.pdf": "ada043b3b709795f8be458f00610f23429b25ab40a964953f51e4593d91f5daa",
+    "pcb-top.png": "035ce537d59bb95bd1a42dfd49f477817415b522191aa3d74f7d34034f8826f9",
+    "placement.csv": "f33d844bd9e126a9ebc6183e1c5f108367f4cd21a8028de8379a1154a9159d4c",
+    "schematic-netlist.json": "da51676980cd1b487b62b36056923c67646375817912f5cb78bb551bd83e1f02",
+    "schematic.pdf": "f34c0d3d6cbdea07eaadca075fa8aae53a3df73221cdea9720aa352553fd15ec",
+    "schematic.png": "d7058985ac32ecaf2c13006d8004704a449f5ebf41d1abd50aa1f0ebe86cb1d7",
+    "schematic.svg": "03b309f21aa85749cf012a1c1b12e2317c62de1cf8b89d97545d45dfb1e663b3"
+  }
+}

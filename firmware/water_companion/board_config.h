@@ -2,8 +2,9 @@
 #include "sdkconfig.h"
 
 // 微雪 ESP32-S3-LCD-1.47B 排针；单 VCC 的 HX711 使用 3V3 供电。
-// 官方 1.47B 原理图 Key1/BOOT 接 GPIO0；仅在启动完成后作为输入读取。
+// 官方 1.47B 原理图 BOOT 接 GPIO0；正常启动后作为输入读取。
 #define PROVISION_BUTTON_PIN 0
+#define RGB_LED_PIN 38
 #define HX711_DOUT_PIN 2
 #define HX711_SCK_PIN 4
 

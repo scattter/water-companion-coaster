@@ -1,45 +1,16 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import DeviceSetup from './DeviceSetup.vue';
 import DeviceOnboarding from './DeviceOnboarding.vue';
 import AdminPanel from './AdminPanel.vue';
 import { ApiError, errorMessage, request } from './api';
 import { sameBinding, type Session } from './session';
-
-type EventKind = 'drink' | 'refill';
-interface DrinkEvent {
-  id: string;
-  kind: EventKind;
-  amountMl: number;
-  beforeGrams: number;
-  afterGrams: number;
-  occurredAt: string;
-  revokedAt: string | null;
-}
-interface Dashboard {
-  date: string;
-  timeZone: string;
-  totals: { drinkMl: number; refillMl: number; drinkCount: number };
-  week: { date: string; drinkMl: number }[];
-  events: DrinkEvent[];
-  device: {
-    id: string;
-    lastSeenAt: string | null;
-    online: boolean;
-    weightGrams: number | null;
-    stable: boolean;
-    cupPresent: boolean;
-    source: 'hx711';
-    calibrated: boolean;
-    emptyCupGrams: number | null;
-    pendingCount: number;
-    timePendingCount: number;
-    clockSynced: boolean;
-    error: string | null;
-    firmwareVersion: string | null;
-    bindingId: string | null;
-  } | null;
-}
+import { platform } from './platform';
+import { useNotice } from './notices';
+import type { Dashboard, DrinkEvent } from '../../shared/dashboard';
+import { dateInZone, dateWeekEnd, selectableDate, shiftDate, weekDates } from '../../shared/dates';
+const props = withDefaults(defineProps<{ mobile?: boolean; active?: boolean; widgetBusy?: boolean }>(), { mobile: false, active: true, widgetBusy: false });
+const emit = defineEmits<{ serviceSettings: []; addWidget: [] }>();
 const session = ref<Session>({ user: null, deviceId: null, bindingId: null });
 const page = ref<'dashboard' | 'add' | 'admin'>('dashboard');
 const provisioningBusy = ref(false);
@@ -65,17 +36,44 @@ const feedback = ref('');
 const revokePending = ref<string | null>(null);
 const settingsDialog = ref<HTMLDialogElement | null>(null);
 const settingsOpen = ref(false);
+const menu = ref<'account' | 'settings' | null>(null);
+const menuRoot = ref<HTMLElement | null>(null);
+const accountButton = ref<HTMLButtonElement | null>(null);
+const settingsButton = ref<HTMLButtonElement | null>(null);
+const stripEnd = ref('');
+const stripDates = computed(() => stripEnd.value ? weekDates(stripEnd.value) : []);
+const menuBusy = computed(() => authBusy.value || bindingBusy.value || unbindBusy.value || provisioningBusy.value || Boolean(revokePending.value));
+let dateSwipe: { id: number; x: number; y: number } | null = null;
+let swipedUntil = 0;
 let timer: ReturnType<typeof setInterval> | undefined;
 let pollingVersion: number | null = null;
 let requestId = 0;
 let sessionVersion = 0;
 let disposed = false;
 
+useNotice('web:session', () => sessionError.value, {
+  enabled: () => props.mobile && props.active && !sessionLoading.value,
+  action: () => ({ label: '重新连接', run: loadSession }),
+});
+useNotice('web:auth', () => authError.value, { enabled: () => props.mobile && props.active && !authBusy.value && !session.value.user });
+useNotice('web:binding', () => bindingError.value === actionError.value ? '' : bindingError.value, {
+  enabled: () => props.mobile && props.active && !bindingBusy.value && !authBusy.value,
+});
+useNotice('web:action', () => actionError.value, {
+  enabled: () => props.mobile && props.active && !authBusy.value && !unbindBusy.value && !revokePending.value,
+});
+useNotice('web:feedback', () => feedback.value, { enabled: () => props.mobile && props.active });
+useNotice('web:dashboard', () => dashboardError.value ? `${dashboardError.value}${dashboard.value ? ' · 下方保留上次成功同步的数据。' : ''}` : '', {
+  enabled: () => props.mobile && props.active,
+  action: () => ({ label: '刷新账号状态', run: loadSession }),
+});
+
 const isToday = computed(() => selectedDate.value === today.value);
 const online = computed(() => Boolean(dashboard.value?.device?.online) && !dashboardError.value);
 const needsFactoryService = computed(() => Boolean(dashboard.value?.device?.lastSeenAt) && dashboard.value?.device?.calibrated === false);
 const needsCup = computed(() => dashboard.value?.device?.calibrated && dashboard.value.device?.emptyCupGrams === null);
 const maximumMl = computed(() => Math.max(100, ...dashboard.value?.week.map(day => day.drinkMl) ?? []));
+const estimateDescription = '清水按 1 g ≈ 1 ml 换算，倒水与喝水无法区分，喝完直接补水只记录净变化。';
 const weightState = computed(() => {
   if (!session.value.deviceId) return '尚未绑定当前杯垫，历史记录仍可查看';
   if (!online.value) return '等待设备连接云端';
@@ -87,6 +85,7 @@ const weightState = computed(() => {
 });
 
 function resetDeviceState() {
+  if (props.mobile) platform.notices?.clear('web:');
   // 账号变更使先前的读取失效，避免迟到的响应显示上一位用户的数据。
   ++sessionVersion;
   ++requestId;
@@ -101,6 +100,8 @@ function resetDeviceState() {
   revokePending.value = null;
   today.value = '';
   selectedDate.value = '';
+  stripEnd.value = '';
+  closeMenu();
   timeZone.value = 'Asia/Shanghai';
   bindingCode.value = '';
   bindingError.value = '';
@@ -133,7 +134,7 @@ async function loadSession() {
     if (disposed || version !== sessionVersion) return;
     resetDeviceState();
     session.value = result;
-    page.value = result.user?.role === 'admin' ? 'admin' : 'dashboard';
+    page.value = !props.mobile && result.user?.role === 'admin' ? 'admin' : 'dashboard';
     if (result.user) void refresh();
   } catch (cause) {
     if (!disposed && version === sessionVersion) sessionError.value = `无法连接云端：${errorMessage(cause)}`;
@@ -153,7 +154,7 @@ async function authenticate() {
     resetDeviceState();
     session.value = result;
     password.value = '';
-    page.value = result.user?.role === 'admin' ? 'admin' : 'dashboard';
+    page.value = !props.mobile && result.user?.role === 'admin' ? 'admin' : 'dashboard';
     if (result.user) void refresh();
   } catch (cause) {
     if (!disposed && version === sessionVersion) authError.value = errorMessage(cause);
@@ -165,10 +166,14 @@ async function logout() {
   authBusy.value = true;
   actionError.value = '';
   bindingError.value = '';
+  const version = sessionVersion;
   try {
-    await request('/api/auth/logout', {});
+    const result = await request<{ message?: string }>('/api/auth/logout', {});
+    if (disposed || version !== sessionVersion) return;
     invalidateSession('');
+    if (props.mobile && result.message) platform.notices?.show({ source: 'web:logout', message: result.message });
   } catch (cause) {
+    if (disposed || version !== sessionVersion) return;
     if (!handleAccessError(cause)) {
       const message = `退出失败：${errorMessage(cause)}`;
       actionError.value = message;
@@ -271,6 +276,8 @@ function number(value: number | undefined | null) {
 }
 
 async function openSettings() {
+  if (menuBusy.value) return;
+  closeMenu();
   settingsOpen.value = true;
   await nextTick();
   settingsDialog.value?.showModal();
@@ -291,26 +298,89 @@ function shortDate(value: string) {
   return month && day ? `${Number(month)}/${Number(day)}` : '当日';
 }
 
+function weekday(value: string) {
+  return ['日', '一', '二', '三', '四', '五', '六'][new Date(`${value}T00:00:00Z`).getUTCDay()];
+}
+
+function showEstimate() {
+  platform.notices?.show({ source: 'web:estimate', message: `饮水量根据真实称重差值估算。${estimateDescription}` });
+}
+
 function selectDate(event: Event) {
-  const value = (event.target as HTMLInputElement).value;
-  changeDate(/^\d{4}-\d{2}-\d{2}$/.test(value) ? value : today.value);
+  const input = event.target as HTMLInputElement;
+  if (selectableDate(input.value, today.value)) changeDate(input.value);
+  else input.value = selectedDate.value;
 }
 
 function changeDate(date: string) {
+  if (!selectableDate(date, today.value)) return;
+  stripEnd.value = dateWeekEnd(date, today.value);
+  if (selectedDate.value === date) return;
   selectedDate.value = date;
   dashboard.value = null;
+  dashboardError.value = '';
   void refreshDashboard();
+}
+
+function browseDates(direction: number) {
+  if (!stripEnd.value) return;
+  const end = shiftDate(stripEnd.value, direction * 7);
+  if (end <= today.value) stripEnd.value = end;
+}
+
+function startDateSwipe(event: PointerEvent) {
+  if (event.isPrimary) dateSwipe = { id: event.pointerId, x: event.clientX, y: event.clientY };
+}
+
+function endDateSwipe(event: PointerEvent) {
+  const start = dateSwipe;
+  dateSwipe = null;
+  if (!start || start.id !== event.pointerId) return;
+  const dx = event.clientX - start.x;
+  if (Math.abs(dx) < 40 || Math.abs(dx) <= Math.abs(event.clientY - start.y)) return;
+  browseDates(dx > 0 ? -1 : 1);
+  swipedUntil = Date.now() + 300;
+}
+
+function selectStripDate(date: string, event: MouseEvent) {
+  if (event.detail && Date.now() < swipedUntil) return;
+  changeDate(date);
+}
+
+function closeMenu(restoreFocus = false) {
+  const button = menu.value === 'account' ? accountButton.value : settingsButton.value;
+  menu.value = null;
+  if (restoreFocus) button?.focus();
+}
+
+function menuAction(action: 'service' | 'widget' | 'device' | 'logout') {
+  if (menuBusy.value) return;
+  closeMenu();
+  if (action === 'service') emit('serviceSettings');
+  else if (action === 'widget' && !props.widgetBusy) emit('addWidget');
+  else if (action === 'logout') void logout();
+  else if (action === 'device') {
+    if (session.value.deviceId) void openSettings();
+    else { page.value = page.value === 'add' ? 'dashboard' : 'add'; void refresh(); }
+  }
+}
+
+function outsideMenu(event: PointerEvent) {
+  if (menu.value && event.target instanceof Node && !menuRoot.value?.contains(event.target)) closeMenu();
+}
+
+function menuKey(event: KeyboardEvent) {
+  if (event.key === 'Escape' && menu.value) { closeMenu(true); event.preventDefault(); }
 }
 
 function updateToday() {
   if (!today.value) return;
-  const date = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timeZone.value, year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date());
+  const date = dateInZone(timeZone.value);
   if (selectedDate.value === today.value && date !== today.value) {
     selectedDate.value = date;
     dashboard.value = null;
   }
+  if (date !== today.value) stripEnd.value = dateWeekEnd(selectedDate.value, date);
   today.value = date;
 }
 
@@ -340,6 +410,7 @@ async function refreshDashboard() {
     if (!today.value) {
       today.value = result.date;
       selectedDate.value = result.date;
+      stripEnd.value = result.date;
     }
     dashboard.value = result;
     dashboardError.value = '';
@@ -350,7 +421,7 @@ async function refreshDashboard() {
 }
 
 async function refresh() {
-  if (!session.value.user || page.value === 'admin' || pollingVersion === sessionVersion) return;
+  if (!props.active || !session.value.user || page.value === 'admin' || pollingVersion === sessionVersion) return;
   const version = sessionVersion;
   pollingVersion = version;
   updateToday();
@@ -377,13 +448,28 @@ async function revoke(event: DrinkEvent) {
   }
 }
 
+watch(() => props.active, active => { if (active) void refresh(); else closeMenu(); });
+
+function back(event: Event) {
+  if (event.defaultPrevented || !props.active) return;
+  if (menu.value) { closeMenu(true); event.preventDefault(); }
+  else if (settingsOpen.value) { settingsDialog.value?.close(); event.preventDefault(); }
+  else if (page.value !== 'dashboard') { page.value = 'dashboard'; event.preventDefault(); void refresh(); }
+}
 onMounted(() => {
+  if (props.mobile) window.addEventListener('companion-back', back);
+  document.addEventListener('pointerdown', outsideMenu);
+  document.addEventListener('keydown', menuKey);
   void loadSession();
   timer = setInterval(() => void refresh(), 5000);
 });
 
 onBeforeUnmount(() => {
   disposed = true;
+  if (props.mobile) platform.notices?.clear('web:');
+  window.removeEventListener('companion-back', back);
+  document.removeEventListener('pointerdown', outsideMenu);
+  document.removeEventListener('keydown', menuKey);
   clearInterval(timer);
   ++sessionVersion;
   ++requestId;
@@ -393,13 +479,33 @@ onBeforeUnmount(() => {
 <template>
   <div class="app-shell">
     <header class="topbar">
-      <a class="brand" href="/" aria-label="水伴首页">
+      <a class="brand" :href="mobile ? undefined : '/'" aria-label="水伴首页">
         <span class="brand-mark" aria-hidden="true"><span></span></span>
-        <span>水伴<span class="brand-subtitle">让每一口，都有迹可循</span></span>
+        <span>{{ mobile ? '饮水陪伴' : '水伴' }}<span v-if="!mobile" class="brand-subtitle">让每一口，都有迹可循</span></span>
       </a>
-      <div class="topbar-right">
+      <div v-if="mobile" ref="menuRoot" class="topbar-right mobile-navigation">
+        <div v-if="session.user" class="menu-anchor">
+          <button id="account-menu-button" ref="accountButton" class="menu-trigger account-trigger" :disabled="menuBusy" :aria-expanded="menu === 'account'" aria-controls="account-menu" @click="menu = menu === 'account' ? null : 'account'">
+            <span>{{ session.user.username }}</span>
+            <svg class="menu-chevron" viewBox="0 0 12 12" fill="none" aria-hidden="true" focusable="false"><path d="m3 4.5 3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          </button>
+          <div v-if="menu === 'account'" id="account-menu" class="dropdown-menu" aria-labelledby="account-menu-button"><button :disabled="menuBusy" @click="menuAction('logout')">退出登录</button></div>
+        </div>
+        <div class="menu-anchor">
+          <button id="settings-menu-button" ref="settingsButton" class="menu-trigger" :disabled="menuBusy" :aria-expanded="menu === 'settings'" aria-controls="settings-menu" @click="menu = menu === 'settings' ? null : 'settings'">
+            <span>设置</span>
+            <svg class="menu-chevron" viewBox="0 0 12 12" fill="none" aria-hidden="true" focusable="false"><path d="m3 4.5 3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          </button>
+          <div v-if="menu === 'settings'" id="settings-menu" class="dropdown-menu" aria-labelledby="settings-menu-button">
+            <button :disabled="menuBusy" @click="menuAction('service')">服务设置</button>
+            <button v-if="session.user" :disabled="menuBusy" @click="menuAction('device')">{{ session.deviceId ? '杯垫设置' : page === 'add' ? '查看历史' : '添加杯垫' }}</button>
+            <button :disabled="widgetBusy || menuBusy" @click="menuAction('widget')">{{ widgetBusy ? '正在添加…' : '添加桌面组件' }}</button>
+          </div>
+        </div>
+      </div>
+      <div v-else class="topbar-right">
         <span v-if="session.user" class="account-name">{{ session.user.username }}</span>
-        <button v-if="session.user?.role === 'admin'" class="settings-button" :disabled="provisioningBusy || bindingBusy" @click="page = page === 'admin' ? 'dashboard' : 'admin'; refresh()">{{ page === 'admin' ? '饮水记录' : '管理后台' }}</button>
+        <button v-if="!mobile && session.user?.role === 'admin'" class="settings-button" :disabled="provisioningBusy || bindingBusy" @click="page = page === 'admin' ? 'dashboard' : 'admin'; refresh()">{{ page === 'admin' ? '饮水记录' : '管理后台' }}</button>
         <button v-if="session.user && !session.deviceId" class="settings-button" :disabled="bindingBusy" @click="page = page === 'add' ? 'dashboard' : 'add'; refresh()">{{ page === 'add' ? '查看历史' : '添加杯垫' }}</button>
         <button v-if="session.user && session.deviceId" class="settings-button" :disabled="authBusy || unbindBusy" @click="openSettings">杯垫设置</button>
         <button v-if="session.user" class="text-button logout-button" :disabled="authBusy || bindingBusy || unbindBusy || provisioningBusy" @click="logout">{{ authBusy ? '请稍候…' : '退出登录' }}</button>
@@ -409,7 +515,7 @@ onBeforeUnmount(() => {
     <main v-if="sessionLoading || sessionError" class="welcome-main">
       <section class="panel account-panel" aria-live="polite">
         <h1>连接水伴云端</h1>
-        <p class="setup-description">{{ sessionLoading ? '正在确认登录状态…' : sessionError }}</p>
+        <p class="setup-description">{{ sessionLoading ? '正在确认登录状态…' : mobile ? '暂时未连接云端，可重新连接。' : sessionError }}</p>
         <button v-if="!sessionLoading" class="setup-action" @click="loadSession">重新连接</button>
       </section>
     </main>
@@ -424,20 +530,20 @@ onBeforeUnmount(() => {
           <p class="field-help">3–32 位中文、字母、数字或下划线，英文字母不区分大小写。</p>
           <label for="account-password">密码<input id="account-password" v-model="password" type="password" required minlength="8" maxlength="128" :autocomplete="authMode === 'login' ? 'current-password' : 'new-password'" :disabled="authBusy" /></label>
           <p class="field-help">8–128 位，请妥善保存账号与密码。</p>
-          <div v-if="authError" class="notice error" role="alert">{{ authError }}</div>
+          <div v-if="!mobile && authError" class="notice error" role="alert">{{ authError }}</div>
           <button class="setup-action" :disabled="authBusy">{{ authBusy ? '请稍候…' : authMode === 'login' ? '登录' : '注册并登录' }}</button>
           <button type="button" class="text-button account-switch" :disabled="authBusy" @click="authMode = authMode === 'login' ? 'register' : 'login'; authError = ''">{{ authMode === 'login' ? '还没有账号？注册' : '已有账号？登录' }}</button>
         </form>
       </section>
     </main>
 
-    <AdminPanel v-else-if="session.user.role === 'admin' && page === 'admin'" :key="session.user.id" @access-error="handleAccessError" />
+    <AdminPanel v-else-if="!mobile && session.user.role === 'admin' && page === 'admin'" :key="session.user.id" @access-error="handleAccessError" />
 
     <main v-else-if="!session.deviceId && page === 'add'" class="welcome-main">
       <section class="panel binding-panel" aria-labelledby="binding-title">
         <p class="eyebrow">连接杯垫</p><h1 id="binding-title">开启新的饮水日常</h1>
         <p class="setup-description">历史记录始终归你所有，<button class="text-button" @click="page = 'dashboard'; refresh()">返回查看自己的历史</button>。</p>
-        <DeviceOnboarding :key="session.user.id" :session="session" @completed="provisioningCompleted" @access-error="handleAccessError" @busy="provisioningBusy = $event" />
+        <DeviceOnboarding :active="active" :key="session.user.id" :session="session" @completed="provisioningCompleted" @access-error="handleAccessError" @busy="provisioningBusy = $event" />
         <details class="legacy-setup">
         <summary>旧版热点配网与 8 位绑定码</summary>
         <p class="setup-description">热点页只能更换 Wi-Fi，不能设置服务器地址或设备信任。旧固件若尚未配置服务器，请联系管理员通过 USB 设置；无法通过此网页填入地址。</p>
@@ -448,7 +554,7 @@ onBeforeUnmount(() => {
         </ol>
         <form class="account-form" @submit.prevent="bindDevice">
           <label for="binding-code">杯垫绑定码<input id="binding-code" v-model="bindingCode" required inputmode="numeric" pattern="[0-9]{8}" minlength="8" maxlength="8" autocomplete="off" placeholder="8 位数字" :disabled="bindingBusy || authBusy || provisioningBusy" /></label>
-          <div v-if="bindingError" class="notice error" role="alert">{{ bindingError }}</div>
+          <div v-if="!mobile && bindingError" class="notice error" role="alert">{{ bindingError }}</div>
           <button class="setup-action" :disabled="bindingBusy || authBusy || provisioningBusy || !/^[0-9]{8}$/.test(bindingCode)">{{ bindingBusy ? '正在绑定…' : '绑定杯垫' }}</button>
         </form>
         <p class="setup-description">绑定后无需再次连接热点。换 Wi-Fi 只需重新配网，账号绑定与历史记录会保留。</p>
@@ -457,9 +563,9 @@ onBeforeUnmount(() => {
     </main>
 
     <main v-else>
-      <section class="page-heading" aria-labelledby="page-title">
+      <section v-if="!mobile" class="page-heading" aria-labelledby="page-title">
         <div><p class="eyebrow">你的饮水日常</p><h1 id="page-title">喝水这件小事，<span>慢慢养成。</span></h1><p class="page-description">通过杯垫重量变化，记录每一次饮水。</p></div>
-        <div class="date-control"><label for="statistics-date">查看日期</label><input id="statistics-date" :value="selectedDate" aria-label="查看统计日期" type="date" :max="today" :disabled="!today" @change="selectDate" /><button v-if="!isToday" class="text-button" @click="changeDate(today)">回到今天</button></div>
+        <div class="date-control"><label for="statistics-date">查看日期</label><button class="date-step" aria-label="前一天" :disabled="!today" @click="changeDate(shiftDate(selectedDate, -1))">‹</button><input id="statistics-date" :value="selectedDate" aria-label="查看统计日期" type="date" :max="today" :disabled="!today" @change="selectDate" /><button class="date-step" aria-label="后一天" :disabled="!today || isToday" @click="changeDate(shiftDate(selectedDate, 1))">›</button><button v-if="!isToday && today" class="text-button" @click="changeDate(today)">回到今天</button></div>
       </section>
 
       <section v-if="!session.deviceId" class="calibration-prompt" aria-labelledby="unbound-title">
@@ -474,35 +580,43 @@ onBeforeUnmount(() => {
         <button class="setup-action" @click="openSettings">设置空杯</button>
       </section>
 
-      <div class="estimate-note"><span class="note-icon" aria-hidden="true">i</span><p><strong>饮水量根据真实称重差值估算</strong> · 清水按 1 g ≈ 1 ml 换算，倒水与喝水无法区分，喝完直接补水只记录净变化。</p></div>
-      <div v-if="dashboardError" class="notice error" role="alert">{{ dashboardError }}<span v-if="dashboard"> · 下方保留上次成功同步的数据。</span> <button class="text-button" @click="loadSession">刷新账号状态</button></div>
-      <div v-if="actionError" class="notice error" role="alert">{{ actionError }}</div>
-      <div v-if="feedback" class="notice success" role="status">{{ feedback }}</div>
+      <div v-if="!mobile" class="estimate-note"><span class="note-icon" aria-hidden="true">i</span><p><strong>饮水量根据真实称重差值估算</strong> · {{ estimateDescription }}</p></div>
+      <div v-if="!mobile && dashboardError" class="notice error" role="alert">{{ dashboardError }}<span v-if="dashboard"> · 下方保留上次成功同步的数据。</span> <button class="text-button" @click="loadSession">刷新账号状态</button></div>
+      <div v-if="!mobile && actionError" class="notice error" role="alert">{{ actionError }}</div>
+      <div v-if="!mobile && feedback" class="notice success" role="status">{{ feedback }}</div>
 
       <div class="dashboard-grid">
         <div class="main-column">
           <section class="summary-grid" aria-label="饮水统计">
             <article class="total-card">
-              <div class="card-topline"><h2>{{ isToday ? '今日' : shortDate(selectedDate) }}饮水量</h2><span class="estimate-tag">估算</span></div>
+              <div class="card-topline"><h2>{{ isToday ? '今日' : shortDate(selectedDate) }}饮水量</h2><button v-if="mobile" class="estimate-tag" aria-label="查看饮水量估算说明" @click="showEstimate">估算</button><span v-else class="estimate-tag">估算</span></div>
               <div class="total-number"><strong data-testid="drink-total">{{ number(dashboard?.totals.drinkMl) }}</strong><span>ml</span></div>
-              <p>一口一口，积累你的日常。</p>
-              <svg class="water-art" viewBox="0 0 140 135" fill="none" aria-hidden="true"><path d="M32 10h77l-8 110a7 7 0 0 1-7 6H47a7 7 0 0 1-7-6L32 10Z" stroke="currentColor" stroke-width="2"/><path d="M37 63c15-12 26 11 41 0 11-8 17-5 27-1l-4 58a7 7 0 0 1-7 6H47a7 7 0 0 1-7-6l-3-57Z" fill="currentColor" opacity=".28"/><path d="M37 63c15-12 26 11 41 0 11-8 17-5 27-1" stroke="currentColor" stroke-width="2"/><circle cx="75" cy="88" r="4" fill="currentColor" opacity=".7"/><circle cx="62" cy="105" r="2" fill="currentColor" opacity=".5"/></svg>
+              <p>{{ mobile && !isToday ? `${selectedDate} · 历史记录` : '一口一口，积累你的日常。' }}</p>
+              <slot v-if="mobile" name="companion" :dashboard="isToday ? dashboard : null" :session="session" :online="!dashboardError" />
+              <svg v-if="!mobile || !isToday" class="water-art" viewBox="0 0 140 135" fill="none" aria-hidden="true"><path d="M32 10h77l-8 110a7 7 0 0 1-7 6H47a7 7 0 0 1-7-6L32 10Z" stroke="currentColor" stroke-width="2"/><path d="M37 63c15-12 26 11 41 0 11-8 17-5 27-1l-4 58a7 7 0 0 1-7 6H47a7 7 0 0 1-7-6l-3-57Z" fill="currentColor" opacity=".28"/><path d="M37 63c15-12 26 11 41 0 11-8 17-5 27-1" stroke="currentColor" stroke-width="2"/><circle cx="75" cy="88" r="4" fill="currentColor" opacity=".7"/><circle cx="62" cy="105" r="2" fill="currentColor" opacity=".5"/></svg>
             </article>
             <article class="metric-card"><span class="metric-icon drink-icon" aria-hidden="true">↘</span><h2>饮水次数</h2><div class="metric-number"><strong data-testid="drink-count">{{ number(dashboard?.totals.drinkCount) }}</strong><span>次</span></div><p>有效取放记录</p></article>
             <article class="metric-card"><span class="metric-icon refill-icon" aria-hidden="true">↗</span><h2>补水量</h2><div class="metric-number"><strong data-testid="refill-total">{{ number(dashboard?.totals.refillMl) }}</strong><span>ml</span></div><p>单独统计，不计入饮水</p></article>
           </section>
 
           <section class="panel trend-panel" aria-labelledby="trend-title">
-            <div class="section-heading"><div><h2 id="trend-title">近七日饮水趋势</h2><p>截至所选日期，每天的小小积累</p></div><span class="legend"><i></i>饮水量 / ml</span></div>
-            <div v-if="dashboard" class="chart" role="img" :aria-label="dashboard.week.map(day => `${day.date} 饮水 ${day.drinkMl} 毫升`).join('；')">
+            <div class="section-heading"><div><h2 id="trend-title">{{ mobile ? '饮水趋势' : '近七日饮水趋势' }}</h2><p>{{ dashboard ? `${dashboard.week[0]?.date} — ${dashboard.date}` : '截至所选日期的七天' }}</p></div><div v-if="mobile" class="trend-date-actions"><label class="calendar-trigger">日历<input :value="selectedDate" aria-label="查看统计日期" type="date" :max="today" :disabled="!today" @change="selectDate" /></label><button v-if="!isToday && today" class="text-button" @click="changeDate(today)">今天</button></div><span v-else class="legend"><i></i>饮水量 / ml</span></div>
+            <div v-if="mobile" class="date-strip" aria-label="按日期查看饮水记录">
+              <button class="date-step" aria-label="前七天" :disabled="!today" @click="browseDates(-1)">‹</button>
+              <div class="date-days" @pointerdown="startDateSwipe" @pointerup="endDateSwipe" @pointercancel="dateSwipe = null">
+                <button v-for="date in stripDates" :key="date" :aria-label="`查看 ${date} 的饮水记录`" :aria-pressed="date === selectedDate" :class="{ selected: date === selectedDate }" @click="selectStripDate(date, $event)"><span>{{ date === today ? '今天' : weekday(date) }}</span><strong>{{ Number(date.slice(8)) }}</strong></button>
+              </div>
+              <button class="date-step" aria-label="后七天" :disabled="!today || stripEnd >= today" @click="browseDates(1)">›</button>
+            </div>
+            <div v-if="dashboard" class="chart" role="group" aria-label="近七日饮水量，点击柱形查看当天记录">
               <div class="chart-grid" aria-hidden="true"><span>{{ number(maximumMl) }}</span><span>{{ number(maximumMl / 2) }}</span><span>0</span></div>
-              <div class="chart-columns"><div v-for="day in dashboard.week" :key="day.date" class="chart-column" :class="{ selected: day.date === selectedDate }"><div class="bar-space"><span class="bar-value">{{ number(day.drinkMl) }}</span><div class="bar" :class="{ zero: day.drinkMl === 0 }" :style="{ height: `${Math.max(day.drinkMl === 0 ? 1 : 3, day.drinkMl / maximumMl * 100)}%` }"></div></div><span class="bar-label">{{ day.date === today ? '今天' : shortDate(day.date) }}</span></div></div>
+              <div class="chart-columns"><button v-for="day in dashboard.week" :key="day.date" class="chart-column" :class="{ selected: day.date === selectedDate }" :aria-label="`${day.date} 饮水 ${number(day.drinkMl)} 毫升，查看当天记录`" :aria-pressed="day.date === selectedDate" @click="changeDate(day.date)"><span class="bar-space"><span class="bar-value">{{ number(day.drinkMl) }}</span><span class="bar" :class="{ zero: day.drinkMl === 0 }" :style="{ height: `${Math.max(day.drinkMl === 0 ? 1 : 3, day.drinkMl / maximumMl * 100)}%` }"></span></span><span class="bar-label">{{ day.date === today ? '今天' : shortDate(day.date) }}</span></button></div>
             </div>
             <div v-else class="loading-placeholder">{{ dashboardError ? '连接恢复后显示趋势' : '正在读取饮水趋势…' }}</div>
           </section>
 
           <section class="panel records-panel" aria-labelledby="records-title">
-            <div class="section-heading"><div><h2 id="records-title">饮水记录</h2><p>记录保留取放前后的重量，支持撤销误判</p></div><span class="record-count">{{ dashboard?.events.length ?? '—' }} 条记录</span></div>
+            <div class="section-heading"><div><h2 id="records-title">饮水记录</h2><p>{{ selectedDate }} · {{ mobile ? '饮水与补水明细' : '保留取放前后的重量，支持撤销误判' }}</p></div><span class="record-count">{{ dashboard?.events.length ?? '—' }} 条记录</span></div>
             <div v-if="!dashboard" class="empty-state"><span class="empty-icon" aria-hidden="true">≋</span><p>{{ dashboardError ? '暂时无法读取记录' : '正在读取记录…' }}</p></div>
             <div v-else-if="!dashboard.events.length" class="empty-state"><span class="empty-icon" aria-hidden="true">≋</span><h3>这一天还没有记录</h3><p>杯垫联网并完成空杯设置后，<br />饮水后放回杯子，重量稳定后记录会自动同步。</p></div>
             <ul v-else class="event-list">
@@ -543,9 +657,9 @@ onBeforeUnmount(() => {
         <div><h2 id="settings-title">杯垫设置</h2><p>设置日常空杯，或为杯垫更换 Wi-Fi。</p></div>
         <button class="settings-close" aria-label="关闭设置" @click="settingsDialog?.close()">✕</button>
       </div>
-      <DeviceSetup :key="`${session.user.id}:${session.deviceId}:${session.bindingId}`" :online="online" :device-id="session.deviceId" :user-id="session.user.id" :binding-id="session.bindingId" :calibrated="dashboard?.device?.lastSeenAt ? dashboard.device.calibrated : undefined" :empty-cup-grams="dashboard?.device?.emptyCupGrams" :weight-grams="dashboard?.device?.weightGrams" :active="settingsOpen && !unbindBusy" @updated="refresh" @access-error="handleSetupAccessError" />
+      <DeviceSetup :key="`${session.user.id}:${session.deviceId}:${session.bindingId}`" :online="online" :device-id="session.deviceId" :user-id="session.user.id" :binding-id="session.bindingId" :calibrated="dashboard?.device?.lastSeenAt ? dashboard.device.calibrated : undefined" :empty-cup-grams="dashboard?.device?.emptyCupGrams" :weight-grams="dashboard?.device?.weightGrams" :active="active && settingsOpen && !unbindBusy" @updated="refresh" @access-error="handleSetupAccessError" />
       <div class="settings-section">
-        <DeviceOnboarding :key="`wifi:${session.user.id}:${session.deviceId}:${session.bindingId}`" :session="session" :active="settingsOpen && !unbindBusy" @completed="provisioningCompleted" @access-error="handleAccessError" @busy="provisioningBusy = $event" />
+        <DeviceOnboarding :key="`wifi:${session.user.id}:${session.deviceId}:${session.bindingId}`" :session="session" :active="active && settingsOpen && !unbindBusy" @completed="provisioningCompleted" @access-error="handleAccessError" @busy="provisioningBusy = $event" />
       </div>
       <section class="settings-section unbind-section">
         <h3>解绑杯垫</h3><p class="setup-description">解绑后杯垫可交给其他账号使用，当前配网授权与未完成命令会作废。你的登录和历史饮水记录会保留。</p>
@@ -555,7 +669,7 @@ onBeforeUnmount(() => {
           <button class="settings-button" :disabled="unbindBusy" @click="unbindConfirm = false">暂不解绑</button>
           <button class="setup-action" :disabled="unbindBusy || provisioningBusy" @click="unbind">{{ unbindBusy ? '正在确认…' : '确认解绑' }}</button>
         </div>
-        <p v-if="actionError" class="notice error" role="alert">{{ actionError }}</p>
+        <p v-if="!mobile && actionError" class="notice error" role="alert">{{ actionError }}</p>
       </section>
     </dialog>
   </div>
@@ -564,10 +678,9 @@ onBeforeUnmount(() => {
 <style scoped>
 .legacy-setup { border-top:1px solid #e5eadf; margin-top:24px; padding-top:20px; }
 .legacy-setup summary { cursor:pointer; color:#43745d; font-weight:600; }
-.settings-section { padding:22px 26px; border-top:1px solid #e5eadf; }
+.settings-section { padding:22px var(--settings-inline-padding, 26px); border-top:1px solid #e5eadf; }
 .unbind-section h3 { font-size:16px; }
 .unbind-confirm { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
 .unbind-confirm p { width:100%; }
 .unbind-section .notice { margin-top:15px; }
-@media(max-width:560px) { .settings-section { padding:18px; } }
 </style>

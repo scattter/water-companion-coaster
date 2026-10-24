@@ -62,7 +62,8 @@ bool weighing_sample(weighing_t *machine, float grams, int64_t time_ms, weight_c
     machine->stable = true;
     after = roundf(fmaxf(machine->empty_cup, after) * 10) / 10;
     float before = machine->baseline;
-    bool complete = machine->removed && machine->has_baseline;
+    // 原地加水也记录补水；重量下降仍需完整取放，避免静置漂移误记饮水。
+    bool complete = machine->has_baseline && (machine->removed || after > before);
     machine->baseline = after;
     machine->has_baseline = true;
     machine->removed = false;

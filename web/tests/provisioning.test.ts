@@ -86,6 +86,40 @@ function fixture(initial: Session = user, storage = new MemoryStorage()) {
 }
 async function start(f: ReturnType<typeof fixture>) { await f.flow.connect(); await f.flow.start('客厅', 'wifi-secret'); await settle(); }
 
+test('配网区分进度和可关闭提示，后台暂停不弹出取消提示且保留操作编号', async () => {
+  const f = fixture();
+  await start(f);
+  assert.equal(f.flow.state.messageKind, 'progress');
+  f.transport.disconnect();
+  f.flow.disconnected();
+  assert.equal(f.flow.state.messageKind, 'notice');
+  assert.equal(f.flow.state.operation?.operationId, id);
+  await f.flow.poll(true);
+  assert.equal(f.flow.state.messageKind, 'progress');
+  f.flow.pause(false);
+  assert.equal(f.flow.state.messageKind, 'silent');
+  assert.equal(f.flow.state.operation?.operationId, id);
+  f.flow.pause();
+  assert.equal(f.flow.state.messageKind, 'notice');
+  assert.equal(f.flow.state.operation?.operationId, id);
+  assert.equal(f.sent.length, 1);
+});
+
+test('超时后主动查询失败只保留本次错误，不重新提示上一次已暂停等待', async () => {
+  const f = fixture();
+  await start(f);
+  f.setNow(130000);
+  await f.flow.poll();
+  assert.equal(f.flow.state.messageKind, 'notice');
+  assert.equal(f.flow.state.paused, true);
+  f.setError(new Error('offline'));
+  await f.flow.poll(true);
+  assert.equal(f.flow.state.paused, false);
+  assert.equal(f.flow.state.messageKind, 'silent');
+  assert.match(f.flow.state.error, /无法确认云端结果/);
+  assert.equal(f.sent.length, 1);
+});
+
 test('支持扫描的杯垫连接后自动列出网络，扫描时不能申请票据或发送配置', async () => {
   const f = fixture();
   f.setInfo({ wifiScan: true });

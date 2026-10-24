@@ -109,7 +109,7 @@ void device_wake(void)
 
 static void update_activity(float grams, int64_t now)
 {
-    // 累计变化超过 5 g 才唤醒，避免静置时的小幅噪声反复亮屏、加快心跳。
+    // 累计变化至少 5 g 才加快心跳，屏幕亮灭由按键独立控制。
     if (isfinite(grams) && (!isfinite(activity_weight) || fabsf(grams - activity_weight) >= 5)) {
         activity_weight = grams;
         last_activity_ms = now;
@@ -457,6 +457,11 @@ cJSON *device_command(const cJSON *json)
             if (!strcmp(name, "wifi") || !strcmp(name, "server")) restart_required = true;
             if (reset_weighing || restart_required) {
                 weighing_init(&machine, config.empty_cup);
+                if (!strcmp(name, "cup")) {
+                    // 空杯已通过稳定采样确认，保留基准以识别设置成功后立即加水。
+                    machine.baseline = config.empty_cup;
+                    machine.has_baseline = true;
+                }
                 activity_weight = NAN;
                 last_activity_ms = esp_timer_get_time() / 1000;
             }

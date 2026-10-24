@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "menu-panel",
+  "description": "状态栏详情与设置页面的本地状态事件权限",
+  "windows": ["panel"],
+  "permissions": ["core:default"]
+}

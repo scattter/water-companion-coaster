@@ -1,8 +1,30 @@
 # 单台杯垫接线与安装
 
-更新：2026-10-12。适用：微雪 ESP32-S3-LCD-1.47B + TAL220B 2 kg + 用户已确认支持 3.3 V 供电的单 VCC HX711 板。此文档对应 Arduino 固件 0.3.1 的 [board_config.h](../../firmware/water_companion/board_config.h)；实际接线逐项核对模块丝印。
+更新：2026-10-24（底板 v1.3：三颗 100 kΩ 电阻与 100 nF 电容实现 ADC 电量采样）。适用：微雪 ESP32-S3-LCD-1.47B + TAL220B 2 kg + 用户已确认支持 3.3 V 供电的单 VCC HX711 板。HX711 引脚见 [board_config.h](../../firmware/water_companion/board_config.h)；实际接线逐项核对模块丝印。
+
+## 底板 v1.3 与电量采样
+
+当前底板使用 ADC 分压采样，完整工程、生产资料及装配位置见 [v1.3 说明](carrier-v1.3.md)。旧 [v1.2 MAX17048 方案](carrier-v1.1.md)仅用于旧板对照。
+
+| 连接 | 用途 |
+| --- | --- |
+| BAT_CELL → R4 100k → R5 100k → BAT_SENSE | 两颗串联组成 200 kΩ 上臂 |
+| BAT_SENSE → R6 100k → GND | 100 kΩ 下臂 |
+| BAT_SENSE → C4 100nF → GND | 采样滤波 |
+| BAT_SENSE → J_DEV_B-8 / GPIO5 | ADC1_CH4，名义电池电压为 ADC 电压的 3 倍 |
+| J_DEV_B-9 / GPIO6 | 底板 NC |
+
+R4、R5、R6 为新增的三颗 C25803；C4 为 C14663。原有 R2 仍用于充电隔离，整板共四颗 100 kΩ。新板不再安装 5580 模块、六针座或模块支柱。
+
+电池直接接底板 J_BAT；J_BAT-1 为正、2 为负，从顶面图看分别为右、左焊盘。必须测量电池插头正负极后连接。开发板原电池口留空，避免绕过底板充电隔离。采样取隔离前的 BAT_CELL，不能短接 BAT_CELL 与 BAT_DEV。HX711 的 GPIO 分配与 v1.2 针序保持不变。
+
+本轮完成硬件采样电路，固件尚未增加几格电量与低电提醒。后续应在 GPIO5 配置 ADC、校准电压、平均滤波并设置回差；充电和负载变化下的显示阈值须实测。不要再将 GPIO5 配置为 I²C SDA。
+
+开发板顶面丝印：LCD 朝上、USB 朝左时，上排从左到右为 5V、GND、3V3、IO0、IO2、IO3、IO4、IO5、IO6；下排为 TX、RX、BAT、GND、IO11、IO10、IO9、IO8、IO7。未用 GPIO 保持底板 NC。
 
 ## HX711 与开发板
+
+用户已确认：从 HX711 的 VCC 一端沿排针依次为 **VCC、SCK、DT、GND**。底板 v1.2 / v1.3 顶面、开发板 LCD 朝上且 Type-C 朝左时，J_HX 从左到右对应 **1=VCC/3V3、2=SCK/GPIO4、3=DT/GPIO2、4=GND**。旧 v1 / v1.1 的第 2、4 脚顺序相反，已有旧板必须按名称逐根转接；新板使用更新后的制造文件。
 
 | HX711 引脚 | 开发板引脚 | 用途 |
 |---|---|---|
