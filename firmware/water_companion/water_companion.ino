@@ -6,6 +6,7 @@
 #include "display.h"
 #include "network.h"
 #include "ble_provision.h"
+#include "provisioning.h"
 
 #if ESP_ARDUINO_VERSION_MAJOR != 3
 #error "请在开发板管理器安装 esp32 by Espressif Systems 3.x；本工程按 3.3.11 适配"
@@ -21,6 +22,23 @@
 
 static SemaphoreHandle_t console_lock;
 static esp_err_t startup_result = ESP_OK;
+
+static void update_cpu(void)
+{
+    uint32_t frequency = 240;
+    if (startup_result == ESP_OK) {
+        network_status_t network;
+        ble_provision_display_t ble;
+        network_snapshot(&network);
+        ble_provision_snapshot(&ble);
+        // 保留 80 MHz APB，称重、Wi-Fi、USB 和 SPI 均继续运行。
+        if (!display_awake() && !network.ap_ready && !ble.window_open && !provisioning_busy()) frequency = 80;
+    }
+    static uint32_t requested;
+    if (requested == frequency) return;
+    requested = frequency;
+    if (!setCpuFrequencyMhz(frequency)) Serial.println("主控调频失败，保留原频率。");
+}
 
 extern "C" int coaster_console_read(void)
 {
@@ -75,6 +93,7 @@ void loop()
         }
     } else { pressed = false; handled = false; }
     if (startup_result == ESP_OK) ble_provision_poll();
+    update_cpu();
     display_update(startup_result);
     delay(100);
 }

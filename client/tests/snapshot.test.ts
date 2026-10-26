@@ -17,6 +17,7 @@ function snapshot(revision: number, server: string | null, userId: string | null
     error: null,
     lastSyncedAt: null,
     state: 'idle',
+    drinkMl: null,
     frame: 0,
     settings: { autoRest: true, reminders: true },
   };

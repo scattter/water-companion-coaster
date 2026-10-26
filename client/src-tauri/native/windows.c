@@ -6,6 +6,14 @@
 #include <string.h>
 
 static volatile LONG sleeping = 0, locked = 1, ready = 0, generation = 0;
+static volatile LONG light_theme = 0;
+
+static void read_theme(void) {
+    DWORD value = 0, size = sizeof(value);
+    RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+        L"SystemUsesLightTheme", RRF_RT_REG_DWORD, NULL, &value, &size);
+    InterlockedExchange(&light_theme, value != 0);
+}
 
 static void read_session(void) {
     LPWSTR buffer = NULL;
@@ -22,7 +30,9 @@ static void read_session(void) {
 }
 
 static LRESULT CALLBACK events(HWND window, UINT message, WPARAM value, LPARAM data) {
-    if (message == WM_WTSSESSION_CHANGE) {
+    if (message == WM_SETTINGCHANGE || message == WM_THEMECHANGED) {
+        read_theme();
+    } else if (message == WM_WTSSESSION_CHANGE) {
         if (value == WTS_SESSION_LOCK || value == WTS_REMOTE_DISCONNECT || value == WTS_CONSOLE_DISCONNECT)
             InterlockedExchange(&locked, 1);
         else {
@@ -53,6 +63,7 @@ static DWORD WINAPI observe(LPVOID unused) {
         0, 0, 0, 0, NULL, NULL, instance, NULL);
     if (!window || !WTSRegisterSessionNotification(window, NOTIFY_FOR_THIS_SESSION)) return 1;
     read_session();
+    read_theme();
     MSG message;
     while (GetMessageW(&message, NULL, 0, 0) > 0) {
         TranslateMessage(&message);
@@ -77,6 +88,12 @@ double coaster_windows_idle(void) {
 
 int coaster_windows_suspended(void) { return sleeping || locked || !ready; }
 unsigned long coaster_windows_generation(void) { return (unsigned long)generation; }
+int coaster_windows_light_theme(void) { return light_theme; }
+int coaster_windows_animate(void) {
+    BOOL enabled = TRUE;
+    SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0);
+    return enabled;
+}
 
 static WCHAR *credential_name(const char *origin) {
     const WCHAR prefix[] = L"com.watercompanion.client.session/";

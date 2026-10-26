@@ -11,6 +11,7 @@ const display = readFileSync(new URL('../water_companion/display.cpp', import.me
 const sketch = readFileSync(new URL('../water_companion/water_companion.ino', import.meta.url), 'utf8');
 const board = readFileSync(new URL('../water_companion/board_config.h', import.meta.url), 'utf8');
 const ble = readFileSync(new URL('../water_companion/ble_provision.cpp', import.meta.url), 'utf8');
+const hx711 = readFileSync(new URL('../water_companion/hx711.c', import.meta.url), 'utf8');
 const actual = (source, signature) => {
   const start = source.indexOf(`${signature}(`);
   assert.notEqual(start, -1, signature);
@@ -189,7 +190,7 @@ int main() {
 });
 
 const structure = (file, name) => readFileSync(new URL(`../water_companion/${file}`, import.meta.url), 'utf8').match(new RegExp(`typedef struct \\{[\\s\\S]*?\\} ${name};`))[0];
-test('screen starts dark, only BOOT wakes it for 15 seconds, and RGB stays off', () => {
+test('LCD sleeps and redraws before lighting, BOOT keeps its timing, and CPU slows only outside display/provisioning', () => {
   run(`${common}
 #define DEVICE_IDLE_MS 30000
 #define WEIGHING_MAX_GRAMS 2000
@@ -204,8 +205,15 @@ ${structure('daily_summary.h','daily_summary_t')}
 struct binding_state_t { char binding_id[37]; };
 struct device_config_t {};
 struct daily_view_t {};
-static bool ready;
+static bool ready, sleeping, daily_drawn;
+static int current_page = -1;
 static int state_lock, console_lock, brightness = LOW, paints, lit, rgb_writes, error_logs;
+static bool panel_sleep, panel_on, frequency_failure;
+static int64_t sleep_in_at = -5, sleep_out_at = -120;
+static int wake_paints, frequency_errors;
+static uint32_t frequency = 240;
+static std::vector<uint32_t> frequencies;
+static std::vector<uint8_t> commands;
 static int button = HIGH, ap_opens, ble_opens;
 static int64_t now, last_activity_ms, wake_until_ms;
 static float activity_weight = NAN;
@@ -224,7 +232,10 @@ static void network_snapshot(network_status_t *s) { *s = net; }
 static void device_snapshot(device_status_t *s) { *s = input; s->active = now - last_activity_ms < DEVICE_IDLE_MS; }
 static void ble_provision_snapshot(ble_provision_display_t *s) { *s = ble_state; }
 static void digitalWrite(int pin, int value) {
-    if (pin == LCD_BL_PIN) { brightness = value; if (value == HIGH) ++lit; }
+    if (pin == LCD_BL_PIN) {
+        if (value == HIGH) { assert(panel_on && !panel_sleep && paints > wake_paints); ++lit; }
+        brightness = value;
+    }
     else assert(pin == LCD_CS_PIN || pin == LCD_RST_PIN);
 }
 static int digitalRead(int pin) { assert(pin == PROVISION_BUTTON_PIN); return button; }
@@ -234,10 +245,22 @@ static void pinMode(int pin, int mode) {
 static void rgbLedWrite(int pin, int red, int green, int blue) {
     assert(pin == 38 && !red && !green && !blue); ++rgb_writes;
 }
-static void write_command(uint8_t, const uint8_t * = nullptr, size_t = 0) {}
+static void write_command(uint8_t command, const uint8_t * = nullptr, size_t = 0) {
+    commands.push_back(command);
+    if (command == 0x10) {
+        assert(!panel_on && brightness == LOW && now - sleep_out_at >= 120);
+        panel_sleep = true; sleep_in_at = now;
+    } else if (command == 0x11) {
+        assert(brightness == LOW && now - sleep_in_at >= 5);
+        panel_sleep = false; sleep_out_at = now; wake_paints = paints;
+    } else if (command == 0x28) panel_on = false;
+    else if (command == 0x29) {
+        assert(!panel_sleep && now - sleep_out_at >= 120); panel_on = true;
+    }
+}
 static void draw_pixels(int, int) {}
-static void draw_text(int, const char *, uint16_t) { ++paints; }
-static void line(int, const char *, int) { ++paints; }
+static void draw_text(int, const char *, uint16_t) { assert(!panel_sleep); ++paints; }
+static void line(int, const char *, int) { assert(!panel_sleep); ++paints; }
 static void storage_counts(unsigned *a, unsigned *b) { *a = *b = 0; }
 static void device_config_snapshot(device_config_t *, binding_state_t *binding) { binding->binding_id[0] = 0; }
 static void network_daily_summary(daily_summary_t *summary, const char *) { *summary = {}; }
@@ -250,6 +273,11 @@ static const char *esp_err_to_name(int) { return "test error"; }
 static void network_provision() { ++ap_opens; net.ap_ready = true; }
 static void ble_provision_open() { ++ble_opens; ble_state.window_open = true; }
 static void ble_provision_poll() {}
+static bool setCpuFrequencyMhz(uint32_t value) {
+    assert(value == 80 || value == 240); frequencies.push_back(value);
+    if (frequency_failure) return false;
+    frequency = value; return true;
+}
 static struct {
     bool begin(int, int, int, int) { return true; }
 } SPI;
@@ -258,20 +286,27 @@ static struct {
     void setTxBufferSize(int) {}
     void setTxTimeoutMs(int) {}
     void begin(int) {}
-    void println(const char *) {}
+    void println(const char *) { ++frequency_errors; }
     void printf(const char *, const char *) { ++error_logs; }
 } Serial;
 ${actual(device, 'static void update_activity')}
 ${actual(device, 'void device_wake')}
+${actual(display, 'static void sleep_panel')}
 ${actual(display, 'bool display_start')}
 ${actual(display, 'void display_wake')}
+${actual(display, 'bool display_awake')}
+${actual(display, 'static void draw_status')}
 ${actual(display, 'void display_update')}
+${actual(sketch, 'static void update_cpu')}
 ${actual(sketch, 'void setup')}
 ${actual(sketch, 'void loop')}
 int main() {
     (void)mutex;
     setup();
-    assert(ready && brightness == LOW && lit == 0 && rgb_writes == 1);
+    assert(ready && sleeping && panel_sleep && brightness == LOW && lit == 0 && rgb_writes == 1);
+    loop(); assert(frequency == 80 && !frequency_errors);
+    auto idle_commands = commands.size(), idle_frequencies = frequencies.size();
+    loop(); assert(commands.size() == idle_commands && frequencies.size() == idle_frequencies);
     paints = 0;
     input.sensor_ready = input.calibrated = true; input.weight = 400;
     update_activity(400, now); display_update(ESP_OK); assert(brightness == LOW && !paints);
@@ -281,16 +316,20 @@ int main() {
     assert(last_activity_ms == now);
     update_activity(0, now); display_update(ESP_OK); assert(brightness == LOW && !paints);
 
-    now = 40000; button = LOW; loop(); assert(brightness == HIGH && paints);
+    now = 40000; button = LOW; loop(); assert(brightness == HIGH && paints && frequency == 240 && !sleeping);
     button = HIGH; loop();
     now = 54999; update_activity(800, now); display_update(ESP_OK); assert(brightness == HIGH);
-    now = 55000; paints = 0; display_update(ESP_OK); assert(brightness == LOW && !paints);
+    now = 55000; paints = 0; loop(); assert(brightness == LOW && !paints && frequency == 80 && sleeping);
 
     now = 60000; button = LOW; loop();
     now = 63000; loop(); assert(ap_opens == 1 && ble_opens == 1 && brightness == HIGH);
     now = 64000; loop(); assert(ap_opens == 1 && ble_opens == 1);
-    now = 75000; loop(); assert(brightness == LOW);
+    now = 75000; loop(); assert(brightness == LOW && frequency == 240);
     button = HIGH; loop();
+    net.ap_ready = false; loop(); assert(frequency == 240);
+    ble_state.window_open = false; loop(); assert(frequency == 80);
+    net.ap_ready = true; loop(); assert(frequency == 240);
+    net.ap_ready = false;
 
     now = 80000; button = LOW; loop(); button = HIGH; loop();
     now = 90000; button = LOW; loop(); button = HIGH; loop();
@@ -301,16 +340,76 @@ int main() {
     provisioning = true; ble_state.pairing = true; strcpy(net.binding_code, "123456");
     input.sensor_ready = input.calibrated = false; input.weight = NAN;
     input.unsaved_event = input.restart_required = true;
-    paints = 0; loop(); assert(brightness == LOW && !paints);
+    paints = 0; loop(); assert(brightness == LOW && !paints && frequency == 240);
     now = 110000; button = LOW; loop(); button = HIGH; loop(); assert(brightness == HIGH);
     now = 125000; loop(); assert(brightness == LOW);
 
     startup_result = ESP_FAIL;
-    paints = 0; loop(); assert(brightness == LOW && !paints && error_logs);
-    now = 130000; button = LOW; loop(); assert(brightness == HIGH && paints && now == 130100);
+    provisioning = false;
+    paints = 0; loop(); assert(brightness == LOW && !paints && error_logs && frequency == 240);
+    now = 130000; button = LOW; loop(); assert(brightness == HIGH && paints && now == 130220);
     now = 133000; loop(); assert(ap_opens == 1 && ble_opens == 1);
     now = 145000; paints = 0; loop(); assert(brightness == LOW && !paints);
     assert(rgb_writes == 1);
+
+    button = HIGH; startup_result = ESP_OK; frequency_failure = true;
+    loop(); assert(frequency == 240 && frequency_errors == 1);
+    idle_frequencies = frequencies.size();
+    loop(); assert(frequencies.size() == idle_frequencies && frequency_errors == 1);
+    frequency_failure = false;
+    button = LOW; loop(); assert(brightness == HIGH && frequency == 240);
+    button = HIGH; loop();
+    now += 15000; loop(); assert(frequency == 80 && sleeping && brightness == LOW);
+}
+`);
+});
+
+test('HX711 waits without losing latched data-ready, keeps 25 short clocks, and reports timeout/saturation', () => {
+  run(`${common}
+enum { ESP_ERR_TIMEOUT = 10 };
+static int data_pin = 2, clock_pin = 4, clock_lock;
+static int64_t now_us, ready_us, high_at;
+static bool high;
+static unsigned pulses, reads, polls;
+static uint32_t raw;
+static int64_t esp_timer_get_time() { return now_us; }
+static void vTaskDelay(int ms) { assert(ms == 10); now_us += ms * 1000; ++polls; }
+static void esp_rom_delay_us(int us) { now_us += us; }
+static int gpio_get_level(int pin) {
+    assert(pin == data_pin);
+    if (!high) return now_us < ready_us;
+    assert(pulses >= 1 && pulses <= 24); ++reads;
+    return (raw >> (24 - pulses)) & 1;
+}
+static void gpio_set_level(int pin, int value) {
+    assert(pin == clock_pin);
+    if (value) { assert(!high); high_at = now_us; ++pulses; }
+    else { assert(high && now_us - high_at < 60); }
+    high = value;
+}
+${actual(hx711, 'esp_err_t hx711_read')}
+static void sensor(uint32_t value, int64_t ready_at) {
+    raw = value; ready_us = ready_at; high = false; pulses = reads = polls = 0;
+}
+int main() {
+    (void)mutex; (void)&xSemaphoreGive;
+    int32_t value;
+    sensor(123456, 95000);
+    assert(hx711_read(&value, 500) == ESP_OK && value == 123456);
+    assert(polls == 10 && pulses == 25 && reads == 24 && !high);
+    for (unsigned sample = 0; sample < 20; ++sample) {
+        now_us = 200000 + sample * 100000;
+        sensor(0xffff9c, now_us);
+        assert(hx711_read(&value, 500) == ESP_OK && value == -100 && !polls && pulses == 25);
+    }
+    sensor(0, now_us + 600000); auto start = now_us;
+    assert(hx711_read(&value, 500) == ESP_ERR_TIMEOUT);
+    assert(now_us - start == 500000 && polls == 50 && !pulses && !high);
+    sensor(0x7fffff, now_us);
+    assert(hx711_read(&value, 500) == ESP_ERR_INVALID_RESPONSE);
+    sensor(0x800000, now_us);
+    assert(hx711_read(&value, 500) == ESP_ERR_INVALID_RESPONSE);
+    assert(hx711_read(nullptr, 500) == ESP_ERR_INVALID_ARG);
 }
 `);
 });

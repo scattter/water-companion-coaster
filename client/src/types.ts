@@ -19,6 +19,7 @@ export interface Snapshot {
   error: string | null;
   lastSyncedAt: string | null;
   state: CompanionState;
+  drinkMl: number | null;
   frame: number;
   settings: Settings;
 }

@@ -226,6 +226,12 @@ int main(int argc, char **argv) {
         assert(frame[y * LCD_WIDTH + x] == 0);
     uptime += 15000; painted = writes; display_update(ESP_OK);
     assert(backlight == LOW && writes == painted);
+    const auto before_sleep = frame;
+    display_update(ESP_OK); assert(writes == painted);
+    for (auto &pixel : frame) pixel = 0xffff;
+    display_wake(); display_update(ESP_FAIL);
+    assert(backlight == HIGH && writes > painted && frame == before_sleep);
+    painted = writes; display_update(ESP_FAIL); assert(writes == painted);
 }
 `;
     writeFileSync(join(dir, 'test.cpp'), program);

@@ -2,11 +2,87 @@ use crate::model::{CompanionState, Connection, Snapshot};
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager,
 };
 
 pub struct Frames(Vec<Vec<Image<'static>>>);
+
+#[cfg(target_os = "windows")]
+struct AmountIcon {
+    frame: Image<'static>,
+    title: String,
+    light: bool,
+    generation: u64,
+}
+
+#[cfg(target_os = "windows")]
+fn render_amount(app: &AppHandle, title: &str, animate: bool) {
+    use crate::{amount_icon, platform};
+    use std::{
+        sync::Mutex,
+        time::{Duration, Instant},
+    };
+
+    let light = platform::light_taskbar();
+    let target = amount_icon::image(title, light);
+    let (before, generation, animate) = {
+        let state = app.state::<Mutex<AmountIcon>>();
+        let mut current = state.lock().unwrap();
+        if current.title == title && current.light == light {
+            return;
+        }
+        let animate = animate && current.light == light && platform::animate_taskbar();
+        current.generation += 1;
+        current.title = title.into();
+        current.light = light;
+        let before = current.frame.clone();
+        if !animate {
+            current.frame = target.clone();
+        }
+        (before, current.generation, animate)
+    };
+    if !animate {
+        if let Some(tray) = app.tray_by_id("amount") {
+            let _ = tray.set_icon(Some(target));
+        }
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let started = Instant::now();
+        loop {
+            if app.state::<Mutex<AmountIcon>>().lock().unwrap().generation != generation {
+                break;
+            }
+            let progress = started.elapsed().as_secs_f64().min(1.0);
+            let frame = amount_icon::slide(&before, &target, amount_icon::ease(progress));
+            let handle = app.clone();
+            if app
+                .run_on_main_thread(move || {
+                    let state = handle.state::<Mutex<AmountIcon>>();
+                    let mut current = state.lock().unwrap();
+                    // 丢弃被后续同步替代的动画帧，防止旧数字在退出账号后重新出现。
+                    if current.generation != generation {
+                        return;
+                    }
+                    current.frame = frame.clone();
+                    drop(current);
+                    if let Some(tray) = handle.tray_by_id("amount") {
+                        let _ = tray.set_icon(Some(frame));
+                    }
+                })
+                .is_err()
+            {
+                break;
+            }
+            if progress >= 1.0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(16)).await;
+        }
+    });
+}
 
 impl Frames {
     pub fn load() -> tauri::Result<Self> {
@@ -119,6 +195,28 @@ fn tray_image(source: Image<'_>) -> Image<'static> {
     Image::new_owned(rgba, width, height)
 }
 
+fn on_tray_event(tray: &TrayIcon, event: TrayIconEvent) {
+    if let TrayIconEvent::Click {
+        button: MouseButton::Left,
+        button_state: MouseButtonState::Up,
+        ..
+    } = event
+    {
+        #[cfg(target_os = "windows")]
+        if crate::platform::consume_tray_blur() {
+            return;
+        }
+        let app = tray.app_handle();
+        if let Some(panel) = app.get_webview_window("panel") {
+            if panel.is_visible().unwrap_or(false) {
+                let _ = panel.hide();
+            } else {
+                let _ = crate::show_panel(app, "dashboard");
+            }
+        }
+    }
+}
+
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let frames = Frames::load()?;
     let image = frames.image(CompanionState::Idle, 0);
@@ -144,29 +242,46 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             "quit" => app.exit(0),
             _ => {}
         })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                #[cfg(target_os = "windows")]
-                if crate::platform::consume_tray_blur() {
-                    return;
-                }
-                let app = tray.app_handle();
-                if let Some(panel) = app.get_webview_window("panel") {
-                    if panel.is_visible().unwrap_or(false) {
-                        let _ = panel.hide();
-                    } else {
-                        let _ = crate::show_panel(app, "dashboard");
-                    }
-                }
-            }
-        })
+        .on_tray_icon_event(on_tray_event)
         .build(app)?;
+    #[cfg(target_os = "windows")]
+    {
+        let light = crate::platform::light_taskbar();
+        let frame = crate::amount_icon::image("— ml", light);
+        app.manage(std::sync::Mutex::new(AmountIcon {
+            frame: frame.clone(),
+            title: "— ml".into(),
+            light,
+            generation: 0,
+        }));
+        TrayIconBuilder::with_id("amount")
+            .icon(frame)
+            .tooltip("饮水陪伴 · — ml")
+            .menu(&menu)
+            .show_menu_on_left_click(false)
+            .on_tray_icon_event(on_tray_event)
+            .build(app)?;
+    }
     Ok(())
+}
+
+fn title(value: &Snapshot) -> String {
+    let amount = value
+        .drink_ml
+        .map(|amount| format!("+{amount:.0}"))
+        .or_else(|| {
+            value
+                .dashboard
+                .as_ref()
+                .map(|data| format!("{:.0}", data.totals.drink_ml))
+        })
+        .unwrap_or("—".into());
+    let marker = if value.connection == Connection::Offline {
+        "· "
+    } else {
+        ""
+    };
+    format!("{marker}{amount} ml")
 }
 
 pub fn render(app: &AppHandle, snapshot: &Snapshot, previous: Option<&Snapshot>) {
@@ -177,21 +292,19 @@ pub fn render(app: &AppHandle, snapshot: &Snapshot, previous: Option<&Snapshot>)
         let frame = app.state::<Frames>().image(snapshot.state, snapshot.frame);
         let _ = tray.set_icon(Some(frame));
     }
-    let title = |value: &Snapshot| {
-        let amount = value
-            .dashboard
-            .as_ref()
-            .map(|data| format!("{:.0}", data.totals.drink_ml))
-            .unwrap_or("—".into());
-        let marker = if value.connection == Connection::Offline {
-            "· "
-        } else {
-            ""
-        };
-        format!("{marker}{amount} ml")
-    };
+    let animate = previous.is_some_and(|old| {
+        old.server == snapshot.server
+            && old.session == snapshot.session
+            && old.dashboard.is_some()
+            && snapshot.dashboard.is_some()
+    });
+    #[cfg(target_os = "windows")]
+    render_amount(app, &title(snapshot), animate);
     if previous.is_none_or(|old| title(old) != title(snapshot)) {
-        let _ = tray.set_title(Some(title(snapshot)));
+        let value = title(snapshot);
+        let _ = tray.set_title(Some(&value));
+        #[cfg(target_os = "macos")]
+        crate::platform::animate_tray_title(&value, animate);
     }
     if previous.is_none_or(|old| {
         old.connection != snapshot.connection
@@ -205,13 +318,38 @@ pub fn render(app: &AppHandle, snapshot: &Snapshot, previous: Option<&Snapshot>)
             Connection::SignedOut => "饮水陪伴 · 请登录",
             Connection::Unconfigured => "饮水陪伴 · 请配置服务器",
         };
-        let _ = tray.set_tooltip(Some(format!("{text} · {}", title(snapshot))));
+        let tooltip = format!("{text} · {}", title(snapshot));
+        let _ = tray.set_tooltip(Some(&tooltip));
+        #[cfg(target_os = "windows")]
+        if let Some(amount) = app.tray_by_id("amount") {
+            let _ = amount.set_tooltip(Some(&tooltip));
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tray_title_switches_between_total_current_drink_and_cached_total() {
+        let mut snapshot = Snapshot::default();
+        assert_eq!(title(&snapshot), "— ml");
+        snapshot.dashboard = Some(crate::model::Dashboard {
+            totals: crate::model::Totals {
+                drink_ml: 1280.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        snapshot.connection = Connection::Online;
+        assert_eq!(title(&snapshot), "1280 ml");
+        snapshot.drink_ml = Some(120.0);
+        assert_eq!(title(&snapshot), "+120 ml");
+        snapshot.drink_ml = None;
+        snapshot.connection = Connection::Offline;
+        assert_eq!(title(&snapshot), "· 1280 ml");
+    }
 
     #[test]
     fn all_menu_frames_share_dimensions_and_retain_transparency() {

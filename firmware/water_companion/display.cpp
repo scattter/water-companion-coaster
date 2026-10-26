@@ -19,6 +19,7 @@ static const int ROW_HEIGHT = 20;
 static const int row_y[] = {48, 68, 88, 122, 142, 162, 196, 216, 236, 272, 294};
 static SPISettings lcd_spi(40000000, MSBFIRST, SPI_MODE0);
 static bool ready;
+static bool sleeping;
 static int64_t wake_until_ms;
 static uint8_t pixels[LCD_WIDTH * ROW_HEIGHT * 2];
 static struct {
@@ -305,6 +306,16 @@ static void show_daily(const daily_view_t &view)
     daily_drawn = true;
 }
 
+static void sleep_panel(void)
+{
+    digitalWrite(LCD_BL_PIN, LOW);
+    write_command(0x28);
+    write_command(0x10);
+    // ST7789 进入休眠后至少等待 5 ms 才能接收下一条命令。
+    delay(5);
+    sleeping = true;
+}
+
 bool display_start(void)
 {
     pinMode(LCD_CS_PIN, OUTPUT);
@@ -335,6 +346,7 @@ bool display_start(void)
     ready = true;
     draw_text(12, "水伴杯垫 " FIRMWARE_VERSION, WHITE);
     line(0, "正在启动", AMBER);
+    sleep_panel();
     return true;
 }
 
@@ -343,17 +355,14 @@ void display_wake(void)
     wake_until_ms = esp_timer_get_time() / 1000 + 15000;
 }
 
-void display_update(esp_err_t startup_result)
+bool display_awake(void)
 {
-    if (!ready) return;
     // 亮屏只由按键续时，称重、配网和故障状态均不能自动唤醒。
-    bool awake = esp_timer_get_time() / 1000 < wake_until_ms;
-    static bool backlight = false;
-    if (awake != backlight) {
-        digitalWrite(LCD_BL_PIN, awake ? HIGH : LOW);
-        backlight = awake;
-    }
-    if (!awake) return;
+    return ready && esp_timer_get_time() / 1000 < wake_until_ms;
+}
+
+static void draw_status(esp_err_t startup_result)
+{
     if (startup_result != ESP_OK) {
         select_page(2);
         char code[32];
@@ -481,5 +490,28 @@ void display_update(esp_err_t startup_result)
             snprintf(queue, sizeof(queue), "待定时间 %u 条", time_pending);
             line(10, queue, AMBER);
         } else line(10, "网站设置空杯", GRAY);
+    }
+}
+
+void display_update(esp_err_t startup_result)
+{
+    if (!ready) return;
+    if (!display_awake()) {
+        if (!sleeping) sleep_panel();
+        return;
+    }
+    bool waking = sleeping;
+    if (waking) {
+        write_command(0x11);
+        // 只挂起显示所在任务；称重和联网任务继续运行。
+        delay(120);
+        current_page = -1;
+        daily_drawn = false;
+    }
+    draw_status(startup_result);
+    if (waking) {
+        write_command(0x29);
+        digitalWrite(LCD_BL_PIN, HIGH);
+        sleeping = false;
     }
 }

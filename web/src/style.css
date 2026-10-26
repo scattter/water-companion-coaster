@@ -294,8 +294,6 @@ h1 span {
   min-width:140px;
 }
 
-.date-step { display:grid; place-items:center; min-width:36px; min-height:40px; padding:0 8px; border-radius:8px; background:#edf3e9; color:#43745d; font-size:23px; }
-
 .text-button {
   background:none;
   padding:0;
@@ -545,113 +543,6 @@ h1 span {
 
 .trend-panel {
   min-height:278px;
-}
-
-.chart {
-  position:relative;
-  margin-top:26px;
-  height:160px;
-}
-
-.chart-grid {
-  display:flex;
-  position:absolute;
-  inset:0 0 30px;
-  justify-content:space-between;
-  flex-direction:column;
-  font-size:9px;
-  color:#a5aea2;
-}
-
-.chart-grid span {
-  display:flex;
-  align-items:center;
-  gap:14px;
-  line-height:1;
-}
-
-.chart-grid span:after {
-  content:"";
-  flex:1;
-  border-top:1px dashed #e7ebe1;
-}
-
-.chart-grid span {
-  width:100%;
-}
-
-.chart-columns {
-  position:absolute;
-  inset:0 0 0 33px;
-  display:grid;
-  grid-template-columns:repeat(7,minmax(0,1fr));
-  gap:15px;
-  align-items:end;
-}
-
-.chart-column {
-  padding:0;
-  background:transparent;
-  color:inherit;
-  border-radius:6px;
-  display:flex;
-  align-items:center;
-  flex-direction:column;
-  height:100%;
-  position:relative;
-}
-
-.bar-space {
-  height:130px;
-  width:100%;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  justify-content:flex-end;
-  position:relative;
-}
-
-.bar {
-  width:58%;
-  max-width:39px;
-  background:#d6e1cb;
-  border-radius:5px 5px 2px 2px;
-  min-height:2px;
-}
-
-.selected .bar {
-  background:#6f9361;
-}
-
-.bar.zero {
-  background:#dde6d6;
-  min-height:3px;
-}
-
-.bar-value {
-  font-size:9px;
-  color:#9aaa91;
-  margin-bottom:5px;
-  line-height:1;
-  position:absolute;
-  top:-14px;
-}
-
-.selected .bar-value {
-  color:#6c885b;
-  font-weight:600;
-}
-
-.bar-label {
-  font-size:10px;
-  color:#94a18d;
-  margin-top:11px;
-  white-space:nowrap;
-}
-
-.selected .bar-label {
-  color:#4e7047;
-  font-weight:600;
 }
 
 .record-count {
@@ -1130,12 +1021,6 @@ h1 span {
   .device-panel {
     padding:20px;
   }
-  .chart-columns {
-    gap:8px;
-  }
-  .bar {
-    width:62%;
-  }
   .event-row {
     gap:9px;
   }
@@ -1370,26 +1255,6 @@ h1 span {
   }
   .legend {
     font-size:9px;
-  }
-  .chart {
-    margin-top:29px;
-  }
-  .chart-columns {
-    gap:3px;
-    left:27px;
-  }
-  .chart-grid span {
-    gap:7px;
-    font-size:8px;
-  }
-  .bar {
-    width:61%;
-  }
-  .bar-label {
-    font-size:9px;
-  }
-  .bar-value {
-    font-size:8px;
   }
   .trend-panel {
     min-height:272px;

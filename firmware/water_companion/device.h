@@ -5,7 +5,7 @@
 #include "cJSON.h"
 #include "storage.h"
 
-#define FIRMWARE_VERSION "0.7.3"
+#define FIRMWARE_VERSION "0.7.4"
 #define DEVICE_IDLE_MS 30000
 
 #ifdef __cplusplus

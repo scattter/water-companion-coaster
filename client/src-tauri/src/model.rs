@@ -130,6 +130,7 @@ pub struct Snapshot {
     pub error: Option<String>,
     pub last_synced_at: Option<String>,
     pub state: CompanionState,
+    pub drink_ml: Option<f64>,
     pub frame: u32,
     pub settings: Settings,
 }

@@ -605,7 +605,7 @@ static void serial_task(void *arg)
         }
         int character = coaster_console_read();
         if (character < 0) {
-            vTaskDelay(pdMS_TO_TICKS(10));
+            vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
         if (character == '\r' || character == '\n') {

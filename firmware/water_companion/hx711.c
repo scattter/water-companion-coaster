@@ -33,7 +33,8 @@ esp_err_t hx711_read(int32_t *value, uint32_t timeout_ms)
     int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
     while (gpio_get_level(data_pin)) {
         if (esp_timer_get_time() >= deadline) return ESP_ERR_TIMEOUT;
-        vTaskDelay(pdMS_TO_TICKS(1));
+        // DOUT 就绪后保持低电平，10 ms 检查不遗漏就绪信号，采样任务仍按 10 SPS 运行。
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
     uint32_t raw = 0;
     // SCK 高电平不能被调度打断超过 60 us，否则 HX711 会进入掉电状态。

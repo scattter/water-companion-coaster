@@ -131,6 +131,8 @@ impl Backend {
 
     pub fn snapshot(&self) -> Snapshot {
         let mut inner = self.inner.lock().unwrap();
+        // 与本次同步的总量一起发布，避免等待下一帧状态更新时先闪出新总量。
+        inner.snapshot.drink_ml = inner.engine.drink_amount(Utc::now().timestamp_millis());
         inner.snapshot.revision = inner.snapshot.revision.saturating_add(1);
         inner.snapshot.clone()
     }

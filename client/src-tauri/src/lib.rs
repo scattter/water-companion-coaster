@@ -1,4 +1,6 @@
 mod address;
+#[cfg(any(target_os = "windows", test))]
+mod amount_icon;
 #[cfg(not(target_os = "android"))]
 mod api;
 #[cfg(not(target_os = "android"))]

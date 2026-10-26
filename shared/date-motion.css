@@ -1,0 +1,9 @@
+.record-content { animation:record-arrive .18s ease-out; }
+.history-value { display:inline-block; animation:record-arrive .2s ease-out; }
+@keyframes record-arrive {
+  from { opacity:.55; transform:translateY(3px); }
+  to { opacity:1; transform:translateY(0); }
+}
+@media (prefers-reduced-motion:reduce) {
+  .record-content,.history-value { animation:none; }
+}

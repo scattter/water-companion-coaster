@@ -8,7 +8,9 @@ import { sameBinding, type Session } from './session';
 import { platform } from './platform';
 import { useNotice } from './notices';
 import type { Dashboard, DrinkEvent } from '../../shared/dashboard';
-import { dateInZone, dateWeekEnd, selectableDate, shiftDate, weekDates } from '../../shared/dates';
+import { dateInZone, selectableDate, shiftDate } from '../../shared/dates';
+import DrinkTrend from '../../shared/DrinkTrend.vue';
+import '../../shared/date-motion.css';
 const props = withDefaults(defineProps<{ mobile?: boolean; active?: boolean; widgetBusy?: boolean }>(), { mobile: false, active: true, widgetBusy: false });
 const emit = defineEmits<{ serviceSettings: []; addWidget: [] }>();
 const session = ref<Session>({ user: null, deviceId: null, bindingId: null });
@@ -40,11 +42,9 @@ const menu = ref<'account' | 'settings' | null>(null);
 const menuRoot = ref<HTMLElement | null>(null);
 const accountButton = ref<HTMLButtonElement | null>(null);
 const settingsButton = ref<HTMLButtonElement | null>(null);
-const stripEnd = ref('');
-const stripDates = computed(() => stripEnd.value ? weekDates(stripEnd.value) : []);
+const displayDate = computed(() => dashboard.value?.date ?? selectedDate.value);
+const dateLoading = computed(() => Boolean(selectedDate.value) && displayDate.value !== selectedDate.value && !dashboardError.value);
 const menuBusy = computed(() => authBusy.value || bindingBusy.value || unbindBusy.value || provisioningBusy.value || Boolean(revokePending.value));
-let dateSwipe: { id: number; x: number; y: number } | null = null;
-let swipedUntil = 0;
 let timer: ReturnType<typeof setInterval> | undefined;
 let pollingVersion: number | null = null;
 let requestId = 0;
@@ -72,7 +72,6 @@ const isToday = computed(() => selectedDate.value === today.value);
 const online = computed(() => Boolean(dashboard.value?.device?.online) && !dashboardError.value);
 const needsFactoryService = computed(() => Boolean(dashboard.value?.device?.lastSeenAt) && dashboard.value?.device?.calibrated === false);
 const needsCup = computed(() => dashboard.value?.device?.calibrated && dashboard.value.device?.emptyCupGrams === null);
-const maximumMl = computed(() => Math.max(100, ...dashboard.value?.week.map(day => day.drinkMl) ?? []));
 const estimateDescription = '清水按 1 g ≈ 1 ml 换算，倒水与喝水无法区分，喝完直接补水只记录净变化。';
 const weightState = computed(() => {
   if (!session.value.deviceId) return '尚未绑定当前杯垫，历史记录仍可查看';
@@ -100,7 +99,6 @@ function resetDeviceState() {
   revokePending.value = null;
   today.value = '';
   selectedDate.value = '';
-  stripEnd.value = '';
   closeMenu();
   timeZone.value = 'Asia/Shanghai';
   bindingCode.value = '';
@@ -298,10 +296,6 @@ function shortDate(value: string) {
   return month && day ? `${Number(month)}/${Number(day)}` : '当日';
 }
 
-function weekday(value: string) {
-  return ['日', '一', '二', '三', '四', '五', '六'][new Date(`${value}T00:00:00Z`).getUTCDay()];
-}
-
 function showEstimate() {
   platform.notices?.show({ source: 'web:estimate', message: `饮水量根据真实称重差值估算。${estimateDescription}` });
 }
@@ -314,37 +308,23 @@ function selectDate(event: Event) {
 
 function changeDate(date: string) {
   if (!selectableDate(date, today.value)) return;
-  stripEnd.value = dateWeekEnd(date, today.value);
   if (selectedDate.value === date) return;
   selectedDate.value = date;
-  dashboard.value = null;
   dashboardError.value = '';
   void refreshDashboard();
 }
 
-function browseDates(direction: number) {
-  if (!stripEnd.value) return;
-  const end = shiftDate(stripEnd.value, direction * 7);
-  if (end <= today.value) stripEnd.value = end;
-}
-
-function startDateSwipe(event: PointerEvent) {
-  if (event.isPrimary) dateSwipe = { id: event.pointerId, x: event.clientX, y: event.clientY };
-}
-
-function endDateSwipe(event: PointerEvent) {
-  const start = dateSwipe;
-  dateSwipe = null;
-  if (!start || start.id !== event.pointerId) return;
-  const dx = event.clientX - start.x;
-  if (Math.abs(dx) < 40 || Math.abs(dx) <= Math.abs(event.clientY - start.y)) return;
-  browseDates(dx > 0 ? -1 : 1);
-  swipedUntil = Date.now() + 300;
-}
-
-function selectStripDate(date: string, event: MouseEvent) {
-  if (event.detail && Date.now() < swipedUntil) return;
-  changeDate(date);
+async function loadWeek(date: string): Promise<Dashboard['week']> {
+  const version = sessionVersion;
+  try {
+    const result = await request<Dashboard>(`/api/dashboard?date=${encodeURIComponent(date)}`);
+    if (disposed || version !== sessionVersion) throw new Error('查询已取消');
+    if (result.date !== date) throw new Error('服务器返回的日期与所选日期不一致，请重新查询。');
+    return result.week;
+  } catch (cause) {
+    if (!disposed && version === sessionVersion) handleAccessError(cause);
+    throw cause;
+  }
 }
 
 function closeMenu(restoreFocus = false) {
@@ -378,9 +358,7 @@ function updateToday() {
   const date = dateInZone(timeZone.value);
   if (selectedDate.value === today.value && date !== today.value) {
     selectedDate.value = date;
-    dashboard.value = null;
   }
-  if (date !== today.value) stripEnd.value = dateWeekEnd(selectedDate.value, date);
   today.value = date;
 }
 
@@ -392,6 +370,7 @@ async function refreshDashboard() {
   try {
     const result = await request<Dashboard>(date ? `/api/dashboard?date=${encodeURIComponent(date)}` : '/api/dashboard');
     if (disposed || version !== sessionVersion || currentRequest !== requestId || date !== selectedDate.value) return;
+    if (date && result.date !== date) throw new Error('服务器返回的日期与所选日期不一致，请重新查询。');
     if ((result.device?.id ?? null) !== session.value.deviceId || (result.device?.bindingId ?? null) !== session.value.bindingId) {
       // Reconcile device/batch changes without treating permission changes as logout.
       if (provisioningBusy.value || page.value === 'add' || settingsOpen.value) {
@@ -410,7 +389,6 @@ async function refreshDashboard() {
     if (!today.value) {
       today.value = result.date;
       selectedDate.value = result.date;
-      stripEnd.value = result.date;
     }
     dashboard.value = result;
     dashboardError.value = '';
@@ -565,7 +543,7 @@ onBeforeUnmount(() => {
     <main v-else>
       <section v-if="!mobile" class="page-heading" aria-labelledby="page-title">
         <div><p class="eyebrow">你的饮水日常</p><h1 id="page-title">喝水这件小事，<span>慢慢养成。</span></h1><p class="page-description">通过杯垫重量变化，记录每一次饮水。</p></div>
-        <div class="date-control"><label for="statistics-date">查看日期</label><button class="date-step" aria-label="前一天" :disabled="!today" @click="changeDate(shiftDate(selectedDate, -1))">‹</button><input id="statistics-date" :value="selectedDate" aria-label="查看统计日期" type="date" :max="today" :disabled="!today" @change="selectDate" /><button class="date-step" aria-label="后一天" :disabled="!today || isToday" @click="changeDate(shiftDate(selectedDate, 1))">›</button><button v-if="!isToday && today" class="text-button" @click="changeDate(today)">回到今天</button></div>
+        <div class="date-control"><label for="statistics-date">查看日期</label><input id="statistics-date" :value="selectedDate" aria-label="查看统计日期" type="date" :max="today" :disabled="!today" @change="selectDate" /><button v-if="!isToday && today" class="text-button" @click="changeDate(today)">回到今天</button></div>
       </section>
 
       <section v-if="!session.deviceId" class="calibration-prompt" aria-labelledby="unbound-title">
@@ -587,46 +565,37 @@ onBeforeUnmount(() => {
 
       <div class="dashboard-grid">
         <div class="main-column">
-          <section class="summary-grid" aria-label="饮水统计">
+          <section class="summary-grid" aria-label="饮水统计" :aria-busy="dateLoading">
             <article class="total-card">
-              <div class="card-topline"><h2>{{ isToday ? '今日' : shortDate(selectedDate) }}饮水量</h2><button v-if="mobile" class="estimate-tag" aria-label="查看饮水量估算说明" @click="showEstimate">估算</button><span v-else class="estimate-tag">估算</span></div>
-              <div class="total-number"><strong data-testid="drink-total">{{ number(dashboard?.totals.drinkMl) }}</strong><span>ml</span></div>
-              <p>{{ mobile && !isToday ? `${selectedDate} · 历史记录` : '一口一口，积累你的日常。' }}</p>
-              <slot v-if="mobile" name="companion" :dashboard="isToday ? dashboard : null" :session="session" :online="!dashboardError" />
-              <svg v-if="!mobile || !isToday" class="water-art" viewBox="0 0 140 135" fill="none" aria-hidden="true"><path d="M32 10h77l-8 110a7 7 0 0 1-7 6H47a7 7 0 0 1-7-6L32 10Z" stroke="currentColor" stroke-width="2"/><path d="M37 63c15-12 26 11 41 0 11-8 17-5 27-1l-4 58a7 7 0 0 1-7 6H47a7 7 0 0 1-7-6l-3-57Z" fill="currentColor" opacity=".28"/><path d="M37 63c15-12 26 11 41 0 11-8 17-5 27-1" stroke="currentColor" stroke-width="2"/><circle cx="75" cy="88" r="4" fill="currentColor" opacity=".7"/><circle cx="62" cy="105" r="2" fill="currentColor" opacity=".5"/></svg>
+              <div class="card-topline"><h2>{{ displayDate === today ? '今日' : shortDate(displayDate) }}饮水量</h2><button v-if="mobile" class="estimate-tag" aria-label="查看饮水量估算说明" @click="showEstimate">估算</button><span v-else class="estimate-tag">估算</span></div>
+              <div class="total-number"><strong :key="dashboard?.date" class="history-value" data-testid="drink-total">{{ number(dashboard?.totals.drinkMl) }}</strong><span>ml</span></div>
+              <p>{{ dateLoading ? `正在读取 ${selectedDate} 的记录…` : mobile && displayDate !== today ? `${displayDate} · 历史记录` : '一口一口，积累你的日常。' }}</p>
+              <slot v-if="mobile" name="companion" :dashboard="isToday && displayDate === today ? dashboard : null" :session="session" :online="!dashboardError" />
+              <svg v-if="!mobile || displayDate !== today" class="water-art" viewBox="0 0 140 135" fill="none" aria-hidden="true"><path d="M32 10h77l-8 110a7 7 0 0 1-7 6H47a7 7 0 0 1-7-6L32 10Z" stroke="currentColor" stroke-width="2"/><path d="M37 63c15-12 26 11 41 0 11-8 17-5 27-1l-4 58a7 7 0 0 1-7 6H47a7 7 0 0 1-7-6l-3-57Z" fill="currentColor" opacity=".28"/><path d="M37 63c15-12 26 11 41 0 11-8 17-5 27-1" stroke="currentColor" stroke-width="2"/><circle cx="75" cy="88" r="4" fill="currentColor" opacity=".7"/><circle cx="62" cy="105" r="2" fill="currentColor" opacity=".5"/></svg>
             </article>
-            <article class="metric-card"><span class="metric-icon drink-icon" aria-hidden="true">↘</span><h2>饮水次数</h2><div class="metric-number"><strong data-testid="drink-count">{{ number(dashboard?.totals.drinkCount) }}</strong><span>次</span></div><p>有效取放记录</p></article>
-            <article class="metric-card"><span class="metric-icon refill-icon" aria-hidden="true">↗</span><h2>补水量</h2><div class="metric-number"><strong data-testid="refill-total">{{ number(dashboard?.totals.refillMl) }}</strong><span>ml</span></div><p>单独统计，不计入饮水</p></article>
+            <article class="metric-card"><span class="metric-icon drink-icon" aria-hidden="true">↘</span><h2>饮水次数</h2><div class="metric-number"><strong :key="dashboard?.date" class="history-value" data-testid="drink-count">{{ number(dashboard?.totals.drinkCount) }}</strong><span>次</span></div><p>有效取放记录</p></article>
+            <article class="metric-card"><span class="metric-icon refill-icon" aria-hidden="true">↗</span><h2>补水量</h2><div class="metric-number"><strong :key="dashboard?.date" class="history-value" data-testid="refill-total">{{ number(dashboard?.totals.refillMl) }}</strong><span>ml</span></div><p>单独统计，不计入饮水</p></article>
           </section>
 
           <section class="panel trend-panel" aria-labelledby="trend-title">
-            <div class="section-heading"><div><h2 id="trend-title">{{ mobile ? '饮水趋势' : '近七日饮水趋势' }}</h2><p>{{ dashboard ? `${dashboard.week[0]?.date} — ${dashboard.date}` : '截至所选日期的七天' }}</p></div><div v-if="mobile" class="trend-date-actions"><label class="calendar-trigger">日历<input :value="selectedDate" aria-label="查看统计日期" type="date" :max="today" :disabled="!today" @change="selectDate" /></label><button v-if="!isToday && today" class="text-button" @click="changeDate(today)">今天</button></div><span v-else class="legend"><i></i>饮水量 / ml</span></div>
-            <div v-if="mobile" class="date-strip" aria-label="按日期查看饮水记录">
-              <button class="date-step" aria-label="前七天" :disabled="!today" @click="browseDates(-1)">‹</button>
-              <div class="date-days" @pointerdown="startDateSwipe" @pointerup="endDateSwipe" @pointercancel="dateSwipe = null">
-                <button v-for="date in stripDates" :key="date" :aria-label="`查看 ${date} 的饮水记录`" :aria-pressed="date === selectedDate" :class="{ selected: date === selectedDate }" @click="selectStripDate(date, $event)"><span>{{ date === today ? '今天' : weekday(date) }}</span><strong>{{ Number(date.slice(8)) }}</strong></button>
-              </div>
-              <button class="date-step" aria-label="后七天" :disabled="!today || stripEnd >= today" @click="browseDates(1)">›</button>
-            </div>
-            <div v-if="dashboard" class="chart" role="group" aria-label="近七日饮水量，点击柱形查看当天记录">
-              <div class="chart-grid" aria-hidden="true"><span>{{ number(maximumMl) }}</span><span>{{ number(maximumMl / 2) }}</span><span>0</span></div>
-              <div class="chart-columns"><button v-for="day in dashboard.week" :key="day.date" class="chart-column" :class="{ selected: day.date === selectedDate }" :aria-label="`${day.date} 饮水 ${number(day.drinkMl)} 毫升，查看当天记录`" :aria-pressed="day.date === selectedDate" @click="changeDate(day.date)"><span class="bar-space"><span class="bar-value">{{ number(day.drinkMl) }}</span><span class="bar" :class="{ zero: day.drinkMl === 0 }" :style="{ height: `${Math.max(day.drinkMl === 0 ? 1 : 3, day.drinkMl / maximumMl * 100)}%` }"></span></span><span class="bar-label">{{ day.date === today ? '今天' : shortDate(day.date) }}</span></button></div>
-            </div>
-            <div v-else class="loading-placeholder">{{ dashboardError ? '连接恢复后显示趋势' : '正在读取饮水趋势…' }}</div>
+            <div class="section-heading"><div><h2 id="trend-title">饮水趋势</h2><p>{{ selectedDate ? `${shiftDate(selectedDate, -6)} — ${selectedDate}` : '截至所选日期的七天' }}</p></div><div v-if="mobile" class="trend-date-actions"><label class="calendar-trigger">日历<input :value="selectedDate" aria-label="查看统计日期" type="date" :max="today" :disabled="!today" @change="selectDate" /></label><button v-if="!isToday && today" class="text-button" @click="changeDate(today)">今天</button></div><span v-else class="legend"><i></i>饮水量 / ml</span></div>
+            <DrinkTrend :key="`${session.user.id}:${session.bindingId}:${timeZone}`" :model-value="selectedDate" :today="today" :week="dashboard?.week ?? []" :load-week="loadWeek" :compact="mobile" @update:model-value="changeDate" />
           </section>
 
           <section class="panel records-panel" aria-labelledby="records-title">
-            <div class="section-heading"><div><h2 id="records-title">饮水记录</h2><p>{{ selectedDate }} · {{ mobile ? '饮水与补水明细' : '保留取放前后的重量，支持撤销误判' }}</p></div><span class="record-count">{{ dashboard?.events.length ?? '—' }} 条记录</span></div>
-            <div v-if="!dashboard" class="empty-state"><span class="empty-icon" aria-hidden="true">≋</span><p>{{ dashboardError ? '暂时无法读取记录' : '正在读取记录…' }}</p></div>
-            <div v-else-if="!dashboard.events.length" class="empty-state"><span class="empty-icon" aria-hidden="true">≋</span><h3>这一天还没有记录</h3><p>杯垫联网并完成空杯设置后，<br />饮水后放回杯子，重量稳定后记录会自动同步。</p></div>
-            <ul v-else class="event-list">
-              <li v-for="event in dashboard.events" :key="event.id" class="event-row" :class="{ revoked: event.revokedAt }">
-                <span class="event-icon" :class="event.kind" aria-hidden="true">{{ event.kind === 'drink' ? '↘' : '↗' }}</span>
-                <div class="event-info"><div class="event-title"><strong>{{ event.kind === 'drink' ? '饮水' : '补水' }}</strong><time :datetime="event.occurredAt">{{ time(event.occurredAt) }}</time><span v-if="event.revokedAt" class="revoked-label">已撤销</span></div><p>{{ number(event.beforeGrams) }} g <span aria-label="变为">→</span> {{ number(event.afterGrams) }} g</p></div>
-                <div class="event-amount"><strong>{{ number(event.amountMl) }}</strong><span> ml</span></div>
-                <button class="revoke-button" :disabled="Boolean(event.revokedAt) || Boolean(revokePending)" :aria-label="`撤销${time(event.occurredAt)}的${event.kind === 'drink' ? '饮水' : '补水'}记录`" @click="revoke(event)">{{ revokePending === event.id ? '撤销中…' : event.revokedAt ? '已撤销' : '撤销' }}</button>
-              </li>
-            </ul>
+            <div class="section-heading"><div><h2 id="records-title">饮水记录</h2><p>{{ displayDate }} · {{ dateLoading ? `正在读取 ${selectedDate}…` : mobile ? '饮水与补水明细' : '保留取放前后的重量，支持撤销误判' }}</p></div><span class="record-count">{{ dashboard?.events.length ?? '—' }} 条记录</span></div>
+            <div :key="dashboard?.date" class="record-content" :aria-busy="dateLoading || (!dashboard && !dashboardError)">
+              <div v-if="!dashboard" class="empty-state"><span class="empty-icon" aria-hidden="true">≋</span><p>{{ dashboardError ? '暂时无法读取记录' : '正在读取记录…' }}</p></div>
+              <div v-else-if="!dashboard.events.length" class="empty-state"><span class="empty-icon" aria-hidden="true">≋</span><h3>这一天还没有记录</h3><p>杯垫联网并完成空杯设置后，<br />饮水后放回杯子，重量稳定后记录会自动同步。</p></div>
+              <ul v-else class="event-list">
+                <li v-for="event in dashboard.events" :key="event.id" class="event-row" :class="{ revoked: event.revokedAt }">
+                  <span class="event-icon" :class="event.kind" aria-hidden="true">{{ event.kind === 'drink' ? '↘' : '↗' }}</span>
+                  <div class="event-info"><div class="event-title"><strong>{{ event.kind === 'drink' ? '饮水' : '补水' }}</strong><time :datetime="event.occurredAt">{{ time(event.occurredAt) }}</time><span v-if="event.revokedAt" class="revoked-label">已撤销</span></div><p>{{ number(event.beforeGrams) }} g <span aria-label="变为">→</span> {{ number(event.afterGrams) }} g</p></div>
+                  <div class="event-amount"><strong>{{ number(event.amountMl) }}</strong><span> ml</span></div>
+                  <button class="revoke-button" :disabled="Boolean(event.revokedAt) || Boolean(revokePending)" :aria-label="`撤销${time(event.occurredAt)}的${event.kind === 'drink' ? '饮水' : '补水'}记录`" @click="revoke(event)">{{ revokePending === event.id ? '撤销中…' : event.revokedAt ? '已撤销' : '撤销' }}</button>
+                </li>
+              </ul>
+            </div>
           </section>
         </div>
 

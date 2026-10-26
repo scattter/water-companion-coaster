@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use chrono::DateTime;
 
-use crate::model::{CompanionState, Dashboard, EventKind, Settings};
+use crate::model::{CompanionState, Dashboard, DrinkEvent, EventKind, Settings};
 
 const FRESH_EVENT_MS: i64 = 120_000;
 const ACTION_MS: i64 = 4_000;
@@ -18,6 +18,7 @@ pub struct Engine {
     needs_baseline: bool,
     cup_present: Option<bool>,
     cup_lifted: bool,
+    drink: Option<DrinkEvent>,
     drink_until: Option<i64>,
     reminder_until: Option<i64>,
     active_ms: i64,
@@ -36,6 +37,7 @@ impl Default for Engine {
             needs_baseline: true,
             cup_present: None,
             cup_lifted: false,
+            drink: None,
             drink_until: None,
             reminder_until: None,
             active_ms: 0,
@@ -60,10 +62,20 @@ impl Engine {
         self.needs_baseline = true;
         self.cup_present = None;
         self.cup_lifted = false;
+        self.drink = None;
         self.drink_until = None;
         self.reminder_until = None;
         self.last_tick = None;
         self.was_active = false;
+    }
+
+    pub fn drink_amount(&self, now_ms: i64) -> Option<f64> {
+        // 拿杯只能触发水豚动作，数字必须等放回后上报的有效饮水记录。
+        self.drink
+            .as_ref()
+            .filter(|_| self.drink_until.is_some_and(|until| now_ms < until))
+            .map(|event| event.amount_ml)
+            .filter(|amount| amount.is_finite() && *amount > 0.0)
     }
 
     pub fn ingest(&mut self, dashboard: &Dashboard, now_ms: i64) -> bool {
@@ -90,6 +102,14 @@ impl Engine {
             !self.needs_baseline && self.cup_present == Some(true) && cup_present == Some(false);
         self.cup_lifted = cup_present == Some(false) && (self.cup_lifted || lifted);
         self.cup_present = cup_present;
+        if self.drink.as_ref().is_some_and(|drink| {
+            dashboard
+                .events
+                .iter()
+                .any(|event| event.id == drink.id && event.revoked_at.is_some())
+        }) {
+            self.drink = None;
+        }
         if self.date != dashboard.date {
             // 午夜只淘汰旧日期的去重记录，不把当天第一口水误当成历史基线。
             let current_ids: HashSet<&str> = dashboard
@@ -102,6 +122,7 @@ impl Engine {
         }
         let mut new_drink = false;
         let mut fresh_drink = false;
+        let mut latest_drink = None;
         for event in &dashboard.events {
             if !self.seen.insert(event.id.clone()) {
                 continue;
@@ -120,6 +141,11 @@ impl Engine {
             {
                 new_drink = true;
                 fresh_drink |= age.is_some_and(|age| age <= FRESH_EVENT_MS);
+                if let Some(age) = age.filter(|age| *age <= FRESH_EVENT_MS) {
+                    if latest_drink.is_none_or(|(latest_age, _)| age < latest_age) {
+                        latest_drink = Some((age, event));
+                    }
+                }
             }
         }
         if new_drink {
@@ -133,6 +159,7 @@ impl Engine {
             return false;
         }
         if fresh_drink {
+            self.drink = latest_drink.map(|(_, event)| event.clone());
             self.drink_until = Some(now_ms.saturating_add(ACTION_MS));
         }
         fresh_drink
@@ -242,14 +269,17 @@ mod tests {
         let mut data = dashboard();
         let settings = Settings::default();
         engine.ingest(&data, NOW);
+        assert_eq!(engine.drink_amount(NOW), None);
         engine.active_ms = 30_000;
         engine.reminded = true;
         data.device.as_mut().unwrap().cup_present = false;
         assert!(!engine.ingest(&data, NOW + 1_000));
+        assert_eq!(engine.drink_amount(NOW + 1_000), None);
         assert_eq!(engine.active_ms, 30_000);
         assert!(engine.reminded);
         for offset in [1_000, 5_000, 10_000] {
             assert!(!engine.ingest(&data, NOW + offset));
+            assert_eq!(engine.drink_amount(NOW + offset), None);
             assert_eq!(
                 engine.tick(NOW + offset, Some(0.0), false, true, &settings),
                 CompanionState::Drinking
@@ -257,22 +287,94 @@ mod tests {
         }
         data.device.as_mut().unwrap().cup_present = true;
         assert!(!engine.ingest(&data, NOW + 11_000));
+        assert_eq!(engine.drink_amount(NOW + 11_000), None);
         assert_eq!(
             engine.tick(NOW + 11_000, Some(0.0), false, true, &settings),
             CompanionState::Working
         );
         data.events.push(event("confirmed", NOW + 12_000));
         assert!(engine.ingest(&data, NOW + 12_000));
+        assert_eq!(engine.drink_amount(NOW + 12_000), Some(30.5));
         assert_eq!(engine.active_ms, 0);
         assert!(!engine.reminded);
         assert_eq!(
             engine.tick(NOW + 12_000, Some(0.0), false, true, &settings),
             CompanionState::Drinking
         );
+        assert!(!engine.ingest(&data, NOW + 15_000));
+        assert_eq!(engine.drink_amount(NOW + 15_000), Some(30.5));
         assert_eq!(
             engine.tick(NOW + 16_000, Some(0.0), false, true, &settings),
             CompanionState::Working
         );
+        assert_eq!(engine.drink_amount(NOW + 16_000), None);
+    }
+
+    #[test]
+    fn drink_amount_uses_latest_fresh_record_without_next_lift_changing_its_display() {
+        let mut engine = Engine::new();
+        let mut data = dashboard();
+        data.events.push(event("baseline", NOW));
+        engine.ingest(&data, NOW);
+        assert_eq!(engine.drink_amount(NOW), None);
+        let mut latest = event("latest", NOW + 2_000);
+        latest.amount_ml = 120.0;
+        data.events.extend([latest, event("earlier", NOW + 1_000)]);
+        engine.ingest(&data, NOW + 2_000);
+        assert_eq!(engine.drink_amount(NOW + 2_000), Some(120.0));
+        engine.ingest(&data, NOW + 3_000);
+        assert_eq!(engine.drink_amount(NOW + 3_000), Some(120.0));
+        data.device.as_mut().unwrap().cup_present = false;
+        engine.ingest(&data, NOW + 4_000);
+        assert_eq!(engine.drink_amount(NOW + 4_000), Some(120.0));
+        assert_eq!(engine.drink_amount(NOW + 6_000), None);
+        engine.mark_baseline();
+        assert_eq!(engine.drink_amount(NOW + 4_000), None);
+        data.events.push(event("while-offline", NOW + 5_000));
+        engine.ingest(&data, NOW + 5_000);
+        assert_eq!(engine.drink_amount(NOW + 5_000), None);
+    }
+
+    #[test]
+    fn reported_drink_does_not_wait_for_the_return_heartbeat_or_replay_on_it() {
+        let mut engine = Engine::new();
+        let mut data = dashboard();
+        engine.ingest(&data, NOW);
+        data.device.as_mut().unwrap().cup_present = false;
+        engine.ingest(&data, NOW + 1_000);
+        assert_eq!(engine.drink_amount(NOW + 1_000), None);
+        data.events
+            .push(event("reported-after-return", NOW + 2_000));
+        assert!(engine.ingest(&data, NOW + 3_000));
+        assert_eq!(engine.drink_amount(NOW + 3_000), Some(30.5));
+        data.device.as_mut().unwrap().cup_present = true;
+        assert!(!engine.ingest(&data, NOW + 8_000));
+        assert_eq!(engine.drink_amount(NOW + 8_000), None);
+    }
+
+    #[test]
+    fn zero_amount_does_not_switch_the_display() {
+        let mut engine = Engine::new();
+        let mut data = dashboard();
+        engine.ingest(&data, NOW);
+        let mut zero = event("zero", NOW + 1_000);
+        zero.amount_ml = 0.0;
+        data.events.push(zero);
+        engine.ingest(&data, NOW + 1_000);
+        assert_eq!(engine.drink_amount(NOW + 1_000), None);
+    }
+
+    #[test]
+    fn revoked_drink_cannot_remain_the_current_amount() {
+        let mut engine = Engine::new();
+        let mut data = dashboard();
+        engine.ingest(&data, NOW);
+        data.events.push(event("drink", NOW + 1_000));
+        engine.ingest(&data, NOW + 1_000);
+        assert_eq!(engine.drink_amount(NOW + 1_000), Some(30.5));
+        data.events[0].revoked_at = Some("2026-10-22T00:00:02Z".into());
+        engine.ingest(&data, NOW + 2_000);
+        assert_eq!(engine.drink_amount(NOW + 2_000), None);
     }
 
     #[test]

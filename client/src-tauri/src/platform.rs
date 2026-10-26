@@ -35,6 +35,14 @@ extern "C" {
     fn coaster_panel_setup(window: *mut std::ffi::c_void, status_item: *mut std::ffi::c_void);
     fn coaster_panel_position();
     fn coaster_panel_resize(height: f64);
+    fn coaster_status_title(value: *const std::ffi::c_char, animate: bool);
+}
+
+#[cfg(target_os = "macos")]
+pub fn animate_tray_title(value: &str, animate: bool) {
+    if let Ok(value) = std::ffi::CString::new(value) {
+        unsafe { coaster_status_title(value.as_ptr(), animate) };
+    }
 }
 
 pub fn setup_panel(window: &tauri::WebviewWindow) -> Result<(), String> {
@@ -130,6 +138,18 @@ extern "C" {
     fn coaster_windows_idle() -> f64;
     fn coaster_windows_suspended() -> i32;
     fn coaster_windows_generation() -> u32;
+    fn coaster_windows_light_theme() -> i32;
+    fn coaster_windows_animate() -> i32;
+}
+
+#[cfg(target_os = "windows")]
+pub fn light_taskbar() -> bool {
+    unsafe { coaster_windows_light_theme() != 0 }
+}
+
+#[cfg(target_os = "windows")]
+pub fn animate_taskbar() -> bool {
+    unsafe { coaster_windows_animate() != 0 }
 }
 
 #[cfg(target_os = "windows")]

@@ -80,6 +80,11 @@ input::placeholder { color: var(--muted); font-size: 11px; }
 .eyebrow { display: block; font-size: 11px; color: var(--muted); }
 .hero-amount { font-size: 34px; line-height: 1.2; font-weight: 600; letter-spacing: -1px; margin-top: 4px; overflow-wrap: anywhere; }
 .hero-amount span { display: inline-block; font-size: 12px; color: var(--muted); font-weight: 400; letter-spacing: 0; margin-left: 5px; }
+.amount-window { position: relative; overflow: hidden; }
+.amount-enter-active, .amount-leave-active { transition: transform 1s cubic-bezier(.22,.75,.24,1), opacity 1s cubic-bezier(.22,.75,.24,1); }
+.amount-leave-active { position: absolute; top: 0; left: 0; right: 0; }
+.amount-enter-from { transform: translateY(100%); opacity: 0; }
+.amount-leave-to { transform: translateY(-100%); opacity: 0; }
 .stale-note { font-size: 11px; color: #9b7439; margin-top: 5px; }
 .drink-details { text-align: left; margin-top: 14px; padding-top: 2px; border-top: 1px solid var(--line); }
 .drink-details > div { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 7px 0; font-size: 12px; }
@@ -99,7 +104,6 @@ input::placeholder { color: var(--muted); font-size: 11px; }
 .history-date { display:flex; align-items:center; gap:6px; margin:12px 0; }
 .history-date input[type="date"] { width:0; min-width:0; flex:1; margin:0; padding:0 5px; }
 .history-date > button { min-height:36px; flex-shrink:0; }
-.history-date .quiet-button { padding:4px 10px; font-size:20px; }
 .history-totals { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; padding:12px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
 .history-totals dt { font-size:11px; color:var(--muted); }
 .history-totals dd { font-size:18px; font-weight:600; margin-top:4px; overflow-wrap:anywhere; }
@@ -128,4 +132,8 @@ input::placeholder { color: var(--muted); font-size: 11px; }
   .dashboard-summary { grid-template-columns: 112px minmax(0, 1fr); gap: 10px; }
   .hero-scene img { width: 112px; height: 56px; }
   .hero-amount { font-size: 30px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .amount-enter-from, .amount-leave-to { transform: none; }
 }

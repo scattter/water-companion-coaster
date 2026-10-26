@@ -15,6 +15,7 @@ const snapshot = ref<Snapshot>({
   error: null,
   lastSyncedAt: null,
   state: 'idle',
+  drinkMl: null,
   frame: 0,
   settings: { autoRest: true, reminders: true },
 });
@@ -34,7 +35,9 @@ let disposed = false;
 
 const dashboard = computed(() => snapshot.value.dashboard);
 const lastDrink = computed(() => recentDrink(dashboard.value));
-const title = computed(() => dayLabel(dashboard.value));
+const drinking = computed(() => snapshot.value.drinkMl != null);
+const title = computed(() => drinking.value ? '本次饮水' : dayLabel(dashboard.value));
+const intake = computed(() => drinking.value ? `+${amount(snapshot.value.drinkMl)}` : amount(dashboard.value?.totals.drinkMl));
 const sprite = computed(() => framePath(snapshot.value.state, snapshot.value.frame));
 const stateLabel = computed(() => stateText[snapshot.value.state]);
 const signedIn = computed(() => Boolean(snapshot.value.session.user));
@@ -225,7 +228,11 @@ onBeforeUnmount(() => {
           </div>
           <div class="intake-summary">
             <p class="eyebrow">{{ title }}</p>
-            <p class="hero-amount">{{ amount(dashboard?.totals.drinkMl) }}<span>ml</span></p>
+            <div class="amount-window" aria-live="polite" aria-atomic="true">
+              <Transition name="amount">
+                <p :key="intake" class="hero-amount">{{ intake }}<span>ml</span></p>
+              </Transition>
+            </div>
             <p v-if="stale" class="stale-note">当前显示上次同步的数据</p>
           </div>
         </div>
