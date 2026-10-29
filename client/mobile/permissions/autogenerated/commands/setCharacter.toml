@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-setCharacter"
+description = "Enables the setCharacter command without any pre-configured scope."
+commands.allow = ["setCharacter"]
+
+[[permission]]
+identifier = "deny-setCharacter"
+description = "Denies the setCharacter command without any pre-configured scope."
+commands.deny = ["setCharacter"]

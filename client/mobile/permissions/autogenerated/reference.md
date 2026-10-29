@@ -6,6 +6,7 @@
 
 - `allow-configure`
 - `allow-status`
+- `allow-setCharacter`
 - `allow-request`
 - `allow-pinWidget`
 - `allow-choose`
@@ -256,6 +257,32 @@ Enables the request command without any pre-configured scope.
 <td>
 
 Denies the request command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`coaster-mobile:allow-setCharacter`
+
+</td>
+<td>
+
+Enables the setCharacter command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`coaster-mobile:deny-setCharacter`
+
+</td>
+<td>
+
+Denies the setCharacter command without any pre-configured scope.
 
 </td>
 </tr>

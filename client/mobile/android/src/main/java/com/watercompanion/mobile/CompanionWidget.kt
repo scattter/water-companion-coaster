@@ -57,7 +57,7 @@ class CompanionWidget : AppWidgetProvider() {
         private const val ONCE = "companion-widget-refresh"
         private const val REFRESH = "com.watercompanion.mobile.REFRESH"
         private val refreshing = WidgetRefresh()
-        private var petBitmap: Bitmap? = null
+        private val petBitmaps = mutableMapOf<Character, Bitmap>()
         private fun ids(context: Context) = AppWidgetManager.getInstance(context).getAppWidgetIds(ComponentName(context, CompanionWidget::class.java))
         fun reconcile(context: Context) {
             renderAll(context)
@@ -112,10 +112,13 @@ class CompanionWidget : AppWidgetProvider() {
             render(context, AppWidgetManager.getInstance(context), ids(context))
         }
         @Suppress("DEPRECATION")
+        @Synchronized // 串行更新，防止并发同步把刚切换的形象覆盖回去。
         private fun render(context: Context, manager: AppWidgetManager, ids: IntArray) {
             if (ids.isEmpty()) return
             val repository = Repository.get(context)
-            val generation = repository.status().getLong("generation")
+            val status = repository.status()
+            val generation = status.getLong("generation")
+            val character = Character.from(status.optString("character"))
             val signedIn = repository.signedIn()
             val data = WidgetData.from(repository.cache(), signedIn)
             val progress = refreshing.message().takeIf { signedIn }
@@ -126,7 +129,7 @@ class CompanionWidget : AppWidgetProvider() {
                     options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 140).toFloat())
                 val landscape = SizeF(options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, 250).toFloat(),
                     options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 140).toFloat())
-                fun view(bounds: SizeF) = layout(context, bounds, data, progress, id, generation)
+                fun view(bounds: SizeF) = layout(context, bounds, data, progress, id, generation, character)
                 val views = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     val sizes = options.getParcelableArrayList<SizeF>(AppWidgetManager.OPTION_APPWIDGET_SIZES)
                         ?.takeIf { it.isNotEmpty() } ?: listOf(portrait, landscape)
@@ -139,7 +142,7 @@ class CompanionWidget : AppWidgetProvider() {
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) manager.notifyAppWidgetViewDataChanged(id, R.id.widget_records)
             }
         }
-        private fun layout(context: Context, bounds: SizeF, data: WidgetData, progress: String?, id: Int, generation: Long): RemoteViews {
+        private fun layout(context: Context, bounds: SizeF, data: WidgetData, progress: String?, id: Int, generation: Long, character: Character): RemoteViews {
             val size = WidgetSize.forBounds(bounds.width.roundToInt(), bounds.height.roundToInt())
             val layout = when (size) {
                 WidgetSize.SMALL -> R.layout.companion_widget_small
@@ -147,6 +150,13 @@ class CompanionWidget : AppWidgetProvider() {
                 WidgetSize.COMPACT, WidgetSize.LARGE -> R.layout.companion_widget_large
             }
             val views = RemoteViews(context.packageName, layout)
+            val drinking = size == WidgetSize.COMPACT || size == WidgetSize.LARGE
+            if (character == Character.CAPYBARA && size != WidgetSize.SMALL) {
+                views.setImageViewResource(R.id.widget_pet, if (drinking) R.drawable.water_cap_drinking else R.drawable.water_cap)
+            } else {
+                views.setImageViewBitmap(R.id.widget_pet, pet(context, character))
+            }
+            views.setContentDescription(R.id.widget_pet, "陪你喝水的${character.label}")
             val count = data.count.takeIf { size != WidgetSize.SMALL }
             val title = if (count == null) data.title else "${data.title} $count 次"
             val titleText = SpannableString(title).apply {
@@ -171,7 +181,6 @@ class CompanionWidget : AppWidgetProvider() {
                 // 高度足够时给图案上下相同的空间；最小卡片仍为标题和同步文字留出位置。
                 val bottom = if (bounds.height - 24 - 128 >= 32) 64 else 24
                 views.setViewPadding(R.id.widget_pet, 0, (64 * density).roundToInt(), 0, (bottom * density).roundToInt())
-                views.setImageViewBitmap(R.id.widget_pet, pet(context))
             }
             if (size == WidgetSize.MEDIUM) {
                 views.setTextViewText(R.id.widget_recent, data.recent.firstOrNull()?.let { "最近 ${it.time} · ${it.amount}" } ?: data.empty)
@@ -219,9 +228,14 @@ class CompanionWidget : AppWidgetProvider() {
                 Intent(context, CompanionWidget::class.java).setAction(REFRESH), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
             return views
         }
-        private fun pet(context: Context): Bitmap = synchronized(this) {
-            petBitmap ?: run {
-                val source = BitmapFactory.decodeResource(context.resources, R.drawable.water_cap, BitmapFactory.Options().apply { inScaled = false })
+        private fun pet(context: Context, character: Character): Bitmap = synchronized(this) {
+            petBitmaps.getOrPut(character) {
+                val source = if (character == Character.CAPYBARA) {
+                    BitmapFactory.decodeResource(context.resources, R.drawable.water_cap, BitmapFactory.Options().apply { inScaled = false })
+                } else {
+                    context.assets.open("${character.id}.png").use { BitmapFactory.decodeStream(it) }
+                }
+                checkNotNull(source) { "无法读取陪伴形象。" }
                 val pixels = IntArray(source.width * source.height)
                 source.getPixels(pixels, 0, source.width, 0, 0, source.width, source.height)
                 var left = source.width
@@ -229,7 +243,8 @@ class CompanionWidget : AppWidgetProvider() {
                 var right = 0
                 var bottom = 0
                 pixels.forEachIndexed { index, pixel ->
-                    if (pixel ushr 24 != 0) {
+                    // 新原图透明区域有极淡的噪点，不让它们扩大取景边界。
+                    if ((pixel ushr 24) >= if (character == Character.CAPYBARA) 1 else 16) {
                         val x = index % source.width
                         val y = index / source.width
                         left = minOf(left, x); right = maxOf(right, x)
@@ -237,8 +252,12 @@ class CompanionWidget : AppWidgetProvider() {
                     }
                 }
                 // 素材透明边缘不对称，按可见图案居中，避免只居中图片画布。
-                (if (left <= right && top <= bottom) Bitmap.createBitmap(source, left, top, right - left + 1, bottom - top + 1) else source)
-                    .also { petBitmap = it }
+                val cropped = if (left <= right && top <= bottom) Bitmap.createBitmap(source, left, top, right - left + 1, bottom - top + 1) else source
+                // RemoteViews 跨进程传图，限制位图大小，避免多个组件触发内存上限。
+                val image = if (cropped.width > 444) Bitmap.createScaledBitmap(cropped, 444, (cropped.height * 444 / cropped.width).coerceAtLeast(1), false) else cropped
+                if (source !== image) source.recycle()
+                if (cropped !== source && cropped !== image) cropped.recycle()
+                image
             }
         }
         private fun chart(context: Context, week: List<WidgetDay>): Bitmap {

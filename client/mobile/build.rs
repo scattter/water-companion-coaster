@@ -2,6 +2,7 @@ fn main() {
     tauri_plugin::Builder::new(&[
         "configure",
         "status",
+        "setCharacter",
         "request",
         "pinWidget",
         "choose",

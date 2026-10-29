@@ -103,11 +103,25 @@ pub enum CompanionState {
     Idle,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Character {
+    Capybara,
+    Cat,
+    Dog,
+    Girl,
+    Boy,
+    #[default]
+    #[serde(other)]
+    Robot,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     pub auto_rest: bool,
     pub reminders: bool,
+    pub character: Character,
 }
 
 impl Default for Settings {
@@ -115,6 +129,7 @@ impl Default for Settings {
         Self {
             auto_rest: true,
             reminders: true,
+            character: Character::default(),
         }
     }
 }

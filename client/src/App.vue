@@ -2,9 +2,10 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { native, errorMessage, newerSnapshot } from './native';
-import { amount, clockTime, dayLabel, deviceStatus, framePath, recentDrink, stateText } from './display';
+import { amount, clockTime, dayLabel, deviceStatus, framePath, frameStyle, recentDrink, stateText } from './display';
 import type { Page, Settings, Snapshot } from './types';
 import HistoryView from './HistoryView.vue';
+import CharacterPicker from './CharacterPicker.vue';
 
 const snapshot = ref<Snapshot>({
   revision: 0,
@@ -17,7 +18,7 @@ const snapshot = ref<Snapshot>({
   state: 'idle',
   drinkMl: null,
   frame: 0,
-  settings: { autoRest: true, reminders: true },
+  settings: { autoRest: true, reminders: true, character: 'robot' },
 });
 const page = ref<Page>('dashboard');
 const loading = ref(true);
@@ -38,7 +39,7 @@ const lastDrink = computed(() => recentDrink(dashboard.value));
 const drinking = computed(() => snapshot.value.drinkMl != null);
 const title = computed(() => drinking.value ? '本次饮水' : dayLabel(dashboard.value));
 const intake = computed(() => drinking.value ? `+${amount(snapshot.value.drinkMl)}` : amount(dashboard.value?.totals.drinkMl));
-const sprite = computed(() => framePath(snapshot.value.state, snapshot.value.frame));
+const sprite = computed(() => framePath(snapshot.value.state, snapshot.value.frame, snapshot.value.settings.character));
 const stateLabel = computed(() => stateText[snapshot.value.state]);
 const signedIn = computed(() => Boolean(snapshot.value.session.user));
 const stale = computed(() => snapshot.value.connection === 'offline' && dashboard.value !== null);
@@ -107,11 +108,11 @@ async function logout() {
   }
 }
 
-async function updateSetting(key: keyof Settings, value: boolean) {
+async function updateSetting<K extends keyof Settings>(key: K, value: Settings[K]) {
   await perform(() => native.settings({ ...snapshot.value.settings, [key]: value }));
 }
 
-function toggleSetting(key: keyof Settings, event: Event) {
+function toggleSetting(key: 'autoRest' | 'reminders', event: Event) {
   const input = event.target as HTMLInputElement;
   const checked = input.checked;
   input.checked = snapshot.value.settings[key];
@@ -179,7 +180,7 @@ onBeforeUnmount(() => {
     <template v-else>
       <section v-if="!snapshot.server || page === 'settings'" class="settings-view">
         <h1>{{ snapshot.server ? '陪伴设置' : '先连接你的服务器' }}</h1>
-        <p class="intro">{{ snapshot.server ? '让小水豚按你的节奏陪伴。' : '填入已部署的饮水服务地址，登录后就能见到你的饮水记录。' }}</p>
+        <p class="intro">{{ snapshot.server ? '让小伙伴按你的节奏陪伴。' : '填入已部署的饮水服务地址，登录后就能见到你的饮水记录。' }}</p>
         <form class="server-form" @submit.prevent="connect">
           <label for="server-address">服务器地址</label>
           <input id="server-address" v-model="address" type="text" inputmode="url" autocomplete="url" autocapitalize="none" spellcheck="false" placeholder="water.example.com 或 http://192.168.1.8:3001" :disabled="busy" required />
@@ -187,6 +188,8 @@ onBeforeUnmount(() => {
           <p v-if="snapshot.server" class="field-hint">切换服务后需要重新登录。</p>
           <button class="primary-button" type="submit" :disabled="busy">{{ busy ? '正在处理…' : snapshot.server ? '连接并切换' : '连接服务器' }}</button>
         </form>
+
+        <CharacterPicker :model-value="snapshot.settings.character" :disabled="busy" @update:model-value="updateSetting('character', $event)" />
 
         <fieldset v-if="snapshot.server" class="preferences" :disabled="busy">
           <legend>日常陪伴</legend>
@@ -203,9 +206,9 @@ onBeforeUnmount(() => {
       </section>
 
       <section v-else-if="!signedIn" class="login-view">
-        <div class="welcome-scene"><img :src="sprite" alt="水豚在小桌前等你" draggable="false" /></div>
+        <div class="welcome-scene"><img :src="sprite" :style="frameStyle(snapshot.settings.character)" alt="小伙伴在小桌前等你" draggable="false" /></div>
         <h1>见到你真好</h1>
-        <p class="intro">登录已有账号，和小水豚一起喝水。</p>
+        <p class="intro">登录已有账号，和小伙伴一起喝水。</p>
         <p v-if="connectionFeedback" class="feedback" role="status">{{ connectionFeedback }}</p>
         <form class="login-form" @submit.prevent="login">
           <label for="username">用户名</label>
@@ -223,7 +226,7 @@ onBeforeUnmount(() => {
       <section v-else class="dashboard-view">
         <div class="dashboard-summary">
           <div class="companion-summary">
-            <div class="hero-scene"><img :src="sprite" alt="像素水豚的陪伴小场景" draggable="false" /></div>
+            <div class="hero-scene"><img :src="sprite" :style="frameStyle(snapshot.settings.character)" alt="像素伙伴的陪伴小场景" draggable="false" /></div>
             <p class="state-label">{{ stateLabel }}</p>
           </div>
           <div class="intake-summary">

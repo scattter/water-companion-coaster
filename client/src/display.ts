@@ -1,5 +1,5 @@
 import type { Dashboard, DrinkEvent } from '../../shared/dashboard';
-import type { CompanionState, Snapshot } from './types';
+import type { Character, CompanionState, Snapshot } from './types';
 
 export function amount(value: number | null | undefined): string {
   return value == null || !Number.isFinite(value)
@@ -53,7 +53,22 @@ export const stateText: Record<CompanionState, string> = {
   idle: '我在这里陪着你',
 };
 
-export function framePath(state: CompanionState, frame: number): string {
+export const characters: { id: Character; name: string }[] = [
+  { id: 'robot', name: '小机器人' },
+  { id: 'capybara', name: '水豚' },
+  { id: 'cat', name: '灰白小猫' },
+  { id: 'dog', name: '奶油小狗' },
+  { id: 'girl', name: '女生' },
+  { id: 'boy', name: '男生' },
+];
+
+export function frameStyle(character: Character = 'robot') {
+  // 场景原图需要裁去上下留白，机器人全身图则保持完整。
+  return character === 'capybara' || character === 'robot' ? undefined : { objectFit: 'cover' as const, objectPosition: 'center 54%' };
+}
+
+export function framePath(state: CompanionState, frame: number, character: Character = 'robot'): string {
+  if (character !== 'capybara') return `/companion/characters/${character}.png`;
   const pose = state === 'idle' ? 'working' : state;
   const index = state === 'idle' ? 0 : Math.max(0, Math.min(3, Math.trunc(frame)));
   return `/companion/${pose}-${index}.png`;

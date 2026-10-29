@@ -13,6 +13,7 @@ import app.tauri.plugin.Plugin
 import kotlinx.coroutines.*
 
 @InvokeArg class ConfigureArgs { lateinit var address: String }
+@InvokeArg class CharacterArgs { lateinit var character: String }
 @InvokeArg class RequestArgs { lateinit var path: String; var body: String? = null; var timeoutMs: Int = 8000 }
 @InvokeArg class DisconnectArgs { var connection: Long? = null }
 @InvokeArg class ConnectArgs { lateinit var id: String }
@@ -48,6 +49,10 @@ class MobilePlugin(private val activity: Activity) : Plugin(activity) {
         io(invoke) { JSObject(repository.configure(args.address).toString()) }
     }
     @Command fun status(invoke: Invoke) = io(invoke) { JSObject(repository.status().put("active", foreground).toString()) }
+    @Command fun setCharacter(invoke: Invoke) {
+        val args = invoke.parseArgs(CharacterArgs::class.java)
+        io(invoke) { JSObject(repository.setCharacter(args.character).toString()) }
+    }
     @Command fun request(invoke: Invoke) {
         val args = invoke.parseArgs(RequestArgs::class.java)
         if (args.path in listOf("/api/auth/logout", "/api/auth/login", "/api/auth/register")) ble.disconnect()

@@ -28,10 +28,60 @@ mod tests {
         );
         assert!(!preferences.settings.auto_rest);
         assert!(!preferences.settings.reminders);
+        assert_eq!(
+            preferences.settings.character,
+            crate::model::Character::Robot
+        );
         let saved = serde_json::to_value(preferences).unwrap();
         assert!(saved.get("position").is_none());
         assert!(saved["settings"].get("showCompanion").is_none());
         assert!(saved["settings"].get("alwaysOnTop").is_none());
+    }
+
+    #[test]
+    fn character_selection_survives_reload_without_changing_other_preferences() {
+        let directory = std::env::temp_dir().join(format!(
+            "coaster-character-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let storage = Storage::new(&directory).unwrap();
+        for character in ["robot", "cat", "dog", "girl", "boy", "capybara"] {
+            let expected: Preferences = serde_json::from_value(serde_json::json!({
+                "server": "https://water.example.com",
+                "settings": { "autoRest": false, "reminders": true, "character": character }
+            }))
+            .unwrap();
+            storage.save(&expected).unwrap();
+            let restored = Storage::new(&directory).unwrap().load().unwrap();
+            assert_eq!(restored.server, expected.server);
+            assert_eq!(restored.settings, expected.settings);
+            assert_eq!(
+                serde_json::to_value(&restored.settings).unwrap()["character"],
+                character
+            );
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn unknown_character_falls_back_without_discarding_server_or_preferences() {
+        let preferences: Preferences = serde_json::from_str(
+            r#"{"server":"https://water.example.com","settings":{"character":"future-character","autoRest":false,"reminders":false}}"#,
+        ).unwrap();
+        assert_eq!(
+            preferences.settings.character,
+            crate::model::Character::Robot
+        );
+        assert_eq!(
+            preferences.server.as_deref(),
+            Some("https://water.example.com")
+        );
+        assert!(!preferences.settings.auto_rest);
+        assert!(!preferences.settings.reminders);
     }
 }
 

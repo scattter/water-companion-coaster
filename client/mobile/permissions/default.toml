@@ -1,3 +1,3 @@
 [default]
 description = "饮水陪伴本地安卓页面所需能力"
-permissions = ["allow-configure", "allow-status", "allow-request", "allow-pinWidget", "allow-choose", "allow-connect", "allow-read", "allow-write", "allow-subscribe", "allow-disconnect", "allow-registerListener", "allow-removeListener"]
+permissions = ["allow-configure", "allow-status", "allow-setCharacter", "allow-request", "allow-pinWidget", "allow-choose", "allow-connect", "allow-read", "allow-write", "allow-subscribe", "allow-disconnect", "allow-registerListener", "allow-removeListener"]

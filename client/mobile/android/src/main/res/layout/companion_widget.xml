@@ -10,7 +10,7 @@
         android:layout_weight="1" android:orientation="vertical" android:layout_marginEnd="12dp">
         <TextView style="@style/WidgetText" android:layout_width="match_parent" android:layout_height="24dp"
             android:gravity="center_vertical" android:text="饮水陪伴" android:textStyle="bold" android:textSize="14sp" />
-        <ImageView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+        <ImageView android:id="@+id/widget_pet" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
             android:layout_marginVertical="4dp" android:src="@drawable/water_cap" android:scaleType="fitCenter"
             android:contentDescription="陪你工作的小水豚" />
         <TextView style="@style/WidgetFooter" android:layout_width="match_parent" android:layout_height="20dp"

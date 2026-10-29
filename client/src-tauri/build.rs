@@ -18,6 +18,8 @@ fn main() {
         println!("cargo:rerun-if-changed=native/panel.m");
     }
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        // Icon changes must invalidate Cargo's cached Windows resource.
+        println!("cargo:rerun-if-changed=icons/icon.ico");
         // The pinned tauri-build reads this flag; ensure personal installs need no VC runtime DLLs.
         std::env::set_var("STATIC_VCRUNTIME", "true");
         cc::Build::new()

@@ -2,9 +2,9 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import type { Dashboard } from '../../../shared/dashboard';
-import type { CompanionState } from '../types';
-import { framePath, stateText } from '../display';
-const props = defineProps<{ dashboard: Dashboard | null; identity: string; active: boolean }>();
+import type { Character, CompanionState } from '../types';
+import { framePath, frameStyle, stateText } from '../display';
+const props = defineProps<{ dashboard: Dashboard | null; character: Character; identity: string; active: boolean }>();
 const state = ref<CompanionState>('idle');
 const frame = ref(0);
 let reset = true;
@@ -27,4 +27,4 @@ async function tick() {
 onMounted(() => { void tick(); timer = setInterval(() => void tick(), 1000); });
 onBeforeUnmount(() => { clearInterval(timer); ++version; });
 </script>
-<template><section v-if="dashboard" class="mobile-companion"><img :src="framePath(state, frame)" alt="陪你喝水的小水豚" /><span>{{ stateText[state] }}</span></section></template>
+<template><section v-if="dashboard" class="mobile-companion"><img :src="framePath(state, frame, character)" :style="frameStyle(character)" alt="陪你喝水的小伙伴" /><span>{{ stateText[state] }}</span></section></template>

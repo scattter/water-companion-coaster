@@ -48,6 +48,7 @@ internal class Repository private constructor(private val context: Context) {
         Binding(it, prefs.getString("device", null), prefs.getString("binding", null))
     })
     private var origin = prefs.getString("server", null)
+    private var character = prefs.getString("character", null)?.let(Character::from)
     private var token: String? = null
     private var storageError: String? = null
 
@@ -71,7 +72,18 @@ internal class Repository private constructor(private val context: Context) {
     }
     fun status(): JSONObject = synchronized(lock) {
         JSONObject().put("server", origin ?: JSONObject.NULL).put("generation", epoch.value).put("signedIn", token != null)
+            .put("character", character?.id ?: JSONObject.NULL)
             .put("error", storageError ?: JSONObject.NULL)
+    }
+    fun setCharacter(value: String): JSONObject {
+        val selected = Character.from(value)
+        require(selected.id == value) { "未知的陪伴形象。" }
+        synchronized(lock) {
+            check(prefs.edit().putString("character", selected.id).commit()) { "无法保存陪伴形象，请重试。" }
+            character = selected
+        }
+        CompanionWidget.renderAll(context)
+        return status()
     }
     fun signedIn(): Boolean = synchronized(lock) { token != null }
     fun cache(): JSONObject? = synchronized(lock) { if (token == null) return@synchronized null; prefs.getString("dashboard", null)?.let { runCatching { JSONObject(it) }.getOrNull() } }

@@ -19,7 +19,7 @@ function snapshot(revision: number, server: string | null, userId: string | null
     state: 'idle',
     drinkMl: null,
     frame: 0,
-    settings: { autoRest: true, reminders: true },
+    settings: { autoRest: true, reminders: true, character: 'capybara' },
   };
 }
 

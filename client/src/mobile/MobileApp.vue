@@ -4,6 +4,9 @@ import { addPluginListener, invoke, type PluginListener } from '@tauri-apps/api/
 import WebApp from '../../../web/src/App.vue';
 import { platform, type Notice } from '../../../web/src/platform';
 import MobileCompanion from './MobileCompanion.vue';
+import CharacterPicker from '../CharacterPicker.vue';
+import type { Character } from '../types';
+import { restoreCharacter } from './character';
 import { nativeError } from './errors';
 import { NoticeQueue } from './notices';
 
@@ -11,6 +14,7 @@ const props = defineProps<{ startupError?: string }>();
 const server = ref<string | null>(null);
 const address = ref('');
 const settings = ref(false);
+const character = ref<Character>('robot');
 const loaded = ref(false);
 const active = ref(true);
 const busy = ref(false);
@@ -51,6 +55,20 @@ function storage(origin: string) {
   };
 }
 function message(error: unknown) { return nativeError(error).message; }
+async function saveCharacter(value: Character): Promise<Character> {
+  const result = await invoke<{ character: Character }>('plugin:coaster-mobile|setCharacter', { character: value });
+  return result.character;
+}
+async function chooseCharacter(value: Character) {
+  if (busy.value) return;
+  busy.value = true;
+  notices.reset('character');
+  try {
+    const selected = await saveCharacter(value);
+    if (!disposed) character.value = selected;
+  } catch (error) { if (!disposed) notices.show({ source: 'character', message: message(error) }); }
+  finally { busy.value = false; }
+}
 async function configure() {
   if (busy.value) return;
   busy.value = true;
@@ -87,11 +105,13 @@ onMounted(async () => {
   try {
     listener = await addPluginListener<{ active: boolean }>('coaster-mobile', 'lifecycle', value => { active.value = value.active; });
     if (disposed) { void listener.unregister(); return; }
-    const value = await invoke<{ server: string | null; active: boolean; error: string | null }>('plugin:coaster-mobile|status');
+    const value = await invoke<{ server: string | null; active: boolean; error: string | null; character: Character | null }>('plugin:coaster-mobile|status');
     if (disposed) return;
     server.value = value.server; address.value = value.server ?? ''; active.value = value.active;
     if (value.server) storage(value.server);
     if (value.error) notices.show({ source: 'startup', message: value.error });
+    const selected = await restoreCharacter(value.character, localStorage, saveCharacter);
+    if (!disposed) character.value = selected;
   } catch (error) { if (!disposed) notices.show({ source: 'startup', message: message(error) }); }
   finally { loaded.value = true; }
 });
@@ -110,11 +130,12 @@ onBeforeUnmount(() => {
     <header v-if="!loaded || !server || settings" class="mobile-toolbar"><strong>饮水陪伴</strong><button v-if="server" class="text-button" :disabled="busy" @click="settings = false">返回</button></header>
     <section v-if="!loaded" class="mobile-config">正在读取本机设置…</section>
     <section v-else-if="!server || settings" class="panel mobile-config">
-      <h1>连接你的饮水服务</h1><p>填写服务根地址，登录后可查看记录、配网并添加桌面小组件。</p>
+      <h1>{{ server ? '应用设置' : '连接你的饮水服务' }}</h1><p>{{ server ? '选择喜欢的小伙伴，也可以修改饮水服务地址。' : '填写服务根地址，登录后可查看记录、配网并添加桌面小组件。' }}</p>
       <form class="account-form" @submit.prevent="configure"><label>服务器地址<input v-model="address" type="text" inputmode="url" autocomplete="url" autocapitalize="none" spellcheck="false" placeholder="https://water.example.com" required :disabled="busy" /></label><p class="field-help">安装版使用 HTTPS，支持域名、IP 和端口，无需添加 /api。切换服务器后需重新登录。</p><button class="setup-action" :disabled="busy">{{ busy ? '正在连接…' : '连接服务器' }}</button></form>
+      <CharacterPicker :model-value="character" :disabled="busy" @update:model-value="chooseCharacter" />
     </section>
     <WebApp v-if="loaded && server" v-show="!settings" :key="server" mobile :active="active && !settings" :widget-busy="pinning" @service-settings="settings = true" @add-widget="pin">
-      <template #companion="{ dashboard, session, online }"><MobileCompanion :dashboard="dashboard" :identity="`${server}:${session.user?.id ?? ''}`" :active="active && !settings && online && Boolean(dashboard)" /></template>
+      <template #companion="{ dashboard, session, online }"><MobileCompanion :dashboard="dashboard" :character="character" :identity="`${server}:${session.user?.id ?? ''}`" :active="active && !settings && online && Boolean(dashboard)" /></template>
     </WebApp>
     <dialog ref="noticeDialog" class="settings-dialog mobile-message-dialog" aria-labelledby="mobile-message-title" aria-describedby="mobile-message-text" @cancel.prevent="dismissNotice">
       <div class="settings-header"><h2 id="mobile-message-title">提示</h2><button type="button" class="settings-close" aria-label="关闭提示" autofocus @click="dismissNotice">✕</button></div>

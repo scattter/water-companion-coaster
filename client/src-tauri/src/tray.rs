@@ -1,4 +1,4 @@
-use crate::model::{CompanionState, Connection, Snapshot};
+use crate::model::{Character, CompanionState, Connection, Snapshot};
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
@@ -6,7 +6,10 @@ use tauri::{
     AppHandle, Manager,
 };
 
-pub struct Frames(Vec<Vec<Image<'static>>>);
+pub struct Frames {
+    frames: Vec<Vec<Image<'static>>>,
+    characters: Vec<(Character, Image<'static>)>,
+}
 
 #[cfg(target_os = "windows")]
 struct AmountIcon {
@@ -118,32 +121,63 @@ impl Frames {
             for bytes in row {
                 let image = decode_png(bytes)
                     .map_err(|error| tauri::Error::Io(std::io::Error::other(error)))?;
-                images.push(tray_image(image));
+                images.push(tray_image(image, false));
             }
             frames.push(images);
         }
-        Ok(Self(frames))
+        let files: [(Character, &[u8]); 5] = [
+            (
+                Character::Robot,
+                include_bytes!("../../public/companion/characters/robot.png"),
+            ),
+            (
+                Character::Cat,
+                include_bytes!("../../public/companion/characters/cat.png"),
+            ),
+            (
+                Character::Dog,
+                include_bytes!("../../public/companion/characters/dog.png"),
+            ),
+            (
+                Character::Girl,
+                include_bytes!("../../public/companion/characters/girl.png"),
+            ),
+            (
+                Character::Boy,
+                include_bytes!("../../public/companion/characters/boy.png"),
+            ),
+        ];
+        let mut characters = Vec::new();
+        for (character, bytes) in files {
+            let image = decode_png(bytes)
+                .map_err(|error| tauri::Error::Io(std::io::Error::other(error)))?;
+            characters.push((character, tray_image(image, character != Character::Robot)));
+        }
+        Ok(Self { frames, characters })
     }
 
-    fn image(&self, state: CompanionState, frame: u32) -> Image<'static> {
+    fn image(&self, character: Character, state: CompanionState, frame: u32) -> Image<'static> {
+        if let Some((_, image)) = self.characters.iter().find(|(id, _)| *id == character) {
+            return image.clone();
+        }
         let row = match state {
             CompanionState::Working | CompanionState::Idle => 0,
             CompanionState::Sleeping => 1,
             CompanionState::Drinking => 2,
             CompanionState::Reminding => 3,
         };
-        self.0[row][frame as usize % 4].clone()
+        self.frames[row][frame as usize % 4].clone()
     }
 }
 
 fn decode_png(bytes: &[u8]) -> Result<Image<'static>, String> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut reader = decoder.read_info().map_err(|_| "无法读取水豚帧图。")?;
+    let mut reader = decoder.read_info().map_err(|_| "无法读取陪伴图像。")?;
     let mut pixels = vec![0; reader.output_buffer_size()];
     let info = reader
         .next_frame(&mut pixels)
-        .map_err(|_| "无法解码水豚帧图。")?;
+        .map_err(|_| "无法解码陪伴图像。")?;
     let pixels = &pixels[..info.buffer_size()];
     let rgba = match info.color_type {
         png::ColorType::Rgba => pixels.to_vec(),
@@ -156,22 +190,29 @@ fn decode_png(bytes: &[u8]) -> Result<Image<'static>, String> {
             .flat_map(|p| [p[0], p[0], p[0], p[1]])
             .collect(),
         png::ColorType::Grayscale => pixels.iter().flat_map(|p| [*p, *p, *p, 255]).collect(),
-        _ => return Err("水豚帧图格式不支持。".into()),
+        _ => return Err("陪伴图像格式不支持。".into()),
     };
     if info.width == 0 || info.height == 0 {
-        return Err("水豚帧图尺寸无效。".into());
+        return Err("陪伴图像尺寸无效。".into());
     }
     Ok(Image::new_owned(rgba, info.width, info.height))
 }
 
-fn tray_image(source: Image<'_>) -> Image<'static> {
+fn tray_image(source: Image<'_>, crop: bool) -> Image<'static> {
     // 预先生成 Retina 尺寸，最近邻采样保留像素边缘，避免每帧解码大图。
     let height = 36;
-    let width = (source.width() * height / source.height()).max(1);
+    // 场景图与前端 2:1、center 54% 取景一致；机器人保留完整全身。
+    let source_height = if crop {
+        source.width() / 2
+    } else {
+        source.height()
+    };
+    let top = (source.height() - source_height) * 54 / 100;
+    let width = (source.width() * height / source_height).max(1);
     let mut rgba = vec![0; (width * height * 4) as usize];
     for y in 0..height {
         for x in 0..width {
-            let source_index = (((y * source.height() / height) * source.width()
+            let source_index = (((top + y * source_height / height) * source.width()
                 + x * source.width() / width)
                 * 4) as usize;
             let target = ((y * width + x) * 4) as usize;
@@ -217,9 +258,9 @@ fn on_tray_event(tray: &TrayIcon, event: TrayIconEvent) {
     }
 }
 
-pub fn setup(app: &AppHandle) -> tauri::Result<()> {
+pub fn setup(app: &AppHandle, snapshot: &Snapshot) -> tauri::Result<()> {
     let frames = Frames::load()?;
-    let image = frames.image(CompanionState::Idle, 0);
+    let image = frames.image(snapshot.settings.character, snapshot.state, snapshot.frame);
     app.manage(frames);
     let details = MenuItem::with_id(app, "details", "饮水详情", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "陪伴设置", true, None::<&str>)?;
@@ -288,8 +329,16 @@ pub fn render(app: &AppHandle, snapshot: &Snapshot, previous: Option<&Snapshot>)
     let Some(tray) = app.tray_by_id("companion") else {
         return;
     };
-    if previous.is_none_or(|old| old.state != snapshot.state || old.frame != snapshot.frame) {
-        let frame = app.state::<Frames>().image(snapshot.state, snapshot.frame);
+    if previous.is_none_or(|old| {
+        old.settings.character != snapshot.settings.character
+            || (snapshot.settings.character == Character::Capybara
+                && (old.state != snapshot.state || old.frame != snapshot.frame))
+    }) {
+        let frame = app.state::<Frames>().image(
+            snapshot.settings.character,
+            snapshot.state,
+            snapshot.frame,
+        );
         let _ = tray.set_icon(Some(frame));
     }
     let animate = previous.is_some_and(|old| {
@@ -354,18 +403,67 @@ mod tests {
     #[test]
     fn all_menu_frames_share_dimensions_and_retain_transparency() {
         let frames = Frames::load().unwrap();
-        let size = (frames.0[0][0].width(), frames.0[0][0].height());
+        let size = (frames.frames[0][0].width(), frames.frames[0][0].height());
         #[cfg(not(target_os = "windows"))]
         assert_eq!(size, (72, 36));
         #[cfg(target_os = "windows")]
         assert_eq!(size, (72, 72));
-        for row in &frames.0 {
+        for row in &frames.frames {
             for frame in row {
                 assert_eq!((frame.width(), frame.height()), size);
                 assert!(frame.rgba().chunks_exact(4).any(|pixel| pixel[3] == 0));
                 assert!(frame.rgba().chunks_exact(4).any(|pixel| pixel[3] > 0));
             }
             assert!(row.windows(2).any(|pair| pair[0].rgba() != pair[1].rgba()));
+        }
+    }
+
+    #[test]
+    fn character_icons_keep_their_aspect_ratio_and_selected_artwork_in_every_state() {
+        let frames = Frames::load().unwrap();
+        let capybara = frames.image(Character::Capybara, CompanionState::Idle, 0);
+        let mut previous = capybara.clone();
+        for character in [
+            Character::Robot,
+            Character::Cat,
+            Character::Dog,
+            Character::Girl,
+            Character::Boy,
+        ] {
+            let image = frames.image(character, CompanionState::Idle, 0);
+            assert_eq!(
+                (image.width(), image.height()),
+                if character == Character::Robot {
+                    (36, 36)
+                } else {
+                    (capybara.width(), capybara.height())
+                }
+            );
+            assert!(image.rgba().chunks_exact(4).any(|pixel| pixel[3] == 0));
+            assert!(
+                image
+                    .rgba()
+                    .chunks_exact(4)
+                    .filter(|pixel| pixel[3] >= 128)
+                    .count()
+                    > if character == Character::Robot {
+                        250
+                    } else {
+                        500
+                    }
+            );
+            assert_ne!(image.rgba(), previous.rgba());
+            for state in [
+                CompanionState::Working,
+                CompanionState::Sleeping,
+                CompanionState::Drinking,
+                CompanionState::Reminding,
+            ] {
+                for frame in 0..4 {
+                    assert_eq!(frames.image(character, state, frame).rgba(), image.rgba());
+                }
+            }
+            previous = image;
         }
     }
 }

@@ -131,7 +131,7 @@ pub fn run() {
                 Backend::new(&app.path().app_config_dir()?).map_err(std::io::Error::other)?,
             );
             app.manage(backend.clone());
-            tray::setup(app.handle())?;
+            tray::setup(app.handle(), &backend.snapshot())?;
             if let Some(panel) = app.get_webview_window("panel") {
                 platform::setup_panel(&panel).map_err(std::io::Error::other)?;
                 let window = panel.clone();

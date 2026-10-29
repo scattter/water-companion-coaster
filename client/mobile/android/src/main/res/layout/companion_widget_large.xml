@@ -14,7 +14,7 @@
         <include layout="@layout/widget_refresh" android:layout_width="36dp" android:layout_height="24dp" />
     </LinearLayout>
 
-    <!-- 水豚底边对齐饮水量数字的基线，避免字体下方留白造成视觉错位。 -->
+    <!-- 形象底边对齐饮水量数字的基线，避免字体下方留白造成视觉错位。 -->
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp"
         android:gravity="bottom" android:layout_marginBottom="4dp">
         <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
@@ -24,7 +24,7 @@
             <TextView android:id="@+id/widget_amount" style="@style/WidgetAmount" android:layout_width="match_parent"
                 android:layout_height="34dp" android:layout_marginTop="4dp" android:autoSizeMaxTextSize="32sp" android:gravity="bottom" android:text="— ml" />
         </LinearLayout>
-        <ImageView android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:baselineAlignBottom="true"
+        <ImageView android:id="@+id/widget_pet" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:baselineAlignBottom="true"
             android:layout_marginStart="4dp" android:src="@drawable/water_cap_drinking" android:scaleType="fitEnd"
             android:contentDescription="喝水的小水豚" />
     </LinearLayout>

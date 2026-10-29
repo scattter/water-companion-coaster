@@ -475,7 +475,7 @@ onBeforeUnmount(() => {
             <svg class="menu-chevron" viewBox="0 0 12 12" fill="none" aria-hidden="true" focusable="false"><path d="m3 4.5 3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
           </button>
           <div v-if="menu === 'settings'" id="settings-menu" class="dropdown-menu" aria-labelledby="settings-menu-button">
-            <button :disabled="menuBusy" @click="menuAction('service')">服务设置</button>
+            <button :disabled="menuBusy" @click="menuAction('service')">应用设置</button>
             <button v-if="session.user" :disabled="menuBusy" @click="menuAction('device')">{{ session.deviceId ? '杯垫设置' : page === 'add' ? '查看历史' : '添加杯垫' }}</button>
             <button :disabled="widgetBusy || menuBusy" @click="menuAction('widget')">{{ widgetBusy ? '正在添加…' : '添加桌面组件' }}</button>
           </div>

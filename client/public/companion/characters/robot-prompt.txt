@@ -1,0 +1,11 @@
+2026-10-29，内置 imagegen，transparent_background=true。
+参考图：用户选定的「小机器人 · 简化方向」对比图中 B 款横向灯条机器人。
+
+Use case: background-extraction.
+Asset type: final transparent desktop companion character and application icon.
+
+Extract ONLY the selected robot B, the middle robot with the short horizontal blue light strip on its upper chest, from the provided reference image. Preserve that exact robot design: the same neutral light-gray rounded head and body, dark slate face, two small vertical pale blue eyes, short narrow side arms, tiny dark feet and a single short horizontal blue chest strip. Preserve its proportions, colors and recognizable pixel-art shapes. This is the chosen final character, not a redesign.
+
+Produce exactly ONE standalone robot, centered on a square 1024 by 1024 transparent canvas. Keep the entire robot including arms and feet visible. The complete robot should occupy approximately 86% of the image height and be centered horizontally and vertically, leaving balanced transparent safety padding. Crisp coherent pixel-art edges, clean nearest-neighbor-like enlarged pixel clusters, restrained shading.
+
+Remove all labels, headings, letters, separator lines, other robots, page background and grounding shadow. No surrounding scene, desk, cup, pedestal, extra props or outline box. No decorative additions. Do not replace the horizontal chest strip with a vertical gauge or remove it. Use actual transparent alpha, not a white background or checkerboard pattern. There should be no visible pixels outside the robot itself. Deliver a production-ready RGBA PNG.

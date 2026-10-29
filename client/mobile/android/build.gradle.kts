@@ -6,6 +6,7 @@ android {
     namespace = "com.watercompanion.mobile"
     compileSdk = 36
     defaultConfig { minSdk = 26 }
+    sourceSets.getByName("main").assets.srcDir("../../public/companion/characters")
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8

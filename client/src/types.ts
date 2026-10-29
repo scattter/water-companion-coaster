@@ -2,12 +2,14 @@ import type { Dashboard } from '../../shared/dashboard';
 import type { Session } from '../../web/src/session';
 
 export type CompanionState = 'working' | 'sleeping' | 'drinking' | 'reminding' | 'idle';
+export type Character = 'robot' | 'capybara' | 'cat' | 'dog' | 'girl' | 'boy';
 export type Connection = 'unconfigured' | 'signedOut' | 'connecting' | 'online' | 'offline';
 export type Page = 'dashboard' | 'settings' | 'history';
 
 export interface Settings {
   autoRest: boolean;
   reminders: boolean;
+  character: Character;
 }
 
 export interface Snapshot {

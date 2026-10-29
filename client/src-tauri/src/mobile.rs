@@ -49,6 +49,7 @@ fn mobile_companion(
             &Settings {
                 auto_rest: false,
                 reminders: false,
+                ..Settings::default()
             },
         )
     } else {
