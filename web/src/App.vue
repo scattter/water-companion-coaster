@@ -8,6 +8,7 @@ import { sameBinding, type Session } from './session';
 import { platform } from './platform';
 import { useNotice } from './notices';
 import type { Dashboard, DrinkEvent } from '../../shared/dashboard';
+import { currentCup } from '../../shared/cups';
 import { dateInZone, selectableDate, shiftDate } from '../../shared/dates';
 import DrinkTrend from '../../shared/DrinkTrend.vue';
 import '../../shared/date-motion.css';
@@ -71,13 +72,14 @@ useNotice('web:dashboard', () => dashboardError.value ? `${dashboardError.value}
 const isToday = computed(() => selectedDate.value === today.value);
 const online = computed(() => Boolean(dashboard.value?.device?.online) && !dashboardError.value);
 const needsFactoryService = computed(() => Boolean(dashboard.value?.device?.lastSeenAt) && dashboard.value?.device?.calibrated === false);
-const needsCup = computed(() => dashboard.value?.device?.calibrated && dashboard.value.device?.emptyCupGrams === null);
+const needsCup = computed(() => dashboard.value?.device?.calibrated && dashboard.value.device?.emptyCupGrams === null && !dashboard.value.device.cupSetup);
 const estimateDescription = '清水按 1 g ≈ 1 ml 换算，倒水与喝水无法区分，喝完直接补水只记录净变化。';
 const weightState = computed(() => {
   if (!session.value.deviceId) return '尚未绑定当前杯垫，历史记录仍可查看';
   if (!online.value) return '等待设备连接云端';
   if (dashboard.value?.device?.error) return dashboard.value.device?.error;
   if (!dashboard.value?.device?.calibrated) return '出厂标定未完成，请联系售后';
+  if (dashboard.value.device?.cupSetup) return '正在设置杯子，记录已暂停';
   if (dashboard.value.device?.emptyCupGrams === null) return '请设置日常使用的空杯';
   if (!dashboard.value.device?.cupPresent) return '杯子已取走';
   return dashboard.value.device?.stable ? '重量已稳定' : '等待重量稳定';
@@ -194,7 +196,7 @@ async function bindDevice() {
     resetDeviceState();
     session.value = result;
     page.value = 'dashboard';
-    feedback.value = '杯垫已绑定。放上日常空杯并完成空杯设置，即可开始使用。';
+    feedback.value = '杯垫已绑定。打开杯子设置，按提示登记空杯后即可开始使用。';
     void refresh();
   } catch (cause) {
     if (disposed || version !== sessionVersion || session.value.user?.id !== userId) return;
@@ -210,7 +212,7 @@ async function bindDevice() {
         resetDeviceState();
         session.value = result;
         page.value = 'dashboard';
-        feedback.value = '已确认杯垫绑定成功。放上日常空杯并完成空杯设置，即可开始使用。';
+        feedback.value = '已确认杯垫绑定成功。打开杯子设置，按提示登记空杯后即可开始使用。';
         void refresh();
       }
     } catch (recoveryError) {
@@ -554,8 +556,8 @@ onBeforeUnmount(() => {
         <div><h2 id="factory-prompt-title">杯垫尚未完成出厂标定</h2><p>请联系售后处理，暂时无法记录饮水。你无需准备砝码或自行校准。</p></div>
       </section>
       <section v-else-if="needsCup" class="calibration-prompt" aria-labelledby="cup-prompt-title">
-        <div><h2 id="cup-prompt-title">放上空杯，开始记录</h2><p>放上日常使用的空杯，静置至少 3 秒，然后在设置中记住这个杯子。</p></div>
-        <button class="setup-action" @click="openSettings">设置空杯</button>
+        <div><h2 id="cup-prompt-title">设置杯子，开始记录</h2><p>打开杯垫设置，按提示登记自己的空杯；最多可保存 3 个杯子。</p></div>
+        <button class="setup-action" @click="openSettings">设置杯子</button>
       </section>
 
       <div v-if="!mobile" class="estimate-note"><span class="note-icon" aria-hidden="true">i</span><p><strong>饮水量根据真实称重差值估算</strong> · {{ estimateDescription }}</p></div>
@@ -609,6 +611,7 @@ onBeforeUnmount(() => {
               <div><dt>最后同步</dt><dd>{{ time(dashboard?.device?.lastSeenAt, true) }}</dd></div>
               <div><dt>当前重量</dt><dd>杯子与水的总重</dd></div>
               <div><dt>空杯重量</dt><dd>{{ number(dashboard?.device?.emptyCupGrams) }} g</dd></div>
+              <div><dt>当前杯子</dt><dd>{{ currentCup(dashboard?.device) }}{{ !online && dashboard?.device?.lastSeenAt ? '（上次同步）' : '' }}</dd></div>
               <div><dt>待上传记录</dt><dd>{{ number(dashboard?.device?.pendingCount) }}</dd></div>
               <div><dt>固件版本</dt><dd>{{ dashboard?.device?.firmwareVersion ?? '—' }}</dd></div>
             </dl>
@@ -623,10 +626,10 @@ onBeforeUnmount(() => {
 
     <dialog v-if="session.user && session.deviceId" ref="settingsDialog" class="settings-dialog" aria-labelledby="settings-title" @close="settingsOpen = false">
       <div class="settings-header">
-        <div><h2 id="settings-title">杯垫设置</h2><p>设置日常空杯，或为杯垫更换 Wi-Fi。</p></div>
+        <div><h2 id="settings-title">杯垫设置</h2><p>管理自己的杯子，或为杯垫更换 Wi-Fi。</p></div>
         <button class="settings-close" aria-label="关闭设置" @click="settingsDialog?.close()">✕</button>
       </div>
-      <DeviceSetup :key="`${session.user.id}:${session.deviceId}:${session.bindingId}`" :online="online" :device-id="session.deviceId" :user-id="session.user.id" :binding-id="session.bindingId" :calibrated="dashboard?.device?.lastSeenAt ? dashboard.device.calibrated : undefined" :empty-cup-grams="dashboard?.device?.emptyCupGrams" :weight-grams="dashboard?.device?.weightGrams" :active="active && settingsOpen && !unbindBusy" @updated="refresh" @access-error="handleSetupAccessError" />
+      <DeviceSetup :key="`${session.user.id}:${session.deviceId}:${session.bindingId}`" :online="online" :device-id="session.deviceId" :user-id="session.user.id" :binding-id="session.bindingId" :calibrated="dashboard?.device?.lastSeenAt ? dashboard.device.calibrated : undefined" :empty-cup-grams="dashboard?.device?.emptyCupGrams" :weight-grams="dashboard?.device?.weightGrams" :cups="dashboard?.device?.cups" :active-cup-id="dashboard?.device?.activeCupId" :cup-setup="dashboard?.device?.cupSetup" :cup-present="dashboard?.device?.cupPresent" :active="active && settingsOpen && !unbindBusy" @updated="refresh" @access-error="handleSetupAccessError" />
       <div class="settings-section">
         <DeviceOnboarding :key="`wifi:${session.user.id}:${session.deviceId}:${session.bindingId}`" :session="session" :active="active && settingsOpen && !unbindBusy" @completed="provisioningCompleted" @access-error="handleAccessError" @busy="provisioningBusy = $event" />
       </div>

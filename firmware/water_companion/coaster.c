@@ -18,6 +18,7 @@
 #include "freertos/task.h"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
+#include "nvs.h"
 #include "sdkconfig.h"
 #include "device.h"
 #include "hx711.h"
@@ -29,6 +30,11 @@
 
 static SemaphoreHandle_t state_lock;
 static device_config_t config;
+static cup_config_t cups;
+static cup_setup_t cup_setup;
+static int64_t empty_since_ms = -1;
+static char cup_notice[96];
+static int64_t cup_notice_until;
 static binding_state_t binding;
 static provision_trust_t trust;
 static weighing_t machine;
@@ -107,6 +113,26 @@ void device_wake(void)
     xSemaphoreGive(state_lock);
 }
 
+static void finish_cup_setup(void)
+{
+    memset(&cup_setup, 0, sizeof(cup_setup));
+    weighing_init(&machine, config.empty_cup);
+}
+
+static void cup_message(const char *message)
+{
+    snprintf(cup_notice, sizeof(cup_notice), "%s", message);
+    cup_notice_until = esp_timer_get_time() / 1000 + 3000;
+    last_activity_ms = esp_timer_get_time() / 1000;
+}
+
+void device_cancel_cup_setup(void)
+{
+    xSemaphoreTake(state_lock, portMAX_DELAY);
+    if (cup_setup.id[0]) finish_cup_setup();
+    xSemaphoreGive(state_lock);
+}
+
 static void update_activity(float grams, int64_t now)
 {
     // 累计变化至少 5 g 才加快心跳，屏幕亮灭由按键独立控制。
@@ -123,20 +149,46 @@ void device_snapshot(device_status_t *status)
     *status = (device_status_t){
         .sensor_ready = fresh, .calibrated = config.calibrated, .weight = weight,
         .empty_cup = config.empty_cup, .stable = fresh && machine.stable && !unsaved_event,
+        .cups = cups, .cup_setup = cup_setup,
         .cup_present = fresh && config.calibrated && isfinite(weight) && weight > 5,
         .unsaved_event = unsaved_event, .raw_ready = fresh && raw_count > 0,
         .restart_required = restart_required,
         .active = esp_timer_get_time() / 1000 - last_activity_ms < DEVICE_IDLE_MS,
         .raw = raw_count ? raw_samples[(raw_next + WEIGHING_SAMPLES - 1) % WEIGHING_SAMPLES] : 0,
     };
+    if (esp_timer_get_time() / 1000 < cup_notice_until)
+        strcpy(status->cup_notice, cup_notice);
     if (!fresh) status->error = "HX711 未就绪，请检查接线和供电";
     else if (unsaved_event) status->error = "事件保存失败或缓存已满，已暂停识别";
     else if (restart_required) status->error = "联网设置已保存，请重启设备";
     else if (!config.calibrated) status->error = "出厂标定异常，请联系售后";
-    else if (config.empty_cup < 5) status->error = "请先登记空杯重量";
+    else if (config.empty_cup < 5 && !cup_setup.id[0]) status->error = "请先登记空杯重量";
     else if (!isfinite(weight) || weight < -2 || weight > WEIGHING_MAX_GRAMS)
         status->error = "重量超出有效范围，请检查承重和校准";
     xSemaphoreGive(state_lock);
+}
+
+void device_cups_json(cJSON *json, const device_status_t *status)
+{
+    cJSON *list = cJSON_AddArrayToObject(json, "cups");
+    for (unsigned id = 1; id <= CUP_CAPACITY; ++id) {
+        const cup_t *cup = cups_get(&status->cups, id);
+        if (!cup) continue;
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddNumberToObject(item, "id", id);
+        cJSON_AddStringToObject(item, "name", cup->name);
+        cJSON_AddNumberToObject(item, "emptyCupGrams", cup->empty_cup);
+        cJSON_AddItemToArray(list, item);
+    }
+    if (status->cups.active_id) cJSON_AddNumberToObject(json, "activeCupId", status->cups.active_id);
+    else cJSON_AddNullToObject(json, "activeCupId");
+    if (status->cup_setup.id[0]) {
+        cJSON *setup = cJSON_AddObjectToObject(json, "cupSetup");
+        cJSON_AddStringToObject(setup, "id", status->cup_setup.id);
+        cJSON_AddNumberToObject(setup, "cupId", status->cup_setup.cup_id);
+        cJSON_AddStringToObject(setup, "name", status->cup_setup.name);
+        cJSON_AddNumberToObject(setup, "expiresAt", status->cup_setup.expires_at);
+    } else cJSON_AddNullToObject(json, "cupSetup");
 }
 
 cJSON *device_status_json(void)
@@ -179,6 +231,7 @@ cJSON *device_status_json(void)
     cJSON_AddBoolToObject(json, "calibrated", status.calibrated);
     cJSON_AddBoolToObject(json, "cupPresent", status.cup_present);
     cJSON_AddNumberToObject(json, "emptyCupGrams", status.empty_cup);
+    device_cups_json(json, &status);
     cJSON_AddBoolToObject(json, "clockSynced", network_has_time());
     cJSON_AddNumberToObject(json, "pendingCount", pending + (status.unsaved_event ? 1 : 0));
     cJSON_AddNumberToObject(json, "timePendingCount", time_pending);
@@ -235,25 +288,49 @@ static void sample_task(void *arg)
         esp_err_t result = hx711_read(&raw, 500);
         int64_t now = esp_timer_get_time() / 1000;
         xSemaphoreTake(state_lock, portMAX_DELAY);
+        if (cup_setup.id[0] && now >= cup_setup.expires_ms) {
+            finish_cup_setup();
+            cup_message("设置已超时");
+        }
         if (result != ESP_OK) {
+            empty_since_ms = -1;
+            cup_setup.stable_since_ms = -1;
             sensor_ready = false;
             raw_count = raw_next = 0;
             weight = NAN;
             activity_weight = NAN;
             weighing_init(&machine, config.empty_cup);
         } else {
-            if (sensor_ready && now - last_sample_ms > 350) raw_count = raw_next = 0;
+            if (sensor_ready && now - last_sample_ms > 350) {
+                raw_count = raw_next = 0;
+                empty_since_ms = -1;
+                cup_setup.stable_since_ms = -1;
+            }
             sensor_ready = true;
             last_sample_ms = now;
             raw_samples[raw_next] = raw;
             raw_next = (raw_next + 1) % WEIGHING_SAMPLES;
             if (raw_count < WEIGHING_SAMPLES) ++raw_count;
             weight = config.calibrated ? (float)((raw - (double)config.zero) / config.counts_per_gram) : NAN;
+            if (isfinite(weight) && weight >= -2 && weight <= 5) {
+                if (empty_since_ms < 0) empty_since_ms = now;
+            } else empty_since_ms = -1;
+            if (cup_setup.id[0]) {
+                if (!isfinite(weight) || weight < 5 || weight > 1995) cup_setup.stable_since_ms = -1;
+                else if (cup_setup.stable_since_ms < 0
+                    || fmaxf(cup_setup.maximum, weight) - fminf(cup_setup.minimum, weight) > 1) {
+                    cup_setup.stable_since_ms = now;
+                    cup_setup.minimum = cup_setup.maximum = weight;
+                } else {
+                    cup_setup.minimum = fminf(cup_setup.minimum, weight);
+                    cup_setup.maximum = fmaxf(cup_setup.maximum, weight);
+                }
+            }
             update_activity(weight, now);
             if (unsaved_event) {
                 unsaved_event = storage_append(&pending_event) != ESP_OK;
                 weighing_init(&machine, config.empty_cup);
-            } else if (config.calibrated && config.empty_cup >= 5 && !restart_required && !provisioning_busy()) {
+            } else if (config.calibrated && config.empty_cup >= 5 && !cup_setup.id[0] && !restart_required && !provisioning_busy()) {
                 weight_change_t change;
                 if (weighing_sample(&machine, weight, now, &change)) create_event(&change, now);
             }
@@ -333,12 +410,150 @@ static cJSON *reply(const char *error, const char *message)
     return json;
 }
 
+static const char *cup_available(void)
+{
+    if (unsaved_event) return "记录尚未保存";
+    if (reboot_at_ms || restart_required || provisioning_busy()) return "设备正在忙碌";
+    if (!config.calibrated) return "出厂标定异常，请联系售后";
+    if (!sensor_ready || esp_timer_get_time() / 1000 - last_sample_ms > 350
+        || !isfinite(weight) || weight < -2 || weight > WEIGHING_MAX_GRAMS) return "重量异常，请检查";
+    return NULL;
+}
+
+static bool cup_removed(void)
+{
+    int64_t now = esp_timer_get_time() / 1000;
+    return empty_since_ms >= 0 && now - empty_since_ms >= 500 && now - last_sample_ms <= 350;
+}
+
+static const char *save_cups(const cup_config_t *next, bool reset)
+{
+    if (storage_save_cups(next) != ESP_OK) return "杯子保存失败";
+    cups = *next;
+    config.empty_cup = cups_weight(&cups);
+    if (reset) weighing_init(&machine, config.empty_cup);
+    last_activity_ms = esp_timer_get_time() / 1000;
+    return NULL;
+}
+
+static const char *select_cup(unsigned id)
+{
+    const char *error = cup_available();
+    if (error) return error;
+    if (cup_setup.id[0]) return "请先完成杯子设置";
+    if (!cups_get(&cups, id)) return "请先设置杯子";
+    if (id == cups.active_id) return NULL;
+    if (!cup_removed()) return "请先拿开杯子";
+    cup_config_t next = cups;
+    next.active_id = id;
+    return save_cups(&next, true);
+}
+
+void device_next_cup(void)
+{
+    xSemaphoreTake(state_lock, portMAX_DELAY);
+    unsigned id = cups_next(&cups, cups.active_id);
+    unsigned previous = cups.active_id;
+    const char *error = select_cup(id);
+    cup_message(error ? error : previous == id ? "已是当前杯子" : "已切换杯子");
+    xSemaphoreGive(state_lock);
+}
+
+static cJSON *cup_command(const cJSON *json)
+{
+    const char *action = field(json, "action");
+    if (!action && cJSON_GetObjectItemCaseSensitive(json, "action")) return reply("杯子操作无效", NULL);
+    const char *setup_id = field(json, "setupId");
+    int64_t now = esp_timer_get_time() / 1000;
+    if (cup_setup.id[0] && now >= cup_setup.expires_ms) finish_cup_setup();
+    if (action && (!strcmp(action, "cancel") || !strcmp(action, "save"))) {
+        if (!setup_id || !cup_setup.id[0] || strcmp(setup_id, cup_setup.id))
+            return reply("杯子设置已结束，请重新开始", NULL);
+        if (!strcmp(action, "cancel")) {
+            finish_cup_setup();
+            return reply(NULL, "已取消杯子设置");
+        }
+    } else if (cup_setup.id[0]) return reply("请先完成或取消当前杯子设置", NULL);
+    const char *error = cup_available();
+    if (error) return reply(error, NULL);
+    const cJSON *target = cJSON_GetObjectItemCaseSensitive(json, "cupId");
+    unsigned id = cJSON_IsNumber(target) && target->valuedouble >= 1 && target->valuedouble <= CUP_CAPACITY
+        && floor(target->valuedouble) == target->valuedouble ? (unsigned)target->valuedouble : 0;
+    const char *name = field(json, "name");
+    cup_config_t next = cups;
+    if (!action || !strcmp(action, "save")) {
+        double average, spread;
+        if (!raw_average(&average, &spread)) return reply("请放上空杯并静置至少三秒", NULL);
+        double grams = (average - config.zero) / config.counts_per_gram;
+        if (grams < 5 || grams > 1995 || spread > fabs(config.counts_per_gram)
+            || (action && (cup_setup.stable_since_ms < 0 || now - cup_setup.stable_since_ms < 3000)))
+            return reply("空杯重量超出范围或尚未稳定", NULL);
+        id = action ? cup_setup.cup_id : cups.active_id ? cups.active_id : 1;
+        cup_t *cup = &next.items[id - 1];
+        if (action) strcpy(cup->name, cup_setup.name);
+        else if (!cup->name[0]) strcpy(cup->name, "默认杯");
+        cup->empty_cup = roundf((float)grams * 10) / 10;
+        next.active_id = id;
+        error = save_cups(&next, true);
+        if (!error) {
+            memset(&cup_setup, 0, sizeof(cup_setup));
+            machine.baseline = config.empty_cup;
+            machine.has_baseline = true;
+        }
+        return reply(error, "空杯重量已保存，可以加水后开始正常取放");
+    }
+    if (!id) return reply("杯子编号需为 1–3", NULL);
+    if (!strcmp(action, "prepare")) {
+        const char *operation_id = field(json, "id");
+        if (!operation_id || !provision_uuid(operation_id) || !cup_name_valid(name))
+            return reply("杯名需为一至五个汉字、字母或数字", NULL);
+        const cup_t *existing = cups_get(&cups, id);
+        if (existing && strcmp(name, existing->name)) return reply("杯名已变化，请刷新后重新设置", NULL);
+        if (!cup_removed()) return reply("请先拿开杯子", NULL);
+        if (!network_has_time()) return reply("请等待杯垫校时", NULL);
+        strcpy(cup_setup.id, operation_id);
+        cup_setup.cup_id = id;
+        strcpy(cup_setup.name, name);
+        cup_setup.expires_ms = now + CUP_SETUP_MS;
+        cup_setup.expires_at = network_epoch_ms() + CUP_SETUP_MS;
+        cup_setup.stable_since_ms = -1;
+        weighing_init(&machine, config.empty_cup);
+        raw_count = raw_next = 0;
+        last_activity_ms = now;
+        return reply(NULL, "已暂停记录，请放上空杯并静置三秒后保存");
+    }
+    if (!cups_get(&cups, id)) return reply("杯子不存在，请刷新后重试", NULL);
+    if (!strcmp(action, "select")) {
+        error = select_cup(id);
+        cup_message(error ? error : "已切换杯子");
+        return reply(error, "已切换杯子");
+    }
+    if (!strcmp(action, "rename")) {
+        if (!cup_name_valid(name)) return reply("杯名需为一至五个汉字、字母或数字", NULL);
+        strcpy(next.items[id - 1].name, name);
+        return reply(save_cups(&next, false), "杯名已保存");
+    }
+    if (!strcmp(action, "delete")) {
+        bool active = cups.active_id == id;
+        if (active && !cup_removed()) return reply("请先拿开杯子", NULL);
+        memset(&next.items[id - 1], 0, sizeof(cup_t));
+        if (active) next.active_id = cups_next(&next, id);
+        return reply(save_cups(&next, active), "杯子已删除");
+    }
+    return reply("未知杯子操作", NULL);
+}
+
 cJSON *device_command(const cJSON *json)
 {
     const char *name = field(json, "cmd");
     if (!name) return reply("缺少 cmd", NULL);
     if (!strcmp(name, "status")) return device_status_json();
     xSemaphoreTake(state_lock, portMAX_DELAY);
+    if (!strcmp(name, "cup")) {
+        cJSON *response = cup_command(json);
+        xSemaphoreGive(state_lock);
+        return response;
+    }
     if (!strcmp(name, "watch")) {
         const cJSON *enabled = cJSON_GetObjectItemCaseSensitive(json, "enabled");
         cJSON *response;
@@ -347,7 +562,7 @@ cJSON *device_command(const cJSON *json)
         xSemaphoreGive(state_lock);
         return response;
     }
-    if (unsaved_event || reboot_at_ms || provisioning_busy()) {
+    if (unsaved_event || reboot_at_ms || provisioning_busy() || cup_setup.id[0]) {
         xSemaphoreGive(state_lock);
         return reply("存在尚未保存的记录或设备正在重启，当前不可修改设置", NULL);
     }
@@ -406,7 +621,7 @@ cJSON *device_command(const cJSON *json)
             if (pending && strcmp(next.device_id, config.device_id))
                 error = "仍有待处理记录，上传完成前不能修改设备编号";
         }
-    } else if (!strcmp(name, "tare") || !strcmp(name, "calibrate") || !strcmp(name, "cup")) {
+    } else if (!strcmp(name, "tare") || !strcmp(name, "calibrate")) {
         double average, spread;
         if (!raw_average(&average, &spread)) error = "传感器未就绪，请静置至少两秒";
         else if (!strcmp(name, "tare")) {
@@ -437,31 +652,31 @@ cJSON *device_command(const cJSON *json)
                     message = "重量校准已保存；放上日常空杯并更新空杯重量";
                 }
             }
-        } else if (!config.calibrated) error = "出厂标定异常，请联系售后";
-        else {
-            double grams = (average - config.zero) / config.counts_per_gram;
-            if (grams < 5 || grams > 1995 || spread > fabs(config.counts_per_gram))
-                error = "空杯重量超出范围或尚未稳定";
-            else {
-                next.empty_cup = roundf((float)grams * 10) / 10;
-                reset_weighing = true;
-                message = "空杯重量已保存，可以加水后开始正常取放";
-            }
         }
     } else error = "未知命令：status、watch、wifi、server、tare、calibrate、cup、pending-time、reboot";
     if (!error) {
-        esp_err_t result = storage_save_config(&next);
-        if (result != ESP_OK) error = "配置写入失败；请保留设备数据并检查 Flash";
+        bool clear_cups = !strcmp(name, "calibrate");
+        cup_config_t cleared;
+        cups_init(&cleared, binding.binding_id, 0);
+        esp_err_t result = clear_cups ? storage_save_cups(&cleared) : ESP_OK;
+        bool cups_cleared = clear_cups && result == ESP_OK;
+        if (result == ESP_OK) result = storage_save_config(&next);
+        if (result != ESP_OK) {
+            error = "配置写入失败；请保留设备数据并检查 Flash";
+            // 标定中断优先停用旧杯基准，不能用新比例继续解释旧杯重量。
+            if (cups_cleared && storage_save_cups(&cups) != ESP_OK) {
+                cups = cleared;
+                config.empty_cup = 0;
+                weighing_init(&machine, 0);
+                error = "杯子配置恢复失败，请重新设置空杯";
+            }
+        }
         else {
             config = next;
+            if (clear_cups) cups = cleared;
             if (!strcmp(name, "wifi") || !strcmp(name, "server")) restart_required = true;
             if (reset_weighing || restart_required) {
                 weighing_init(&machine, config.empty_cup);
-                if (!strcmp(name, "cup")) {
-                    // 空杯已通过稳定采样确认，保留基准以识别设置成功后立即加水。
-                    machine.baseline = config.empty_cup;
-                    machine.has_baseline = true;
-                }
                 activity_weight = NAN;
                 last_activity_ms = esp_timer_get_time() / 1000;
             }
@@ -550,8 +765,13 @@ esp_err_t device_change_binding(const char *id)
         strcpy(owner.binding_id, id);
         // Clear the old cup durably before writing the new owner. A crash can only clear twice.
         result = storage_save_config(&next);
+        cup_config_t cleared;
+        cups_init(&cleared, id, 0);
+        if (result == ESP_OK) result = storage_save_cups(&cleared);
         if (result == ESP_OK) {
             config = next;
+            cups = cleared;
+            memset(&cup_setup, 0, sizeof(cup_setup));
             weighing_init(&machine, 0);
             result = storage_save_binding(&owner);
             if (result == ESP_OK) binding = owner;
@@ -577,10 +797,16 @@ esp_err_t device_commit_provision(const provision_record_t *record, bool rollbac
         strcpy(owner.binding_id, record->binding_id);
         if (strcmp(record->previous_binding.binding_id, owner.binding_id)) next.empty_cup = 0;
     }
+    cup_config_t next_cups = cups;
+    if (strcmp(next_cups.binding_id, owner.binding_id)) cups_init(&next_cups, owner.binding_id, 0);
+    next.empty_cup = cups_weight(&next_cups);
     esp_err_t result = storage_save_config(&next);
+    if (result == ESP_OK) result = storage_save_cups(&next_cups);
     if (result == ESP_OK) result = storage_save_binding(&owner);
     if (result == ESP_OK) {
         config = next;
+        cups = next_cups;
+        memset(&cup_setup, 0, sizeof(cup_setup));
         binding = owner;
         weighing_init(&machine, next.empty_cup);
     }
@@ -636,6 +862,20 @@ static void serial_task(void *arg)
     }
 }
 
+static esp_err_t load_cups(void)
+{
+    esp_err_t result = storage_load_cups(&cups);
+    if (result == ESP_ERR_NVS_NOT_FOUND) {
+        cups_init(&cups, binding.binding_id, config.empty_cup);
+        result = storage_save_cups(&cups);
+    } else if (result == ESP_OK && strcmp(cups.binding_id, binding.binding_id)) {
+        cups_init(&cups, binding.binding_id, 0);
+        result = storage_save_cups(&cups);
+    }
+    if (result == ESP_OK) config.empty_cup = cups_weight(&cups);
+    return result;
+}
+
 esp_err_t device_start(void)
 {
     esp_err_t result = ESP_ERR_NO_MEM;
@@ -652,6 +892,9 @@ esp_err_t device_start(void)
     if (result != ESP_OK) goto finished;
     startup_stage = "binding";
     result = storage_load_binding(&binding);
+    if (result != ESP_OK) goto finished;
+    startup_stage = "cups";
+    result = load_cups();
     if (result != ESP_OK) goto finished;
     startup_stage = "trust";
     result = storage_load_trust(&trust);

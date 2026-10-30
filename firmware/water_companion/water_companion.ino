@@ -7,6 +7,7 @@
 #include "network.h"
 #include "ble_provision.h"
 #include "provisioning.h"
+#include "button.h"
 
 #if ESP_ARDUINO_VERSION_MAJOR != 3
 #error "请在开发板管理器安装 esp32 by Espressif Systems 3.x；本工程按 3.3.11 适配"
@@ -77,23 +78,22 @@ void loop()
             last_error = millis();
         }
     }
-    static unsigned long pressed_at = 0;
-    static bool pressed = false, handled = false;
-    if (digitalRead(PROVISION_BUTTON_PIN) == LOW) {
-        if (!pressed) {
-            pressed = true;
-            pressed_at = millis();
-            display_wake();
-            if (startup_result == ESP_OK) device_wake();
-        }
-        if (startup_result == ESP_OK && !handled && millis() - pressed_at >= 3000) {
+    static button_t button;
+    unsigned buttons = button_poll(&button, digitalRead(PROVISION_BUTTON_PIN) == LOW, millis());
+    if (buttons & BUTTON_WAKE) {
+        display_wake();
+        if (startup_result == ESP_OK) device_wake();
+    }
+    if (startup_result == ESP_OK) {
+        if (buttons & BUTTON_DOUBLE) device_next_cup();
+        if (buttons & BUTTON_LONG) {
+            device_cancel_cup_setup();
             network_provision();
             ble_provision_open();
-            handled = true;
         }
-    } else { pressed = false; handled = false; }
+    }
     if (startup_result == ESP_OK) ble_provision_poll();
     update_cpu();
     display_update(startup_result);
-    delay(100);
+    delay(20);
 }

@@ -39,6 +39,7 @@ export function deviceStatus(snapshot: Snapshot): string {
   if (!device.online) return '杯垫离线';
   if (device.error) return device.error;
   if (!device.calibrated) return '请联系售后完成标定';
+  if (device.cupSetup) return '正在设置杯子，记录已暂停';
   if (device.emptyCupGrams === null) return '请先设置日常空杯';
   if (device.timePendingCount > 0) return '有饮水记录等待校时';
   if (device.pendingCount > 0) return '杯垫记录同步中';

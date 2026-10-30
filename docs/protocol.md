@@ -57,6 +57,9 @@ Content-Type: application/json
   source: 'hx711',
   calibrated: boolean,
   emptyCupGrams: number | null,
+  cups?: { id: number, name: string, emptyCupGrams: number }[],
+  activeCupId?: number | null,
+  cupSetup?: { id: string, cupId: number, name: string, expiresAt: number } | null,
   pendingCount: number,
   timePendingCount: number,
   clockSynced: boolean,
@@ -91,6 +94,27 @@ Content-Type: application/json
 5. 浏览器调用 `GET /api/control/commands/:id` 查询，只有 `succeeded` 才显示成功。POST 响应丢失仍可用已保存的 ID 查询，不自动重发写操作。
 
 网页和热点均无 `tare`／`calibrate` 入口；工厂通过 USB 标定。空杯命令依赖稳定重量、已有标定及配置落盘成功。设备上报命令失败不会被服务端改写为成功；已过期命令的迟到回执也不当作及时成功。
+
+### 多杯管理（0.8.0）
+
+新固件同时上报 `cups`、`activeCupId`、`cupSetup`，Dashboard 原样返回；字段缺失代表旧固件。最多三个固定编号（1–3），名称为 1–5 个基本汉字（U+4E00–U+9FFF）、ASCII 字母或数字，允许同名。服务端去除输入首尾空格。`emptyCupGrams` 保留为当前杯重量，列表、当前编号和重量必须一致；空列表对应两个空值。
+
+`POST /api/control/cup` 沿用 UUID 和回执，新增以下动作；除 `id`、`action` 外，只接受表中的参数。心跳下发同样的动作参数，并附加 `cmd: 'cup'`、有效期和绑定批次。旧固件不会收到新动作。
+
+| action | 参数 | 行为 |
+| --- | --- | --- |
+| `prepare` | `cupId`, `name` | 确认有效无杯读数持续 0.5 秒，暂停记录；目标已存在时名称必须一致，用于重新称重 |
+| `save` | `setupId` | 关联准备命令的 UUID，确认空杯连续稳定三秒后保存，并使用该杯 |
+| `cancel` | `setupId` | 取消对应设置，重新建立原杯的称重基准 |
+| `rename` | `cupId`, `name` | 改名，不重置称重基准 |
+| `select` | `cupId` | 执行时再次检查无杯，保存选择并清除旧取放基准 |
+| `delete` | `cupId` | 删除当前杯需无杯，之后循环选择下一只；删除非当前杯不影响基准 |
+
+准备状态仅在内存保留五分钟，超时、取消或重启后结束；保存失败可查询回执后重新提交保存。页面保留完整请求参数，同一 UUID 改变参数返回 409。设备保存成功并回执后，页面才确认完成；改名、切换和删除均不能绕过设备确认。
+
+旧的 `{id}`／串口及热点 `{"cmd":"cup"}` 仍只重新称量当前杯；没有当前杯时创建“默认杯”，不覆盖其他条目。杯子整体保存在独立版本化 NVS `cups` 记录，当前空杯字段由该记录推导。旧重量仅在首次缺少该记录时迁移，删除全部杯子后不会重新迁移。账号换绑清空全部杯子，同账号重配 Wi-Fi 保留；工厂重量标定清空杯子，修正零点保留杯子。事件与统计结构不变，不按杯子拆分历史。
+
+双击 BOOT 可离线按编号循环选择已保存杯子；无杯检查、记录保护和云端操作一致。发布必须先更新服务端，再更新网页／客户端和固件，保留 Flash 分区数据。
 
 ## 事件上报与统计
 

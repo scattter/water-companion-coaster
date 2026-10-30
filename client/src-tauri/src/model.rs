@@ -61,6 +61,23 @@ pub struct DrinkEvent {
     pub binding_id: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Cup {
+    pub id: u8,
+    pub name: String,
+    pub empty_cup_grams: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CupSetup {
+    pub id: String,
+    pub cup_id: u8,
+    pub name: String,
+    pub expires_at: i64,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Device {
@@ -73,6 +90,10 @@ pub struct Device {
     pub source: String,
     pub calibrated: bool,
     pub empty_cup_grams: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cups: Option<Vec<Cup>>,
+    pub active_cup_id: Option<u8>,
+    pub cup_setup: Option<CupSetup>,
     pub pending_count: u64,
     pub time_pending_count: u64,
     pub clock_synced: bool,
@@ -148,4 +169,31 @@ pub struct Snapshot {
     pub drink_ml: Option<f64>,
     pub frame: u32,
     pub settings: Settings,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cup_fields_preserve_legacy_compatibility_and_names() {
+        let legacy = serde_json::to_value(Device::default()).unwrap();
+        assert!(legacy.get("cups").is_none());
+        let mut old = legacy.clone();
+        old.as_object_mut().unwrap().remove("activeCupId");
+        old.as_object_mut().unwrap().remove("cupSetup");
+        assert!(serde_json::from_value::<Device>(old).unwrap().cups.is_none());
+        let value = serde_json::json!({
+            "cups": [{ "id": 2, "name": "保温杯A1", "emptyCupGrams": 180.0 }],
+            "activeCupId": 2,
+            "cupSetup": { "id": "operation", "cupId": 3, "name": "茶杯", "expiresAt": 1800000300000_i64 }
+        });
+        let mut updated = legacy;
+        updated.as_object_mut().unwrap().extend(value.as_object().unwrap().clone());
+        let device: Device = serde_json::from_value(updated).unwrap();
+        assert_eq!(device.cups.as_ref().unwrap()[0].name, "保温杯A1");
+        assert_eq!(device.active_cup_id, Some(2));
+        assert_eq!(device.cup_setup.as_ref().unwrap().cup_id, 3);
+        assert_eq!(serde_json::to_value(device).unwrap()["cups"][0]["emptyCupGrams"], 180.0);
+    }
 }

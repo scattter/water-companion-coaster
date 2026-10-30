@@ -193,6 +193,8 @@ const structure = (file, name) => readFileSync(new URL(`../water_companion/${fil
 test('LCD sleeps and redraws before lighting, BOOT keeps its timing, and CPU slows only outside display/provisioning', () => {
   run(`${common}
 #define DEVICE_IDLE_MS 30000
+${readFileSync(new URL('../water_companion/cups.h', import.meta.url), 'utf8').replace('#pragma once', '')}
+${readFileSync(new URL('../water_companion/button.h', import.meta.url), 'utf8').replace('#pragma once', '')}
 #define WEIGHING_MAX_GRAMS 2000
 #define CONTROL_IP "192.168.4.1"
 #define FIRMWARE_VERSION "test"
@@ -215,7 +217,11 @@ static uint32_t frequency = 240;
 static std::vector<uint32_t> frequencies;
 static std::vector<uint8_t> commands;
 static int button = HIGH, ap_opens, ble_opens;
+static unsigned cup_switches;
+static void device_next_cup() { ++cup_switches; }
+static void device_cancel_cup_setup() {}
 static int64_t now, last_activity_ms, wake_until_ms;
+static int64_t panel_wake_ms = -1;
 static float activity_weight = NAN;
 static esp_err_t startup_result = ESP_OK;
 static device_status_t input;
@@ -300,6 +306,11 @@ ${actual(display, 'void display_update')}
 ${actual(sketch, 'static void update_cpu')}
 ${actual(sketch, 'void setup')}
 ${actual(sketch, 'void loop')}
+static void press_at(int64_t at) {
+    now = at - 40; button = LOW; loop(); loop(); loop();
+    for (int i = 0; i < 6; ++i) loop();
+}
+static void release_button() { button = HIGH; loop(); loop(); loop(); }
 int main() {
     (void)mutex;
     setup();
@@ -316,23 +327,23 @@ int main() {
     assert(last_activity_ms == now);
     update_activity(0, now); display_update(ESP_OK); assert(brightness == LOW && !paints);
 
-    now = 40000; button = LOW; loop(); assert(brightness == HIGH && paints && frequency == 240 && !sleeping);
-    button = HIGH; loop();
+    press_at(40000); assert(brightness == HIGH && paints && frequency == 240 && !sleeping);
+    release_button();
     now = 54999; update_activity(800, now); display_update(ESP_OK); assert(brightness == HIGH);
     now = 55000; paints = 0; loop(); assert(brightness == LOW && !paints && frequency == 80 && sleeping);
 
-    now = 60000; button = LOW; loop();
+    press_at(60000);
     now = 63000; loop(); assert(ap_opens == 1 && ble_opens == 1 && brightness == HIGH);
     now = 64000; loop(); assert(ap_opens == 1 && ble_opens == 1);
     now = 75000; loop(); assert(brightness == LOW && frequency == 240);
-    button = HIGH; loop();
+    release_button();
     net.ap_ready = false; loop(); assert(frequency == 240);
     ble_state.window_open = false; loop(); assert(frequency == 80);
     net.ap_ready = true; loop(); assert(frequency == 240);
     net.ap_ready = false;
 
-    now = 80000; button = LOW; loop(); button = HIGH; loop();
-    now = 90000; button = LOW; loop(); button = HIGH; loop();
+    press_at(80000); release_button();
+    press_at(90000); release_button();
     now = 95000; display_update(ESP_OK); assert(brightness == HIGH);
     now = 104999; display_update(ESP_OK); assert(brightness == HIGH);
     now = 105000; display_update(ESP_OK); assert(brightness == LOW);
@@ -341,25 +352,33 @@ int main() {
     input.sensor_ready = input.calibrated = false; input.weight = NAN;
     input.unsaved_event = input.restart_required = true;
     paints = 0; loop(); assert(brightness == LOW && !paints && frequency == 240);
-    now = 110000; button = LOW; loop(); button = HIGH; loop(); assert(brightness == HIGH);
+    press_at(110000); release_button(); assert(brightness == HIGH);
     now = 125000; loop(); assert(brightness == LOW);
 
     startup_result = ESP_FAIL;
     provisioning = false;
     paints = 0; loop(); assert(brightness == LOW && !paints && error_logs && frequency == 240);
-    now = 130000; button = LOW; loop(); assert(brightness == HIGH && paints && now == 130220);
+    press_at(130000); assert(brightness == HIGH && paints && now == 130140);
     now = 133000; loop(); assert(ap_opens == 1 && ble_opens == 1);
     now = 145000; paints = 0; loop(); assert(brightness == LOW && !paints);
     assert(rgb_writes == 1);
 
-    button = HIGH; startup_result = ESP_OK; frequency_failure = true;
-    loop(); assert(frequency == 240 && frequency_errors == 1);
+    startup_result = ESP_OK; frequency_failure = true;
+    release_button(); assert(frequency == 240 && frequency_errors == 1);
     idle_frequencies = frequencies.size();
     loop(); assert(frequencies.size() == idle_frequencies && frequency_errors == 1);
     frequency_failure = false;
-    button = LOW; loop(); assert(brightness == HIGH && frequency == 240);
-    button = HIGH; loop();
+    press_at(now + 40); assert(brightness == HIGH && frequency == 240);
+    release_button();
     now += 15000; loop(); assert(frequency == 80 && sleeping && brightness == LOW);
+    int64_t begin = now;
+    unsigned switched = cup_switches;
+    while (now - begin < 600) {
+        int64_t elapsed = now - begin;
+        button = elapsed < 100 || (elapsed >= 200 && elapsed < 300) ? LOW : HIGH;
+        loop();
+    }
+    assert(cup_switches == switched + 1 && brightness == HIGH);
 }
 `);
 });

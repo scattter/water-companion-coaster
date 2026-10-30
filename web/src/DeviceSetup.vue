@@ -4,6 +4,7 @@ import { ApiError, errorMessage, request } from './api';
 import { operationStorage, platform } from './platform';
 import { useNotice } from './notices';
 import { commandStorageKey, type Session } from './session';
+import { currentCup, validCupName, type Cup, type CupSetup, type CupCommand } from '../../shared/cups';
 
 const props = defineProps<{
   online: boolean;
@@ -13,6 +14,10 @@ const props = defineProps<{
   calibrated?: boolean;
   emptyCupGrams?: number | null;
   weightGrams?: number | null;
+  cups?: Cup[];
+  activeCupId?: number | null;
+  cupSetup?: CupSetup | null;
+  cupPresent?: boolean;
   active: boolean;
 }>();
 const emit = defineEmits<{ updated: []; accessError: [cause: ApiError, userId: string, deviceId: string] }>();
@@ -22,6 +27,7 @@ interface Command {
   message: string | null;
   expiresAt: number;
   bindingId: string | null;
+  request?: CupCommand;
 }
 const command = ref<Command | null>(null);
 const busy = ref(false);
@@ -34,6 +40,14 @@ let timer: ReturnType<typeof setInterval> | undefined;
 let disposed = false;
 const pending = computed(() => command.value?.status === 'pending');
 const canSetCup = computed(() => props.online && props.calibrated && !busy.value && !pending.value);
+const multiCup = computed(() => props.cups !== undefined);
+const canManage = computed(() => canSetCup.value && !props.cupSetup);
+const cupLabel = computed(() => currentCup({ cups: props.cups, activeCupId: props.activeCupId, emptyCupGrams: props.emptyCupGrams ?? null }));
+const nextCupId = computed(() => [1, 2, 3].find(id => !props.cups?.some(cup => cup.id === id)));
+const newName = ref('');
+const editName = ref('');
+const editing = ref<number | null>(null);
+const deleting = ref<number | null>(null);
 const errorNotice = useNotice('web:cup:error', () => error.value, {
   enabled: () => props.active && !busy.value,
   action: () => pending.value ? { label: '查询设置结果', run: queryCommand } : undefined,
@@ -52,17 +66,19 @@ function applyCommand(value: Command) {
     error.value = '命令不属于当前设备绑定，请刷新账号状态后再操作。';
     return;
   }
-  command.value = value;
+  command.value = { ...value, request: command.value.request };
   uncertain.value = false;
   error.value = '';
   if (value.status === 'pending') {
-    try { operationStorage.setItem(storageKey, JSON.stringify(value)); }
+    try { operationStorage.setItem(storageKey, JSON.stringify(command.value)); }
     catch { error.value = '浏览器无法保存操作状态，请保持本页打开，直到确认结果。'; }
     return;
   }
   try { operationStorage.removeItem(storageKey); } catch { /* 已确认结果，不影响当前页面展示。 */ }
   if (value.status === 'succeeded') {
-    feedback.value = '空杯设置成功，可以加水使用了。';
+    feedback.value = value.message || '杯子操作已完成。';
+    editing.value = deleting.value = null;
+    if (command.value.request?.action === 'prepare') newName.value = '';
     emit('updated');
   } else {
     error.value = value.message || (value.status === 'expired' ? '设备未在有效期内确认操作。请确认联网后重新设置。' : '空杯设置失败，请保持空杯静置后重试。');
@@ -118,7 +134,7 @@ async function submitCommand() {
     if (session.user?.id !== props.userId || session.deviceId !== props.deviceId || session.bindingId !== props.bindingId) {
       throw new ApiError('账号或绑定批次已变化，请刷新账号状态。', 403);
     }
-    const result = await request<{ command: Command }>('/api/control/cup', { id });
+    const result = await request<{ command: Command }>('/api/control/cup', command.value!.request ?? { id });
     if (!disposed) applyCommand(result.command);
   } catch (cause) {
     if (disposed || accessError(cause)) return;
@@ -135,16 +151,33 @@ async function submitCommand() {
 }
 
 async function setCup() {
-  if (!canSetCup.value) return;
+  await runCup({});
+}
+
+async function runCup(input: Omit<CupCommand, 'id'>) {
+  if (input.action === 'cancel' ? !props.online || busy.value || pending.value : !canSetCup.value) return;
   errorNotice.reset();
   try {
-    rememberCommand({ id: crypto.randomUUID(), bindingId: props.bindingId, status: 'pending', message: null, expiresAt: Date.now() + 120000 });
+    const id = crypto.randomUUID();
+    rememberCommand({ id, bindingId: props.bindingId, status: 'pending', message: null,
+      expiresAt: Date.now() + 120000, request: { id, ...input } });
   } catch {
     error.value = '浏览器无法保存操作状态。请允许此网站使用会话存储后重试，当前未发送设置请求。';
     errorNotice.show();
     return;
   }
   await submitCommand();
+}
+
+function prepareCup(cupId: number, name: string) {
+  if (!canManage.value || !validCupName(name.trim())) return;
+  void runCup({ action: 'prepare', cupId, name: name.trim() });
+}
+
+function renameCup(cup: Cup) {
+  editing.value = cup.id;
+  deleting.value = null;
+  editName.value = cup.name;
 }
 
 onMounted(() => {
@@ -174,16 +207,54 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer); });
     <p class="setup-tip">设备 {{ deviceId }}。杯垫联网后自动同步，无需与手机连接同一 Wi-Fi。</p>
     <p v-if="!online" class="setup-tip">请保持杯垫供电并连接 Wi-Fi，待云端显示在线后设置空杯。</p>
     <section class="cup-setup" aria-labelledby="cup-title">
-      <h3 id="cup-title">日常空杯设置</h3>
-      <p class="setup-tip">放上日常使用的空杯，静置至少 3 秒后点击“记住这个杯子”。无需输入重量；以后换杯时重复这一步。</p>
+      <h3 id="cup-title">{{ multiCup ? `我的杯子（${cups!.length}/3）` : '日常空杯设置' }}</h3>
+      <p v-if="multiCup" class="setup-tip">当前杯子：<strong>{{ cupLabel }}</strong>{{ !online ? '（上次同步）' : '' }}。换杯时先拿开杯子，再双击 BOOT 或点击“使用”。</p>
+      <p v-else class="setup-tip">放上日常使用的空杯，静置至少 3 秒后点击“记住这个杯子”。升级杯垫固件后可保存最多 3 个杯子。</p>
       <div class="device-reading">
         <div><span>当前总重</span><strong>{{ online && weightGrams != null ? `${weightGrams.toFixed(1)} g` : '—' }}</strong></div>
         <div><span>已记住的空杯</span><strong>{{ emptyCupGrams != null ? `${emptyCupGrams.toFixed(1)} g` : '尚未设置' }}</strong></div>
       </div>
       <p v-if="calibrated === false" class="notice error" role="alert">杯垫尚未完成出厂标定，请联系售后。你无需准备砝码或自行校准。</p>
       <p v-else-if="calibrated === undefined" class="setup-tip">正在读取杯垫状态…</p>
-      <button class="primary" :disabled="!canSetCup" @click="setCup">{{ pending ? '正在等待设置结果…' : '记住这个杯子' }}</button>
-      <p v-if="pending" class="setup-tip" role="status">等待杯垫确认，请保持空杯静置。关闭设置后可回来继续查询。</p>
+      <template v-if="multiCup">
+        <div v-if="cupSetup" class="cup-preparation" role="status">
+          <strong>正在设置 {{ cupSetup.cupId }} · {{ cupSetup.name }}</strong>
+          <p class="setup-tip">杯垫已暂停记录。请放上这只空杯，静置至少 3 秒后保存。5 分钟未完成会自动结束设置。</p>
+          <div class="command-actions">
+            <button class="primary" :disabled="!canSetCup" @click="runCup({ action: 'save', setupId: cupSetup.id })">保存空杯重量</button>
+            <button :disabled="!online || busy || pending" @click="runCup({ action: 'cancel', setupId: cupSetup.id })">取消设置</button>
+          </div>
+        </div>
+        <ul class="cup-list">
+          <li v-for="cup in cups" :key="cup.id">
+            <div class="cup-heading"><strong>{{ cup.id }} · {{ cup.name }}</strong><span>{{ cup.emptyCupGrams.toFixed(1) }} g{{ cup.id === activeCupId ? ' · 当前使用' : '' }}</span></div>
+            <div class="command-actions">
+              <button :disabled="!canManage || cup.id === activeCupId || cupPresent !== false" @click="runCup({ action: 'select', cupId: cup.id })">使用</button>
+              <button :disabled="!canManage" @click="renameCup(cup)">改名</button>
+              <button :disabled="!canManage || cupPresent !== false" @click="prepareCup(cup.id, cup.name)">重新称重</button>
+              <button :disabled="!canManage" @click="deleting = cup.id; editing = null">删除</button>
+            </div>
+            <form v-if="editing === cup.id" class="cup-edit" @submit.prevent="runCup({ action: 'rename', cupId: cup.id, name: editName.trim() })">
+              <label :for="`cup-name-${cup.id}`">杯子名称（1–5 个汉字、字母或数字）</label>
+              <input :id="`cup-name-${cup.id}`" v-model="editName" maxlength="32" required :disabled="!canManage" />
+              <div class="command-actions"><button class="primary" :disabled="!canManage || !validCupName(editName.trim())">保存名称</button><button type="button" :disabled="busy || pending" @click="editing = null">取消</button></div>
+            </form>
+            <div v-if="deleting === cup.id" class="cup-edit">
+              <p class="setup-tip">确认删除“{{ cup.name }}”？饮水记录会保留。{{ cup.id === activeCupId ? '请先拿开杯子，删除后将使用下一只已保存的杯子。' : '' }}</p>
+              <div class="command-actions"><button :disabled="!canManage || (cup.id === activeCupId && cupPresent !== false)" @click="runCup({ action: 'delete', cupId: cup.id })">确认删除</button><button :disabled="busy || pending" @click="deleting = null">取消</button></div>
+            </div>
+          </li>
+        </ul>
+        <form v-if="nextCupId && !cupSetup" class="cup-edit" @submit.prevent="prepareCup(nextCupId!, newName)">
+          <label for="new-cup-name">新增杯子（1–5 个汉字、字母或数字）</label>
+          <input id="new-cup-name" v-model="newName" maxlength="32" required placeholder="例如：保温杯" :disabled="!canManage" />
+          <p class="setup-tip">先拿开原来的杯子，点击开始设置。等杯垫确认暂停记录后，再放上新空杯。</p>
+          <button class="primary" :disabled="!canManage || cupPresent !== false || !validCupName(newName.trim())">开始设置新杯子</button>
+        </form>
+        <p v-else-if="!cupSetup" class="setup-tip">已保存 3 个杯子。如需更换，请先删除其中一个。</p>
+      </template>
+      <button v-else class="primary" :disabled="!canSetCup" @click="setCup">{{ pending ? '正在等待设置结果…' : '记住这个杯子' }}</button>
+      <p v-if="pending" class="setup-tip" role="status">等待杯垫确认，请保持当前状态。关闭设置后可回来继续查询。</p>
       <div v-if="pending" class="command-actions">
         <button :disabled="busy" @click="queryCommand">{{ busy ? '正在确认…' : '查询设置结果' }}</button>
         <button v-if="uncertain" :disabled="busy || !online" @click="submitCommand">重试同一次请求</button>
@@ -221,6 +292,14 @@ h3 { margin:0; font-size:15px; }
 .device-reading span { color:#5d7568; font-size:12px; }
 .device-reading strong { font-size:17px; font-weight:600; }
 .cup-setup > button { justify-self:start; }
+.cup-list { list-style:none; padding:0; margin:0; display:grid; gap:12px; }
+.cup-list > li,.cup-preparation { padding:14px; border:1px solid #d8e1d5; border-radius:10px; }
+.cup-heading { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; margin-bottom:10px; }
+.cup-heading span { color:#5d7568; font-size:13px; }
+.cup-edit { display:grid; gap:10px; margin-top:10px; }
+.cup-edit label { font-size:13px; }
+.cup-edit input { width:100%; box-sizing:border-box; padding:10px; border:1px solid #cad7c9; border-radius:8px; font:inherit; }
+.cup-edit > button { justify-self:start; }
 button { padding:10px 15px; min-height:40px; background:#edf3e9; border:1px solid #d8e1d5; border-radius:8px; color:#263d35; font-size:13px; }
 button.primary { background:#43745d; color:#fff; border-color:#43745d; }
 .command-actions { display:flex; flex-wrap:wrap; gap:12px; }

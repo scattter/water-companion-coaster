@@ -48,8 +48,9 @@ static const char PAGE[] = R"HTML(<!doctype html>
 <h2 id="weight-title">当前重量</h2><div class="weight"><span id="weight">—</span> <small>g</small></div>
 <p id="reading" class="hint">等待读数</p><p id="device-error" role="alert"></p>
 <p>空杯重量 <strong id="cup-weight">—</strong></p>
+<p>当前杯子 <strong id="cup-name">—</strong></p>
 <button id="cup" class="primary" disabled>更新空杯重量</button>
-<p class="hint">放上空杯，静置至少 3 秒再更新。换杯时更新一次即可；喝水后放回，自动记录前后差值。</p>
+<p class="hint">此处只更新当前杯子的空杯重量，其他杯子不会改变。添加、命名和管理杯子请打开网站；日常换杯请先拿开杯子，再双击 BOOT。</p>
 </section>
 <section class="card" aria-labelledby="event-title">
 <h2 id="event-title">本次开机最近一次记录</h2><p id="last-event">尚无记录</p>
@@ -106,6 +107,8 @@ function render(value) {
   $('reading').textContent = value.calibrated ? (value.stable ? '读数稳定' : '等待稳定') : '出厂标定异常，请联系售后';
   $('device-error').textContent = value.error || '';
   $('cup-weight').textContent = value.emptyCupGrams >= 5 ? `${value.emptyCupGrams.toFixed(1)} g` : '未设置';
+  const currentCup = value.cups?.find(cup => cup.id === value.activeCupId);
+  $('cup-name').textContent = currentCup ? `${currentCup.id} · ${currentCup.name}` : value.emptyCupGrams >= 5 ? '默认杯' : '未设置';
   const event = value.lastEvent;
   $('last-event').textContent = event ? `${event.kind === 'drink' ? '估算饮水' : '补水'} ${event.amountMl.toFixed(1)} ml · ${event.beforeGrams.toFixed(1)} → ${event.afterGrams.toFixed(1)} g${event.saved ? ' · 已保存' : ' · 保存失败，请勿断电'}` : '尚无记录';
   $('queue').textContent = `待上传 ${value.pendingCount} 条${value.timePendingCount ? `，其中 ${value.timePendingCount} 条时间待确认` : ''}。${value.clockSynced ? '已校时' : '尚未校时'}`;

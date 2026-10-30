@@ -18,8 +18,7 @@ const headers = {
 #include <stdint.h>
 typedef int esp_err_t;
 enum { ESP_OK = 0, ESP_ERR_NO_MEM = 0x101, ESP_ERR_INVALID_ARG,
-       ESP_ERR_INVALID_STATE, ESP_ERR_INVALID_RESPONSE, ESP_ERR_NOT_FOUND,
-       ESP_ERR_NVS_NOT_FOUND = 0x1102, ESP_ERR_NVS_NOT_ENOUGH_SPACE };
+       ESP_ERR_INVALID_STATE, ESP_ERR_INVALID_RESPONSE, ESP_ERR_NOT_FOUND };
 const char *esp_err_to_name(esp_err_t error);
 void test_error_check(esp_err_t error, const char *file, int line);
 #define ESP_ERROR_CHECK(value) test_error_check((value), __FILE__, __LINE__)
@@ -87,7 +86,6 @@ BaseType_t xSemaphoreTake(SemaphoreHandle_t mutex, TickType_t wait);
 void xSemaphoreGive(SemaphoreHandle_t mutex);
 `,
   'cJSON.h': `${jsonShim}
-static bool cJSON_IsObject(const cJSON *value) { return value && value->type == JSON_OBJECT; }
 static cJSON *cJSON_ParseWithOpts(const char *text, const char **end, bool require_end);
 static char *cJSON_PrintUnformatted(const cJSON *json);
 #define cJSON_free free
@@ -102,6 +100,7 @@ esp_err_t esp_read_mac(uint8_t mac[6], int type);
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
+enum { ESP_ERR_NVS_NOT_FOUND = 0x1102, ESP_ERR_NVS_NOT_ENOUGH_SPACE = 0x1105 };
 typedef int nvs_handle_t;
 typedef void *nvs_iterator_t;
 typedef struct { char key[16]; } nvs_entry_info_t;
@@ -304,6 +303,12 @@ esp_err_t storage_init(device_config_t *value, uint64_t *id) {
 esp_err_t storage_load_binding(binding_state_t *value) {
     memset(value, 0, sizeof(*value)); return enter_phase(BINDING);
 }
+esp_err_t storage_load_cups(cup_config_t *value) {
+    cups_init(value, binding.binding_id, config.empty_cup); return ESP_OK;
+}
+esp_err_t storage_save_cups(const cup_config_t *value) {
+    assert(cups_valid(value)); return ESP_OK;
+}
 esp_err_t storage_load_trust(provision_trust_t *value) {
     memset(value, 0, sizeof(*value)); return enter_phase(TRUST);
 }
@@ -475,7 +480,7 @@ int main(int argc, char **argv) {
     return 0;
 }
 `, ['ready', 'legacy-heap', 'serial', 'state-lock', 'storage', 'binding', 'trust',
-    'provision-recovery', 'hx711', 'ble', 'network', 'sampling'], ['weighing.c', 'provision_protocol.c']);
+    'provision-recovery', 'hx711', 'ble', 'network', 'sampling'], ['weighing.c', 'provision_protocol.c', 'cups.c']);
 });
 
 test('actual PSRAM queue allocation uses 32 KiB without internal fallback or flash writes on failure', () => {
@@ -585,5 +590,5 @@ int main(int argc, char **argv) {
     }
     free(queue); return 0;
 }
-`, ['missing-psram', 'psram-full', 'ready', 'nvs-failure', 'corrupt-config'], ['provision_protocol.c']);
+`, ['missing-psram', 'psram-full', 'ready', 'nvs-failure', 'corrupt-config'], ['provision_protocol.c', 'cups.c']);
 });

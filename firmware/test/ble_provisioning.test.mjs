@@ -171,6 +171,8 @@ static const char *remote_status;
 static const char *owner="33333333-3333-4333-8333-333333333333";
 static char last_stage[24], last_code[40], last_operation[37];
 static device_config_t config, disk_config;
+static cup_config_t cups, disk_cups;
+static cup_setup_t cup_setup;
 static binding_state_t binding, disk_binding;
 static weighing_t machine;
 void ble_provision_status(const char *op, const char *stage, const char *message, const char *code) {
@@ -191,6 +193,7 @@ bool provision_identity_proof(const char *token,const char *op,const char *hw,co
 void device_snapshot(device_status_t *s) { memset(s,0,sizeof(*s)); }
 void network_snapshot(network_status_t *s) { memset(s,0,sizeof(*s)); }
 esp_err_t storage_save_config(const device_config_t *c) { if(commit_error) return commit_error; disk_config=*c; return ESP_OK; }
+esp_err_t storage_save_cups(const cup_config_t *c) { if(commit_error) return commit_error; assert(cups_valid(c)); disk_cups=*c; return ESP_OK; }
 esp_err_t storage_save_binding(const binding_state_t *b) { if(commit_error) return commit_error; disk_binding=*b; return ESP_OK; }
 ${actual(coaster, 'void device_config_snapshot')}
 ${actual(coaster, 'esp_err_t device_commit_provision')}
@@ -239,6 +242,8 @@ static void prepare(void) {
     strcpy(config.server_url,"https://old.example"); config.calibrated=true; config.zero_set=true;
     config.zero=1234; config.counts_per_gram=-234.5; config.empty_cup=105.5;
     memset(&binding,0,sizeof(binding)); binding.version=1; strcpy(binding.binding_id,deployment);
+    cups_init(&cups, binding.binding_id, config.empty_cup); disk_cups=cups;
+    memset(&cup_setup,0,sizeof(cup_setup));
     disk_config=config; disk_binding=binding;
     saves=claims=queries=completes=wifi_switches=save_error=cleanup_error=commit_error=http_error=0;
     clock_ms=1000; epoch=1800000000000LL; next_action_ms=0; verify_ok=true; reuse_identity=false; remote_status="claimed";
@@ -262,7 +267,8 @@ static void submit_enrollment(bool fresh) {
 }
 static void tick(int64_t t, bool connected) { clock_ms=t; provisioning_poll(t,connected); }
 static void reboot(void) {
-    config=disk_config; binding=disk_binding; release(); next_action_ms=0; epoch=0;
+    config=disk_config; binding=disk_binding; cups=disk_cups; config.empty_cup=cups_weight(&cups);
+    memset(&cup_setup,0,sizeof(cup_setup)); release(); next_action_ms=0; epoch=0;
     assert(provisioning_start()==ESP_OK && provisioning_busy());
 }
 int main(void) {
@@ -285,6 +291,7 @@ int main(void) {
     assert(!provisioning_busy() && claims==0 && saves==0);
     prepare(); reuse_identity=true; strcpy(config.server_url,"http://192.168.1.10:3001");
     memset(config.token,'x',128); config.token[128]=0; strcpy(binding.binding_id,owner);
+    strcpy(cups.binding_id,owner); disk_cups=cups;
     disk_config=config; disk_binding=binding;
     submit_enrollment(false); tick(1000,false); tick(2000,true); tick(3000,true); tick(4000,true);
     assert(!provisioning_busy() && claims==1 && completes==1 && config.empty_cup==105.5);
@@ -299,7 +306,8 @@ int main(void) {
     tick(3000,true); assert(completes==1 && phase==P_FINISH && !strcmp(binding.binding_id,owner) && config.empty_cup==0);
     assert(config.zero==1234 && config.counts_per_gram==-234.5 && !strcmp(config.token,"secret-token-never-log"));
     tick(4000,true); assert(!provisioning_busy() && !journal_present && !strcmp(last_stage,"completed"));
-    prepare(); strcpy(binding.binding_id,owner); disk_binding=binding; submit(); tick(1000,false); tick(2000,true); tick(3000,true);
+    prepare(); strcpy(binding.binding_id,owner); disk_binding=binding; strcpy(cups.binding_id,owner); disk_cups=cups;
+    submit(); tick(1000,false); tick(2000,true); tick(3000,true);
     assert(config.empty_cup==105.5); tick(4000,true);
     prepare(); submit(); tick(1000,false); tick(46000,false); assert(phase==P_ROLLBACK); tick(47000,false);
     assert(!provisioning_busy() && !strcmp(config.ssid,"old-wifi") && config.empty_cup==105.5 && claims==0);
@@ -341,7 +349,7 @@ int main(void) {
     assert(!utf8((const unsigned char *)"\\xed\\xa0\\x80"));
     assert(utf8((const unsigned char *)"\\xe4\\xb8\\xad"));
 }
-`, ['provision_protocol.c', 'weighing.c'], { ...basicHeaders, 'cJSON.h': jsonShim });
+`, ['provision_protocol.c', 'weighing.c', 'cups.c'], { ...basicHeaders, 'cJSON.h': jsonShim });
 });
 
 test('actual USB trust and factory-info commands preserve identity, reject invalid trust and expose only a fingerprint', () => {

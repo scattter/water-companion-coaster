@@ -8,6 +8,7 @@ import { provisioningSigner } from './signing.js';
 import { provisioningRoutes } from './provisioning.js';
 import { enrollmentRoutes } from './enrollment.js';
 import { bindingSchema, emptyBody, idParams, uuidPattern, uuidSchema } from './validation.js';
+import { validCupName, type Cup, type CupSetup, type CupCommand } from '../../shared/cups.js';
 
 const deviceOnlineMs = 90_000;
 const commandLifetimeMs = 120_000;
@@ -49,6 +50,9 @@ interface Heartbeat {
   source: 'hx711';
   calibrated: boolean;
   emptyCupGrams: number | null;
+  cups?: Cup[];
+  activeCupId?: number | null;
+  cupSetup?: CupSetup | null;
   pendingCount: number;
   timePendingCount: number;
   clockSynced: boolean;
@@ -245,24 +249,43 @@ export function createApp(options: AppOptions) {
       return { deviceId: binding.deviceId, bindingId };
     });
   });
-  app.post<{ Body: { id: string } }>('/api/control/cup', {
-    schema: { body: { type: 'object', additionalProperties: false, required: ['id'], properties: { id: { type: 'string', pattern: uuidPattern } } } },
+  app.post<{ Body: CupCommand }>('/api/control/cup', {
+    schema: { body: { type: 'object', additionalProperties: false, required: ['id'], properties: {
+      id: uuidSchema, action: { enum: ['prepare', 'save', 'cancel', 'rename', 'select', 'delete'] },
+      cupId: { type: 'integer', minimum: 1, maximum: 3 }, name: { type: 'string', maxLength: 32 }, setupId: uuidSchema,
+    } } },
   }, async (request) => {
     const deviceId = auth.deviceId(request);
     const timestamp = now().getTime();
     const id = request.body.id.toLowerCase();
+    const { action, cupId, setupId } = request.body;
+    const name = request.body.name?.trim();
+    const fields: Record<string, string[]> = {
+      prepare: ['cupId', 'name'], save: ['setupId'], cancel: ['setupId'], rename: ['cupId', 'name'], select: ['cupId'], delete: ['cupId'],
+    };
+    const required = action ? fields[action] : [];
+    if (required.some(key => request.body[key as keyof CupCommand] === undefined)
+      || ['cupId', 'name', 'setupId'].some(key => request.body[key as keyof CupCommand] !== undefined && !required.includes(key))
+      || (name !== undefined && !validCupName(name))) fail('杯名需为 1–5 个汉字、英文字母或数字，请检查操作参数', 400);
+    const payload = JSON.stringify({ cmd: 'cup', ...(action ? { action } : {}), ...(cupId ? { cupId } : {}),
+      ...(name !== undefined ? { name } : {}), ...(setupId ? { setupId: setupId.toLowerCase() } : {}) });
     expireCommands(deviceId, timestamp);
     const bindingId = auth.identity(request).bindingId!;
     const existing = db.prepare(`SELECT ${commandColumns} FROM device_commands WHERE id = ? AND device_id = ? AND binding_id = ?`).get(id, deviceId, bindingId);
-    if (existing) return { command: existing };
+    if (existing) {
+      const saved = db.prepare('SELECT payload FROM device_commands WHERE id = ?').get(id) as { payload: string };
+      if (saved.payload !== payload) fail('同一操作编号不能用于不同的杯子操作', 409);
+      return { command: existing };
+    }
     if (db.prepare('SELECT id FROM device_commands WHERE id = ?').get(id)) fail('操作不存在', 404);
     const live = getDevice.get(deviceId) as unknown as DeviceRow | undefined;
     const statusAge = live ? timestamp - Date.parse(live.lastSeenAt) : Infinity;
     if (!live || live.bindingId !== bindingId || statusAge < 0 || statusAge > deviceOnlineMs) fail('杯垫已离线，请等待连接后再设置空杯', 409, 'DEVICE_OFFLINE');
-    if (db.prepare(`SELECT id FROM device_commands WHERE device_id = ? AND status = 'pending'`).get(deviceId)) fail('上一项空杯设置尚未完成，请稍后重试', 409);
+    if (action && !Array.isArray((JSON.parse(live.payload) as Heartbeat).cups)) fail('请升级杯垫固件后使用多杯功能', 409);
+    if (db.prepare(`SELECT id FROM device_commands WHERE device_id = ? AND status = 'pending'`).get(deviceId)) fail('上一项杯子操作尚未完成，请稍后重试', 409);
     const expiresAt = timestamp + commandLifetimeMs;
-    db.prepare(`INSERT INTO device_commands (id, device_id, binding_id, status, message, created_at, expires_at) VALUES (?, ?, ?, 'pending', NULL, ?, ?)`)
-      .run(id, deviceId, bindingId, timestamp, expiresAt);
+    db.prepare(`INSERT INTO device_commands (id, device_id, binding_id, status, message, created_at, expires_at, payload) VALUES (?, ?, ?, 'pending', NULL, ?, ?, ?)`)
+      .run(id, deviceId, bindingId, timestamp, expiresAt, payload);
     return { command: { id, status: 'pending', message: null, expiresAt, bindingId } };
   });
   app.get<{ Params: { id: string } }>('/api/control/commands/:id', {
@@ -288,6 +311,18 @@ export function createApp(options: AppOptions) {
           stable: { type: 'boolean' }, cupPresent: { type: 'boolean' },
           source: { const: 'hx711' }, calibrated: { type: 'boolean' },
           emptyCupGrams: { anyOf: [{ type: 'number', minimum: 5, maximum: 1995 }, { type: 'null' }] },
+          cups: { type: 'array', maxItems: 3, items: { type: 'object', additionalProperties: false,
+            required: ['id', 'name', 'emptyCupGrams'], properties: {
+              id: { type: 'integer', minimum: 1, maximum: 3 }, name: { type: 'string', pattern: '^[\\u4e00-\\u9fffA-Za-z0-9]{1,5}$' },
+              emptyCupGrams: { type: 'number', minimum: 5, maximum: 1995 },
+            } } },
+          activeCupId: { anyOf: [{ type: 'integer', minimum: 1, maximum: 3 }, { type: 'null' }] },
+          cupSetup: { anyOf: [{ type: 'null' }, { type: 'object', additionalProperties: false,
+            required: ['id', 'cupId', 'name', 'expiresAt'], properties: {
+              id: uuidSchema, cupId: { type: 'integer', minimum: 1, maximum: 3 },
+              name: { type: 'string', pattern: '^[\\u4e00-\\u9fffA-Za-z0-9]{1,5}$' },
+              expiresAt: { type: 'integer', minimum: 1704067200000, maximum: 4102444800000 },
+            } }] },
           pendingCount: { type: 'integer', minimum: 0, maximum: 4097 },
           timePendingCount: { type: 'integer', minimum: 0, maximum: 4096 },
           clockSynced: { type: 'boolean' },
@@ -303,6 +338,16 @@ export function createApp(options: AppOptions) {
   }, async (request, reply) => {
     const deviceId = auth.deviceId(request);
     const { commandResult, ...heartbeat } = request.body;
+    if (heartbeat.cups !== undefined || heartbeat.activeCupId !== undefined || heartbeat.cupSetup !== undefined) {
+      const cups = heartbeat.cups;
+      const selected = cups?.find(cup => cup.id === heartbeat.activeCupId);
+      if (!cups || heartbeat.activeCupId === undefined || heartbeat.cupSetup === undefined
+        || new Set(cups.map(cup => cup.id)).size !== cups.length
+        || (cups.length ? !selected || heartbeat.emptyCupGrams === null || Math.abs(selected.emptyCupGrams - heartbeat.emptyCupGrams) > 0.05
+          : heartbeat.activeCupId !== null || heartbeat.emptyCupGrams !== null)) {
+        return reply.code(400).send({ error: '杯子配置与当前杯子不一致' });
+      }
+    }
     if (heartbeat.timePendingCount > heartbeat.pendingCount
       || (!heartbeat.calibrated && (heartbeat.weightGrams !== null || heartbeat.stable))
       || (heartbeat.stable && heartbeat.weightGrams === null)) {
@@ -330,10 +375,12 @@ export function createApp(options: AppOptions) {
           WHERE id = ? AND device_id = ? AND binding_id = ? AND status = 'pending' AND expires_at > ?`)
           .run(commandResult.ok ? 'succeeded' : 'failed', commandResult.message || null, commandResult.id.toLowerCase(), deviceId, resultBinding, timestamp);
       }
-      const command = canCommand ? db.prepare(`SELECT id, expires_at AS expiresAt, binding_id AS bindingId FROM device_commands
-        WHERE device_id = ? AND binding_id = ? AND status = 'pending'`).get(deviceId, device.bindingId) : undefined;
+      const command = canCommand ? db.prepare(`SELECT id, expires_at AS expiresAt, binding_id AS bindingId, payload FROM device_commands
+        WHERE device_id = ? AND binding_id = ? AND status = 'pending'`).get(deviceId, device.bindingId) as
+        { id: string; expiresAt: number; bindingId: string; payload: string } | undefined : undefined;
+      const compatible = command && (!JSON.parse(command.payload).action || heartbeat.cups !== undefined);
       return { ok: true, serverTimeMs: timestamp, bound: device.userId !== null, bindingId: device.bindingId,
-        command: command ? { ...command, cmd: 'cup' } : null,
+        command: compatible ? { ...JSON.parse(command.payload), id: command.id, expiresAt: command.expiresAt, bindingId: command.bindingId } : null,
         dailySummary: matches && device.userId && device.bindingId ? dailySummary(device.userId, currentTime) : null };
     });
   });
@@ -453,6 +500,7 @@ export function createApp(options: AppOptions) {
         online: age >= 0 && age <= deviceOnlineMs, weightGrams: status?.weightGrams ?? null,
         stable: status?.stable ?? false, cupPresent: status?.cupPresent ?? false, source: 'hx711',
         calibrated: status?.calibrated ?? false, emptyCupGrams: status?.emptyCupGrams ?? null,
+        ...(status?.cups !== undefined ? { cups: status.cups, activeCupId: status.activeCupId, cupSetup: status.cupSetup } : {}),
         pendingCount: status?.pendingCount ?? 0, timePendingCount: status?.timePendingCount ?? 0,
         clockSynced: status?.clockSynced ?? false, error: status?.error ?? null,
         firmwareVersion: status?.firmwareVersion ?? null,

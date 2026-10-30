@@ -50,6 +50,17 @@ test('cached online device cannot look connected after losing cloud access', () 
   assert.equal(deviceStatus(value), '云端连接中断');
 });
 
+test('first cup setup displays paused recognition before an empty weight is saved', () => {
+  const value = {
+    session: { user: { id: 'user', username: 'user', role: 'user' } },
+    connection: 'online', dashboard: { device: {
+      online: true, calibrated: true, error: null, emptyCupGrams: null,
+      cupSetup: { id: 'prepare', cupId: 1, name: '水杯', expiresAt: 1800000300000 },
+    } },
+  } as Snapshot;
+  assert.equal(deviceStatus(value), '正在设置杯子，记录已暂停');
+});
+
 test('character switches resolve bundled assets in every state and preserve capybara animation', () => {
   const states: CompanionState[] = ['idle', 'working', 'sleeping', 'drinking', 'reminding'];
   for (const character of characters) {

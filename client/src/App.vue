@@ -6,6 +6,7 @@ import { amount, clockTime, dayLabel, deviceStatus, framePath, frameStyle, recen
 import type { Page, Settings, Snapshot } from './types';
 import HistoryView from './HistoryView.vue';
 import CharacterPicker from './CharacterPicker.vue';
+import { currentCup } from '../../shared/cups';
 
 const snapshot = ref<Snapshot>({
   revision: 0,
@@ -244,6 +245,7 @@ onBeforeUnmount(() => {
           <div><dt>饮水次数</dt><dd>{{ dashboard ? dashboard.totals.drinkCount : '—' }}<span v-if="dashboard"> 次</span></dd></div>
           <div><dt>最近一次</dt><dd>{{ lastDrink ? `${clockTime(lastDrink.occurredAt, zone)} · ${amount(lastDrink.amountMl)} ml` : dashboard ? '当天暂无记录' : '正在同步' }}</dd></div>
           <div><dt>杯垫状态</dt><dd class="device-status"><span class="status-dot" :class="{ online }" aria-hidden="true"></span>{{ status }}</dd></div>
+          <div><dt>当前杯子</dt><dd>{{ currentCup(dashboard?.device) }}{{ dashboard?.device && (!online || stale) ? '（上次同步）' : '' }}</dd></div>
         </dl>
         <div class="sync-row">
           <span>{{ snapshot.lastSyncedAt ? `同步于 ${clockTime(snapshot.lastSyncedAt, zone)}` : '等待首次同步' }}</span>

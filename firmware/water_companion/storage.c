@@ -448,6 +448,22 @@ esp_err_t storage_save_command(const cloud_command_t *state)
     return save_setting("command", state, sizeof(*state));
 }
 
+esp_err_t storage_load_cups(cup_config_t *cups)
+{
+    size_t size = sizeof(*cups);
+    memset(cups, 0, sizeof(*cups));
+    esp_err_t result = nvs_get_blob(settings, "cups", cups, &size);
+    if (result != ESP_OK) return result;
+    return size == sizeof(*cups) && cups_valid(cups)
+        && (!cups->binding_id[0] || provision_uuid(cups->binding_id)) ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
+}
+
+esp_err_t storage_save_cups(const cup_config_t *cups)
+{
+    if (!cups_valid(cups)) return ESP_ERR_INVALID_ARG;
+    return save_setting("cups", cups, sizeof(*cups));
+}
+
 esp_err_t storage_stage_wifi(const char *ssid, const char *password)
 {
     char candidate[98] = {0};

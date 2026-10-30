@@ -11,11 +11,15 @@ characters = set(range(32, 127)) | {
     ord(character) for literal in literals for character in literal if ord(character) > 127
 }
 glyphs = {}
+cup_codes = set(range(0x4e00, 0xa000))
+cup_glyphs = {}
 with gzip.open(sys.argv[1], "rt") as source:
     for line in source:
         code, bitmap = line.strip().split(":")
         if int(code, 16) in characters:
             glyphs[int(code, 16)] = bytes.fromhex(bitmap)
+        if int(code, 16) in cup_codes:
+            cup_glyphs[int(code, 16)] = bytes.fromhex(bitmap)
 assert characters == glyphs.keys(), "字体缺少屏幕使用的字符"
 output = [
     "// GNU Unifont 17.0.04 字形子集；SIL OFL 1.1，见 display-font-license.txt。",
@@ -34,3 +38,17 @@ for code, bitmap in sorted(glyphs.items()):
 output.append("};")
 (display.parent / "display_font.h").write_text("\n".join(output) + "\n")
 print(f"Generated {len(glyphs)} glyphs.")
+assert cup_codes == cup_glyphs.keys(), "字体缺少杯名使用的汉字"
+cup_output = [
+    "// GNU Unifont 17.0.04；SIL OFL 1.1，见 display-font-license.txt。",
+    "// 由 scripts/generate-display-font.py 生成，U+4E00–U+9FFF 直接索引，16 像素单色字模。",
+    "#pragma once", "#include <stdint.h>",
+    "static const uint8_t CUP_BITMAP[][32] = {",
+]
+for code in sorted(cup_codes):
+    bitmap = cup_glyphs[code]
+    assert len(bitmap) == 32
+    cup_output.append("    {" + ",".join(f"0x{value:02x}" for value in bitmap) + "},")
+cup_output.append("};")
+(display.parent / "display_cup_font.h").write_text("\n".join(cup_output) + "\n")
+print(f"Generated {len(cup_codes)} cup glyphs ({len(cup_codes) * 32} bytes).")

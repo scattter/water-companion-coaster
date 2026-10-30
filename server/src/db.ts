@@ -113,6 +113,7 @@ const migrations: ((db: DatabaseSync) => void)[] = [
     CREATE INDEX enrollment_device ON enrollment_operations(hardware_id, status);
     CREATE INDEX enrollment_user ON enrollment_operations(user_id, created_at);
   `),
+  (db) => db.exec(`ALTER TABLE device_commands ADD COLUMN payload TEXT NOT NULL DEFAULT '{"cmd":"cup"}';`),
 ];
 
 export function openDatabase(path?: string) {

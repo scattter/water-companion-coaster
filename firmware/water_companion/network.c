@@ -286,17 +286,15 @@ static void request_binding(void)
     cJSON_Delete(body);
 }
 
+static const cJSON *received_cup_command;
+
 static void execute_cup(bool *ok, char *message, unsigned capacity)
 {
-    cJSON *command = cJSON_CreateObject();
-    if (!command) { *ok = false; snprintf(message, capacity, "设备内存不足，请重试"); return; }
-    cJSON_AddStringToObject(command, "cmd", "cup");
-    cJSON *reply = device_command(command);
+    cJSON *reply = device_command(received_cup_command);
     *ok = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reply, "ok"));
     const cJSON *text = cJSON_GetObjectItemCaseSensitive(reply, *ok ? "message" : "error");
     snprintf(message, capacity, "%s", cJSON_IsString(text) ? text->valuestring : "设备操作失败，请重试");
     cJSON_Delete(reply);
-    cJSON_Delete(command);
 }
 
 static void receive_command(const cJSON *reply)
@@ -312,8 +310,10 @@ static void receive_command(const cJSON *reply)
     binding_state_t binding;
     device_config_snapshot(NULL, &binding);
     if (!cJSON_IsString(owner) || !provision_uuid(owner->valuestring) || provisioning_busy()) return;
+    received_cup_command = command;
     cloud_command_receive_bound(&cloud_command, owner->valuestring, binding.binding_id, id->valuestring, name->valuestring,
         (int64_t)expires->valuedouble, network_epoch_ms(), storage_save_command, execute_cup);
+    received_cup_command = NULL;
 }
 
 static bool heartbeat(void)
@@ -337,6 +337,7 @@ static bool heartbeat(void)
     cJSON_AddBoolToObject(body, "calibrated", status.calibrated);
     if (status.empty_cup >= 5) cJSON_AddNumberToObject(body, "emptyCupGrams", status.empty_cup);
     else cJSON_AddNullToObject(body, "emptyCupGrams");
+    device_cups_json(body, &status);
     cJSON_AddNumberToObject(body, "pendingCount", pending + (status.unsaved_event ? 1 : 0));
     cJSON_AddNumberToObject(body, "timePendingCount", time_pending);
     cJSON_AddBoolToObject(body, "clockSynced", network_has_time());

@@ -1,3 +1,5 @@
+import type { Cup, CupSetup } from './cups';
+
 export type EventKind = 'drink' | 'refill';
 
 export interface DrinkEvent {
@@ -27,6 +29,9 @@ export interface Dashboard {
     source: 'hx711';
     calibrated: boolean;
     emptyCupGrams: number | null;
+    cups?: Cup[];
+    activeCupId?: number | null;
+    cupSetup?: CupSetup | null;
     pendingCount: number;
     timePendingCount: number;
     clockSynced: boolean;

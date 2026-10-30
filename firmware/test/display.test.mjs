@@ -65,6 +65,8 @@ test('真实 SPI 像素绘制：日常页布局、异常状态、长数字、模
 #include <vector>
 #include "display_font.h"
 #include "display_daily_font.h"
+#include "display_cup_font.h"
+#include "cups.c"
 using esp_err_t = int;
 enum { ESP_OK, ESP_FAIL, LOW, HIGH, OUTPUT, MSBFIRST, SPI_MODE0,
     WIFI_REASON_NO_AP_FOUND, WIFI_REASON_AUTH_FAIL, WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT, WIFI_REASON_HANDSHAKE_TIMEOUT };
@@ -132,6 +134,8 @@ int main(int argc, char **argv) {
     assert(backlight == LOW);
     input.sensor_ready = input.calibrated = input.stable = input.cup_present = true;
     input.weight = 380; input.empty_cup = 120;
+    cups_init(&input.cups, "11111111-1111-4111-8111-111111111111", 120);
+    strcpy(input.cups.items[0].name, "保温杯A1");
     net.wifi_connected = net.server_connected = true;
     strcpy(binding.binding_id, "11111111-1111-4111-8111-111111111111");
     summary.received = summary.valid = summary.synced = true;
@@ -140,10 +144,13 @@ int main(int argc, char **argv) {
     summary.last_drink_at_ms = summary.server_time_ms - 25 * 60000;
     summary.last_drink_ml = 120;
     display_wake(); display_update(ESP_OK);
+    assert(backlight == LOW); uptime += 119; display_update(ESP_OK); assert(backlight == LOW);
+    ++uptime; display_update(ESP_OK);
     assert(current_page == 1 && backlight == HIGH);
     daily_view_t view = daily_view(input, net, summary, 0, 0);
     assert(!strcmp(view.total, "1280") && !strcmp(view.water, "260") && !strcmp(view.age, "25分钟前"));
     assert(!strcmp(view.connection, "已同步") && !strcmp(view.notice, "杯垫工作正常"));
+    assert(!strcmp(view.cup, "1: 保温杯A1"));
     for (const daily_font_t &font : DAILY_TEXT_FONTS) for (unsigned i = 0; i < font.count; ++i) {
         const auto &glyph = font.glyphs[i];
         assert(glyph.offset + (glyph.width * glyph.height + 1) / 2 <= sizeof(DAILY_BITMAP));
@@ -230,6 +237,7 @@ int main(int argc, char **argv) {
     display_update(ESP_OK); assert(writes == painted);
     for (auto &pixel : frame) pixel = 0xffff;
     display_wake(); display_update(ESP_FAIL);
+    assert(backlight == LOW); uptime += 120; display_update(ESP_FAIL);
     assert(backlight == HIGH && writes > painted && frame == before_sleep);
     painted = writes; display_update(ESP_FAIL); assert(writes == painted);
 }

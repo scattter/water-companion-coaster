@@ -8,6 +8,7 @@
 #include "display.h"
 #include "display_font.h"
 #include "display_daily_font.h"
+#include "display_cup_font.h"
 #include "network.h"
 #include "storage.h"
 #include "ble_provision.h"
@@ -21,6 +22,7 @@ static SPISettings lcd_spi(40000000, MSBFIRST, SPI_MODE0);
 static bool ready;
 static bool sleeping;
 static int64_t wake_until_ms;
+static int64_t panel_wake_ms = -1;
 static uint8_t pixels[LCD_WIDTH * ROW_HEIGHT * 2];
 static struct {
     char text[96];
@@ -116,8 +118,9 @@ static void select_page(int page)
 
 struct daily_view_t {
     char connection[32], total[24], water[48], count[16], last[24], age[48], notice[96];
+    char cup[32];
     uint16_t connection_color, notice_color;
-    bool total_ready, water_ready, last_ready;
+    bool total_ready, water_ready, last_ready, plain_notice;
 };
 static daily_view_t previous_daily;
 static bool daily_drawn;
@@ -187,6 +190,27 @@ static void centered(int x, int width, int baseline, const char *text, int size,
     paint_text(x + (width - text_width(text, size)) / 2, baseline, text, size, color);
 }
 
+static void paint_cup_text(int y, const char *text, uint16_t color)
+{
+    const char *p = text;
+    int width = 0;
+    while (*p) width += next_character(&p) >= 0x4e00 ? 16 : 8;
+    int x = (LCD_WIDTH - width) / 2;
+    while (*text) {
+        uint16_t code = next_character(&text);
+        bool han = code >= 0x4e00 && code <= 0x9fff;
+        const display_glyph_t *glyph = han ? nullptr : find_glyph(code);
+        int advance = han ? 16 : glyph->width;
+        for (int row = 0; row < 16; ++row) {
+            uint16_t bits = han ? (CUP_BITMAP[code - 0x4e00][row * 2] << 8)
+                | CUP_BITMAP[code - 0x4e00][row * 2 + 1] : glyph->rows[row];
+            for (int column = 0; column < advance; ++column)
+                if (bits & (0x8000 >> column)) pixel(x + column, y + row, color);
+        }
+        x += advance;
+    }
+}
+
 static int quantity_height(const char *value, const char *prefix, const char *unit, int width, int maximum)
 {
     int fixed = text_width(prefix, 13) + text_width(unit, 13) + (prefix[0] ? 2 : 0) + (unit[0] ? 3 : 0);
@@ -211,6 +235,9 @@ static daily_view_t daily_view(const device_status_t &device, const network_stat
     const daily_summary_t &summary, unsigned pending, unsigned time_pending)
 {
     daily_view_t view = {};
+    const cup_t *cup = cups_get(&device.cups, device.cups.active_id);
+    if (cup) snprintf(view.cup, sizeof(view.cup), "%u: %s", device.cups.active_id, cup->name);
+    else strcpy(view.cup, "未设置杯子");
     bool synced = summary.valid && summary.synced && network.wifi_connected && network.server_connected
         && !pending && !time_pending && !device.unsaved_event;
     snprintf(view.connection, sizeof(view.connection), "%s", !network.wifi_connected ? "离线" : synced ? "已同步" : "同步中");
@@ -231,6 +258,7 @@ static daily_view_t daily_view(const device_status_t &device, const network_stat
         problem = "重量异常，请检查"; problem_color = RED;
     }
     if (problem) strcpy(view.water, "--");
+    else if (device.cup_setup.id[0]) strcpy(view.water, "待稳定");
     else if (device.empty_cup < 5) { strcpy(view.water, "未设置"); problem = "请在手机上设置空杯"; }
     else if (!device.cup_present) strcpy(view.water, "已取走");
     else if (!device.stable) strcpy(view.water, "待稳定");
@@ -250,6 +278,11 @@ static daily_view_t daily_view(const device_status_t &device, const network_stat
 
     view.notice_color = problem ? problem_color : synced ? GREEN : AMBER;
     if (problem) snprintf(view.notice, sizeof(view.notice), "%s", problem);
+    else if (device.cup_setup.id[0]) { strcpy(view.notice, "正在设置杯子"); view.plain_notice = true; }
+    else if (device.cup_notice[0]) {
+        strcpy(view.notice, device.cup_notice);
+        view.plain_notice = true;
+    }
     else if (time_pending) snprintf(view.notice, sizeof(view.notice), "%u条记录待校时", time_pending);
     else if (pending) snprintf(view.notice, sizeof(view.notice), "%u条记录待同步", pending);
     else if (summary.received && !summary.valid) strcpy(view.notice, "统计暂不可用");
@@ -274,6 +307,7 @@ static void paint_daily(const daily_view_t &view)
     }
     centered(8, 156, 58, "今日饮水", 18, WHITE);
     quantity(8, 156, 133, view.total, "", "ml", 64, view.total_ready ? BLUE : GRAY);
+    paint_cup_text(142, view.cup, GRAY);
     const int separators[] = {160, 234};
     for (int y : separators) for (int x = 8; x < LCD_WIDTH - 8; ++x) pixel(x, y, DIVIDER);
     for (int y = 176; y < 220; ++y) pixel(86, y, DIVIDER);
@@ -288,7 +322,8 @@ static void paint_daily(const daily_view_t &view)
         quantity(8, 148 - age_width, 279, view.last, "", "ml", 24, WHITE, false);
         paint_text(164 - age_width, 279, view.age, 12, GRAY);
     } else paint_text(8, 279, view.last, 13, GRAY);
-    centered(8, 156, 305, view.notice, 13, view.notice_color);
+    if (view.plain_notice) paint_cup_text(291, view.notice, AMBER);
+    else centered(8, 156, 305, view.notice, 13, view.notice_color);
 }
 
 static void show_daily(const daily_view_t &view)
@@ -314,6 +349,7 @@ static void sleep_panel(void)
     // ST7789 进入休眠后至少等待 5 ms 才能接收下一条命令。
     delay(5);
     sleeping = true;
+    panel_wake_ms = -1;
 }
 
 bool display_start(void)
@@ -497,14 +533,18 @@ void display_update(esp_err_t startup_result)
 {
     if (!ready) return;
     if (!display_awake()) {
-        if (!sleeping) sleep_panel();
+        if (!sleeping || panel_wake_ms >= 0) sleep_panel();
         return;
     }
     bool waking = sleeping;
     if (waking) {
-        write_command(0x11);
-        // 只挂起显示所在任务；称重和联网任务继续运行。
-        delay(120);
+        if (panel_wake_ms < 0) {
+            write_command(0x11);
+            panel_wake_ms = esp_timer_get_time() / 1000;
+            return;
+        }
+        // LCD 唤醒需要 120 ms；期间继续采集按键，避免漏掉双击中的松手。
+        if (esp_timer_get_time() / 1000 - panel_wake_ms < 120) return;
         current_page = -1;
         daily_drawn = false;
     }
@@ -513,5 +553,6 @@ void display_update(esp_err_t startup_result)
         write_command(0x29);
         digitalWrite(LCD_BL_PIN, HIGH);
         sleeping = false;
+        panel_wake_ms = -1;
     }
 }

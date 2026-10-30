@@ -3,6 +3,61 @@ import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { fixture, heartbeat } from './cloud-fixture.js';
 
+const cups = [{ id: 1, name: '默认杯', emptyCupGrams: 120 }, { id: 2, name: '保温杯A1', emptyCupGrams: 180 }];
+const multiHeartbeat = { ...heartbeat, cups, activeCupId: 1, cupSetup: null, emptyCupGrams: 120 };
+
+test('多杯命令完整保存参数，规范化重试，同编号更换操作拒绝，确认后状态同步', async t => {
+  const f = await fixture(t); const cookie = await f.register(); await f.bind(cookie);
+  await f.report('coaster-01', multiHeartbeat);
+  const id = randomUUID();
+  const body = { id, action: 'rename', cupId: 2, name: ' 办公杯 ' };
+  const first = await f.web(cookie, '/api/control/cup', body);
+  assert.equal(first.statusCode, 200);
+  assert.deepEqual((await f.web(cookie, '/api/control/cup', { ...body, name: '办公杯' })).json(), first.json());
+  assert.equal((await f.web(cookie, '/api/control/cup', { ...body, cupId: 1 })).statusCode, 409);
+  const command = (await f.report('coaster-01', multiHeartbeat)).json().command;
+  assert.equal(command.action, 'rename'); assert.equal(command.cupId, 2); assert.equal(command.name, '办公杯');
+  const updated = cups.map(cup => cup.id === 2 ? { ...cup, name: '办公杯' } : cup);
+  await f.report('coaster-01', { ...multiHeartbeat, cups: updated, commandResult: { id, ok: true, message: '杯名已保存' } });
+  assert.equal((await f.web(cookie, `/api/control/commands/${id}`)).json().command.status, 'succeeded');
+  const device = (await f.web(cookie, '/api/dashboard')).json().device;
+  assert.deepEqual(device.cups, updated); assert.equal(device.activeCupId, 1); assert.equal(device.emptyCupGrams, 120);
+});
+
+test('多杯设置保留准备编号，旧固件不会执行新动作', async t => {
+  const f = await fixture(t); const cookie = await f.register(); await f.bind(cookie);
+  const id = randomUUID();
+  assert.equal((await f.web(cookie, '/api/control/cup', { id, action: 'prepare', cupId: 2, name: '水杯' })).statusCode, 409);
+  await f.report('coaster-01', multiHeartbeat);
+  assert.equal((await f.web(cookie, '/api/control/cup', { id, action: 'prepare', cupId: 2, name: '保温杯A1' })).statusCode, 200);
+  assert.equal((await f.report()).json().command, null);
+  const preparation = (await f.report('coaster-01', multiHeartbeat)).json().command;
+  assert.equal(preparation.action, 'prepare'); assert.equal(preparation.id, id);
+  const cupSetup = { id, cupId: 2, name: '保温杯A1', expiresAt: preparation.expiresAt + 180000 };
+  await f.report('coaster-01', { ...multiHeartbeat, cupSetup, commandResult: { id, ok: true, message: '已暂停记录' } });
+  assert.deepEqual((await f.web(cookie, '/api/dashboard')).json().device.cupSetup, cupSetup);
+  const saveId = randomUUID();
+  assert.equal((await f.web(cookie, '/api/control/cup', { id: saveId, action: 'save', setupId: id })).statusCode, 200);
+  assert.equal((await f.report('coaster-01', { ...multiHeartbeat, cupSetup })).json().command.setupId, id);
+});
+
+test('多杯名称、数量、当前杯一致性及操作参数均校验', async t => {
+  const f = await fixture(t); const cookie = await f.register(); await f.bind(cookie);
+  await f.report('coaster-01', multiHeartbeat);
+  for (const name of ['', '123456', '杯 子', '杯!', '😀', 'カップ']) {
+    assert.equal((await f.web(cookie, '/api/control/cup', { id: randomUUID(), action: 'rename', cupId: 1, name })).statusCode, 400);
+  }
+  for (const input of [{ action: 'save' }, { action: 'select', cupId: 4 }, { action: 'delete', cupId: 1, name: '杯子' }, { name: '杯子' }])
+    assert.equal((await f.web(cookie, '/api/control/cup', { id: randomUUID(), ...input })).statusCode, 400);
+  for (const state of [{ activeCupId: 3 }, { emptyCupGrams: 180 }, { cups: [...cups, cups[0]] },
+    { cups: [...cups, { id: 3, name: '三', emptyCupGrams: 80 }, { id: 4, name: '四', emptyCupGrams: 90 }] }]) {
+    assert.equal((await f.report('coaster-01', { ...multiHeartbeat, ...state })).statusCode, 400);
+  }
+  const empty = { ...multiHeartbeat, cups: [], activeCupId: null, emptyCupGrams: null };
+  assert.equal((await f.report('coaster-01', empty)).statusCode, 200);
+  assert.deepEqual((await f.web(cookie, '/api/dashboard')).json().device.cups, []);
+});
+
 test('空杯命令由设备心跳领取，设备确认前始终pending，同ID重试只返回原命令', async (t) => {
   const f = await fixture(t);
   const cookie = await f.register(); await f.bind(cookie);

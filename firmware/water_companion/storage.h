@@ -5,6 +5,7 @@
 #include "weighing.h"
 #include "cloud_command.h"
 #include "provision_protocol.h"
+#include "cups.h"
 
 #define EVENT_CAPACITY 4096
 #define CONFIG_VERSION 1
@@ -84,6 +85,8 @@ esp_err_t storage_load_wifi(char ssid[33], char password[65]);
 esp_err_t storage_clear_wifi(void);
 esp_err_t storage_ap_password(char password[13]);
 esp_err_t storage_save_config(const device_config_t *config);
+esp_err_t storage_load_cups(cup_config_t *cups);
+esp_err_t storage_save_cups(const cup_config_t *cups);
 esp_err_t storage_resolve_time(int64_t epoch_offset_ms);
 esp_err_t storage_append(const saved_event_t *event);
 esp_err_t storage_next(saved_event_t *event, uint32_t *sequence, int64_t epoch_offset_ms);

@@ -13,7 +13,7 @@ static bool receive(cloud_command_t *state, const char *binding, const char *id,
     cloud_command_t next = { .version = 2, .pending = true, .ok = false };
     strcpy(next.binding_id, binding);
     strcpy(next.id, id);
-    strcpy(next.message, "操作中断，空杯设置可能已保存；请检查后重试");
+    strcpy(next.message, "操作中断，杯子设置可能已保存；请检查后重试");
     // 先持久记录命令身份，断电后不以新的杯子重量重复执行旧命令。
     if (save(&next) != 0) return false;
     *state = next;
