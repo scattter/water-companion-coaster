@@ -48,6 +48,9 @@ const status = computed(() => deviceStatus(snapshot.value));
 const online = computed(() => snapshot.value.connection === 'online' && Boolean(dashboard.value?.device?.online));
 const zone = computed(() => dashboard.value?.timeZone ?? 'Asia/Shanghai');
 const shownError = computed(() => actionError.value || snapshot.value.error);
+const DRINK_GOAL_ML = 2000;
+const todayMl = computed(() => dashboard.value?.totals.drinkMl ?? 0);
+const goalPercent = computed(() => Math.min(100, Math.round(todayMl.value / DRINK_GOAL_ML * 100)));
 
 function applySnapshot(value: Snapshot) {
   if (disposed || newerSnapshot(snapshot.value, value) !== value) return;
@@ -225,20 +228,23 @@ onBeforeUnmount(() => {
       <HistoryView v-else-if="page === 'history'" :identity="`${snapshot.server}:${snapshot.session.user?.id}`" :time-zone="zone" />
 
       <section v-else class="dashboard-view">
-        <div class="dashboard-summary">
-          <div class="companion-summary">
-            <div class="hero-scene"><img :src="sprite" :style="frameStyle(snapshot.settings.character)" alt="像素伙伴的陪伴小场景" draggable="false" /></div>
-            <p class="state-label">{{ stateLabel }}</p>
+        <div class="companion-card">
+          <div class="hero-scene"><img :src="sprite" :style="frameStyle(snapshot.settings.character)" alt="像素伙伴的陪伴小场景" draggable="false" /></div>
+          <p class="state-label">{{ stateLabel }}</p>
+          <div class="goal-row">
+            <small><span>今日目标</span><span>{{ amount(todayMl) }} / {{ amount(DRINK_GOAL_ML) }} ml</span></small>
+            <div class="goal-track" role="progressbar" aria-label="今日饮水目标进度" :aria-valuenow="goalPercent" aria-valuemin="0" aria-valuemax="100"><i :style="{ width: `${goalPercent}%` }"></i></div>
           </div>
-          <div class="intake-summary">
-            <p class="eyebrow">{{ title }}</p>
-            <div class="amount-window" aria-live="polite" aria-atomic="true">
-              <Transition name="amount">
-                <p :key="intake" class="hero-amount">{{ intake }}<span>ml</span></p>
-              </Transition>
-            </div>
-            <p v-if="stale" class="stale-note">当前显示上次同步的数据</p>
+        </div>
+
+        <div class="intake-card">
+          <p class="eyebrow">{{ title }}</p>
+          <div class="amount-window" aria-live="polite" aria-atomic="true">
+            <Transition name="amount">
+              <p :key="intake" class="hero-amount">{{ intake }}<span>ml</span></p>
+            </Transition>
           </div>
+          <p v-if="stale" class="stale-note">当前显示上次同步的数据</p>
         </div>
 
         <dl class="drink-details">

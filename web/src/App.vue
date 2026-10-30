@@ -45,6 +45,29 @@ const accountButton = ref<HTMLButtonElement | null>(null);
 const settingsButton = ref<HTMLButtonElement | null>(null);
 const displayDate = computed(() => dashboard.value?.date ?? selectedDate.value);
 const dateLoading = computed(() => Boolean(selectedDate.value) && displayDate.value !== selectedDate.value && !dashboardError.value);
+const DRINK_GOAL_ML = 2000;
+const companionState = computed<'working' | 'drinking' | 'reminding' | 'sleeping' | 'idle'>(() => {
+  if (!dashboard.value?.device?.online) return 'sleeping';
+  const latest = dashboard.value.events.find(event => event.kind === 'drink' && !event.revokedAt);
+  if (latest && Date.now() - Date.parse(latest.occurredAt) < 20 * 60 * 1000) return 'drinking';
+  return 'working';
+});
+// 与客户端保持一致：默认伙伴形象为小机器人（静态形象），仅水豚有状态帧动画
+const companionSprite = '/companion/characters/robot.png';
+const companionText = computed(() => ({
+  working: '正在陪你工作', drinking: '刚陪你喝了一杯', reminding: '提醒你喝口水', sleeping: '打个盹，等你回来', idle: '在这里陪着你',
+}[companionState.value]));
+const companionName = computed(() => session.value.user?.username ?? '');
+const greeting = computed(() => {
+  const hour = Number(new Intl.DateTimeFormat('zh-CN', { timeZone: timeZone.value, hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
+  if (hour < 6) return '夜深了';
+  if (hour < 12) return '早上好';
+  if (hour < 18) return '下午好';
+  return '晚上好';
+});
+const drinkMl = computed(() => dashboard.value?.totals.drinkMl ?? 0);
+const goalPercent = computed(() => Math.min(100, Math.round(drinkMl.value / DRINK_GOAL_ML * 100)));
+const goalCupsLeft = computed(() => Math.max(0, Math.ceil((DRINK_GOAL_ML - drinkMl.value) / 250)));
 const menuBusy = computed(() => authBusy.value || bindingBusy.value || unbindBusy.value || provisioningBusy.value || Boolean(revokePending.value));
 let timer: ReturnType<typeof setInterval> | undefined;
 let pollingVersion: number | null = null;
@@ -308,6 +331,12 @@ function selectDate(event: Event) {
   else input.value = selectedDate.value;
 }
 
+// 点击整颗日期胶囊都能唤起原生选择器（部分浏览器需要手动触发）
+function pickDate(event: Event) {
+  const input = event.currentTarget as HTMLInputElement;
+  try { input.showPicker?.(); } catch { /* 非用户手势等场景由浏览器默认行为兜底 */ }
+}
+
 function changeDate(date: string) {
   if (!selectableDate(date, today.value)) return;
   if (selectedDate.value === date) return;
@@ -461,7 +490,7 @@ onBeforeUnmount(() => {
     <header class="topbar">
       <a class="brand" :href="mobile ? undefined : '/'" aria-label="水伴首页">
         <span class="brand-mark" aria-hidden="true"><span></span></span>
-        <span>{{ mobile ? '饮水陪伴' : '水伴' }}<span v-if="!mobile" class="brand-subtitle">让每一口，都有迹可循</span></span>
+        <span>{{ mobile ? '饮水陪伴' : '水伴' }}<span v-if="!mobile" class="brand-subtitle">有水喝，有小伙伴</span></span>
       </a>
       <div v-if="mobile" ref="menuRoot" class="topbar-right mobile-navigation">
         <div v-if="session.user" class="menu-anchor">
@@ -543,9 +572,10 @@ onBeforeUnmount(() => {
     </main>
 
     <main v-else>
-      <section v-if="!mobile" class="page-heading" aria-labelledby="page-title">
-        <div><p class="eyebrow">你的饮水日常</p><h1 id="page-title">喝水这件小事，<span>慢慢养成。</span></h1><p class="page-description">通过杯垫重量变化，记录每一次饮水。</p></div>
-        <div class="date-control"><label for="statistics-date">查看日期</label><input id="statistics-date" :value="selectedDate" aria-label="查看统计日期" type="date" :max="today" :disabled="!today" @change="selectDate" /><button v-if="!isToday && today" class="text-button" @click="changeDate(today)">回到今天</button></div>
+      <section class="hello-heading" aria-labelledby="page-title">
+        <h1 id="page-title">{{ greeting }}<template v-if="companionName">，{{ companionName }}</template></h1>
+        <p class="hello-sub">{{ companionText }}<template v-if="dashboard"> · 今天已喝 {{ number(drinkMl) }} ml</template></p>
+        <div class="date-control"><label for="statistics-date">查看日期</label><input id="statistics-date" :value="selectedDate" aria-label="查看统计日期" type="date" :max="today" :disabled="!today" @change="selectDate" @click="pickDate" @keydown.enter.prevent="pickDate" /><button v-if="!isToday && today" class="text-button" @click="changeDate(today)">回到今天</button></div>
       </section>
 
       <section v-if="!session.deviceId" class="calibration-prompt" aria-labelledby="unbound-title">
@@ -565,27 +595,54 @@ onBeforeUnmount(() => {
       <div v-if="!mobile && actionError" class="notice error" role="alert">{{ actionError }}</div>
       <div v-if="!mobile && feedback" class="notice success" role="status">{{ feedback }}</div>
 
-      <div class="dashboard-grid">
-        <div class="main-column">
-          <section class="summary-grid" aria-label="饮水统计" :aria-busy="dateLoading">
-            <article class="total-card">
-              <div class="card-topline"><h2>{{ displayDate === today ? '今日' : shortDate(displayDate) }}饮水量</h2><button v-if="mobile" class="estimate-tag" aria-label="查看饮水量估算说明" @click="showEstimate">估算</button><span v-else class="estimate-tag">估算</span></div>
-              <div class="total-number"><strong :key="dashboard?.date" class="history-value" data-testid="drink-total">{{ number(dashboard?.totals.drinkMl) }}</strong><span>ml</span></div>
-              <p>{{ dateLoading ? `正在读取 ${selectedDate} 的记录…` : mobile && displayDate !== today ? `${displayDate} · 历史记录` : '一口一口，积累你的日常。' }}</p>
-              <slot v-if="mobile" name="companion" :dashboard="isToday && displayDate === today ? dashboard : null" :session="session" :online="!dashboardError" />
-              <svg v-if="!mobile || displayDate !== today" class="water-art" viewBox="0 0 140 135" fill="none" aria-hidden="true"><path d="M32 10h77l-8 110a7 7 0 0 1-7 6H47a7 7 0 0 1-7-6L32 10Z" stroke="currentColor" stroke-width="2"/><path d="M37 63c15-12 26 11 41 0 11-8 17-5 27-1l-4 58a7 7 0 0 1-7 6H47a7 7 0 0 1-7-6l-3-57Z" fill="currentColor" opacity=".28"/><path d="M37 63c15-12 26 11 41 0 11-8 17-5 27-1" stroke="currentColor" stroke-width="2"/><circle cx="75" cy="88" r="4" fill="currentColor" opacity=".7"/><circle cx="62" cy="105" r="2" fill="currentColor" opacity=".5"/></svg>
-            </article>
-            <article class="metric-card"><span class="metric-icon drink-icon" aria-hidden="true">↘</span><h2>饮水次数</h2><div class="metric-number"><strong :key="dashboard?.date" class="history-value" data-testid="drink-count">{{ number(dashboard?.totals.drinkCount) }}</strong><span>次</span></div><p>有效取放记录</p></article>
-            <article class="metric-card"><span class="metric-icon refill-icon" aria-hidden="true">↗</span><h2>补水量</h2><div class="metric-number"><strong :key="dashboard?.date" class="history-value" data-testid="refill-total">{{ number(dashboard?.totals.refillMl) }}</strong><span>ml</span></div><p>单独统计，不计入饮水</p></article>
+      <div class="dashboard-grid" :aria-busy="dateLoading">
+        <div class="grid-row grid-row-top">
+          <section class="panel companion-card" aria-labelledby="companion-title">
+            <img class="companion-sprite" :src="companionSprite" :alt="companionText" draggable="false" />
+            <div class="companion-body">
+              <h2 id="companion-title">{{ companionText }}</h2>
+              <p class="companion-status"><span class="status-dot" :class="{ online }" aria-hidden="true"></span>{{ online ? '杯垫在线' : '杯垫离线' }}<template v-if="dashboard?.device && currentCup(dashboard.device) !== '—'"> · {{ currentCup(dashboard.device) }}</template></p>
+              <div class="companion-goal">
+                <small><span>今日目标</span><span>{{ number(drinkMl) }} / {{ number(DRINK_GOAL_ML) }} ml</span></small>
+                <div class="goal-track" role="progressbar" aria-label="今日饮水目标进度" :aria-valuenow="goalPercent" aria-valuemin="0" aria-valuemax="100"><i :style="{ width: `${goalPercent}%` }"></i></div>
+              </div>
+            </div>
+            <slot v-if="mobile" name="companion" :dashboard="isToday && displayDate === today ? dashboard : null" :session="session" :online="!dashboardError" />
           </section>
 
+          <section class="panel intake-card" aria-labelledby="intake-title">
+            <div class="card-heading"><h2 id="intake-title">{{ displayDate === today ? '今日' : shortDate(displayDate) }}饮水</h2><button v-if="mobile" class="estimate-tag" aria-label="查看饮水量估算说明" @click="showEstimate">估算</button><span v-else class="estimate-tag">估算</span></div>
+            <div class="intake-number"><strong :key="dashboard?.date" class="history-value" data-testid="drink-total">{{ number(dashboard?.totals.drinkMl) }}</strong><i>ml</i></div>
+            <p class="intake-goal">{{ dateLoading ? `正在读取 ${selectedDate} 的记录…` : displayDate !== today ? `${displayDate} · 历史记录` : `完成目标 ${goalPercent}%，再喝 ${goalCupsLeft} 杯达标` }}</p>
+            <div class="intake-sub">
+              <div><small>饮水次数</small><b :key="dashboard?.date" class="history-value" data-testid="drink-count">{{ number(dashboard?.totals.drinkCount) }} 次</b></div>
+              <div><small>补水量</small><b :key="dashboard?.date" class="history-value" data-testid="refill-total">{{ number(dashboard?.totals.refillMl) }} ml</b></div>
+            </div>
+          </section>
+
+          <section class="panel device-panel" aria-labelledby="device-title">
+            <div class="card-heading"><h2 id="device-title">杯垫</h2><span class="connection-badge" :class="{ online }"><i></i>{{ online ? '在线' : '离线' }}</span></div>
+            <dl class="device-details">
+              <div><dt>当前重量</dt><dd><strong data-testid="device-weight">{{ number(online ? dashboard?.device?.weightGrams : null) }}</strong> g</dd></div>
+              <div><dt>当前杯子</dt><dd>{{ currentCup(dashboard?.device) }}{{ !online && dashboard?.device?.lastSeenAt ? '（上次同步）' : '' }}</dd></div>
+              <div><dt>最后同步</dt><dd>{{ time(dashboard?.device?.lastSeenAt, true) }}</dd></div>
+              <div><dt>固件版本</dt><dd>{{ dashboard?.device?.firmwareVersion ?? '—' }}</dd></div>
+            </dl>
+            <p class="weight-state"><i :class="{ stable: online && dashboard?.device?.stable && !dashboard?.device?.error }"></i>{{ weightState }}</p>
+            <p v-if="online && !dashboard?.device?.clockSynced" class="queue-note">设备正在校时，记录会先保存在杯垫中。</p>
+            <p v-if="dashboard?.device?.timePendingCount" class="queue-note">有 {{ dashboard.device?.timePendingCount }} 条记录时间待确认；保留在杯垫中，未计入每日统计。</p>
+          </section>
+        </div>
+
+        <div class="grid-row grid-row-bottom">
           <section class="panel trend-panel" aria-labelledby="trend-title">
-            <div class="section-heading"><div><h2 id="trend-title">饮水趋势</h2><p>{{ selectedDate ? `${shiftDate(selectedDate, -6)} — ${selectedDate}` : '截至所选日期的七天' }}</p></div><div v-if="mobile" class="trend-date-actions"><label class="calendar-trigger">日历<input :value="selectedDate" aria-label="查看统计日期" type="date" :max="today" :disabled="!today" @change="selectDate" /></label><button v-if="!isToday && today" class="text-button" @click="changeDate(today)">今天</button></div><span v-else class="legend"><i></i>饮水量 / ml</span></div>
+            <div class="card-heading"><h2 id="trend-title">饮水趋势</h2><div v-if="mobile" class="trend-date-actions"><label class="calendar-trigger">日历<input :value="selectedDate" aria-label="查看统计日期" type="date" :max="today" :disabled="!today" @change="selectDate" /></label><button v-if="!isToday && today" class="text-button" @click="changeDate(today)">今天</button></div><span v-else class="legend">{{ selectedDate ? `${shiftDate(selectedDate, -6)} — ${selectedDate}` : '截至所选日期的七天' }}</span></div>
             <DrinkTrend :key="`${session.user.id}:${session.bindingId}:${timeZone}`" :model-value="selectedDate" :today="today" :week="dashboard?.week ?? []" :load-week="loadWeek" :compact="mobile" @update:model-value="changeDate" />
           </section>
 
           <section class="panel records-panel" aria-labelledby="records-title">
-            <div class="section-heading"><div><h2 id="records-title">饮水记录</h2><p>{{ displayDate }} · {{ dateLoading ? `正在读取 ${selectedDate}…` : mobile ? '饮水与补水明细' : '保留取放前后的重量，支持撤销误判' }}</p></div><span class="record-count">{{ dashboard?.events.length ?? '—' }} 条记录</span></div>
+            <div class="card-heading"><h2 id="records-title">饮水记录</h2><span class="record-count">{{ dashboard?.events.length ?? '—' }} 条</span></div>
+            <p class="card-caption">{{ displayDate }} · {{ dateLoading ? `正在读取 ${selectedDate}…` : mobile ? '饮水与补水明细' : '保留取放前后的重量，支持撤销误判' }}</p>
             <div :key="dashboard?.date" class="record-content" :aria-busy="dateLoading || (!dashboard && !dashboardError)">
               <div v-if="!dashboard" class="empty-state"><span class="empty-icon" aria-hidden="true">≋</span><p>{{ dashboardError ? '暂时无法读取记录' : '正在读取记录…' }}</p></div>
               <div v-else-if="!dashboard.events.length" class="empty-state"><span class="empty-icon" aria-hidden="true">≋</span><h3>这一天还没有记录</h3><p>杯垫联网并完成空杯设置后，<br />饮水后放回杯子，重量稳定后记录会自动同步。</p></div>
@@ -600,26 +657,6 @@ onBeforeUnmount(() => {
             </div>
           </section>
         </div>
-
-        <aside class="side-column" aria-label="称重设备">
-          <section class="panel device-panel" aria-labelledby="device-title">
-            <div class="section-heading"><h2 id="device-title">我的杯垫</h2><span class="connection-badge" :class="{ online }"><i></i>{{ online ? '云端在线' : '离线或未同步' }}</span></div>
-            <div class="device-illustration" aria-hidden="true"><div class="cup"><div class="cup-handle"></div><div class="cup-water"></div></div><div class="coaster"><i :class="{ lit: online }"></i></div></div>
-            <div class="weight-reading"><strong data-testid="device-weight">{{ number(online ? dashboard?.device?.weightGrams : null) }}</strong><span>g</span></div><p class="weight-state"><i :class="{ stable: online && dashboard?.device?.stable && !dashboard?.device?.error }"></i>{{ weightState }}</p>
-            <dl class="device-details">
-              <div><dt>设备</dt><dd>{{ dashboard?.device?.id ?? '—' }}</dd></div>
-              <div><dt>最后同步</dt><dd>{{ time(dashboard?.device?.lastSeenAt, true) }}</dd></div>
-              <div><dt>当前重量</dt><dd>杯子与水的总重</dd></div>
-              <div><dt>空杯重量</dt><dd>{{ number(dashboard?.device?.emptyCupGrams) }} g</dd></div>
-              <div><dt>当前杯子</dt><dd>{{ currentCup(dashboard?.device) }}{{ !online && dashboard?.device?.lastSeenAt ? '（上次同步）' : '' }}</dd></div>
-              <div><dt>待上传记录</dt><dd>{{ number(dashboard?.device?.pendingCount) }}</dd></div>
-              <div><dt>固件版本</dt><dd>{{ dashboard?.device?.firmwareVersion ?? '—' }}</dd></div>
-            </dl>
-            <p v-if="online && !dashboard?.device?.clockSynced" class="queue-note">设备正在校时，记录会先保存在杯垫中。</p>
-            <p v-if="dashboard?.device?.timePendingCount" class="queue-note">有 {{ dashboard.device?.timePendingCount }} 条记录时间待确认；保留在杯垫中，未计入每日统计。</p>
-          </section>
-
-        </aside>
       </div>
       <footer class="page-footer"><span><span class="footer-dot"></span>自动读取云端记录 · 离线时保留最近同步的数据</span><span>水伴 · {{ dashboard?.timeZone ?? 'Asia/Shanghai' }}</span></footer>
     </main>
