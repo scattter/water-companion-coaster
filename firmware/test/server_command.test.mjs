@@ -138,6 +138,7 @@ esp_err_t storage_save_cups(const cup_config_t *next) {
     if (save_error) return save_error;
     assert(cups_valid(next)); persisted_cups = *next; return ESP_OK;
 }
+esp_err_t storage_load_cups(cup_config_t *value) { *value = persisted_cups; return ESP_OK; }
 esp_err_t storage_stage_wifi(const char *ssid, const char *password) {
     (void)ssid; (void)password; assert(!"server must not stage Wi-Fi"); return -1;
 }
@@ -171,6 +172,7 @@ ${actual(device, 'void device_next_cup')}
 ${actual(device, 'static cJSON *cup_command')}
 ${actual(device, 'cJSON *device_command')}
 ${actual(device, 'void device_config_snapshot')}
+${actual(device, 'static esp_err_t load_cups')}
 static const cJSON *received_cup_command;
 ${actual(network, 'static void execute_cup')}
 ${actual(network, 'static void receive_command')}
@@ -435,6 +437,104 @@ static cJSON *cup_action(const char *action, unsigned id, const char *name, cons
     if (setup) cJSON_AddStringToObject(json, "setupId", setup);
     return json;
 }
+static cJSON *manual_cup(unsigned id, const char *name, double grams) {
+    cJSON *json = cup_action("manual", id, name, NULL);
+    cJSON_AddNumberToObject(json, "emptyCupGrams", grams);
+    return json;
+}
+static void manual_cups(void) {
+    prepare(false);
+    cup_config_t original = cups;
+    raw_count = 0;
+    save_error = -1;
+    rejected(manual_cup(2, "水瓶", 25), 1);
+    assert(!memcmp(&cups, &original, sizeof(cups)) && !memcmp(&persisted_cups, &original, sizeof(cups)));
+    save_error = 0;
+    run_command(manual_cup(2, "水瓶", 25), true);
+    assert(cups.active_id == 2 && config.empty_cup == 25 && cups_weight(&persisted_cups) == 25);
+    assert(!strcmp(cups.items[1].name, "水瓶") && !machine.has_baseline && !cup_setup.id[0]);
+    assert(!memcmp(&cups.items[0], &original.items[0], sizeof(cup_t)));
+    samples(525, 40);
+    assert(sample_events == 0 && machine.has_baseline && machine.baseline == 525);
+    samples(0, 10); samples(475, 40);
+    assert(sample_events == 1 && last_change.drink && last_change.amount == 50);
+    samples(525, 40);
+    assert(sample_events == 2 && !last_change.drink && last_change.amount == 50);
+    samples(0, 10);
+    run_command(manual_cup(2, "水瓶", 30.06), true);
+    assert(cups.active_id == 2 && config.empty_cup == 30.1f && !machine.has_baseline);
+    samples(475, 40); assert(sample_events == 2 && machine.baseline == 475);
+    memset(&cups, 0, sizeof(cups)); config.empty_cup = 999;
+    assert(load_cups() == ESP_OK && cups.active_id == 2 && config.empty_cup == 30.1f);
+    assert(!strcmp(cups.items[1].name, "水瓶"));
+    weighing_init(&machine, config.empty_cup);
+    samples(475, 40); assert(sample_events == 2 && machine.baseline == 475);
+    samples(0, 10);
+    run_command(manual_cup(1, "默认杯", 120), true);
+    assert(cups.active_id == 1 && config.empty_cup == 120 && cups.items[1].empty_cup == 30.1f);
+    samples(525, 40); assert(sample_events == 2);
+}
+static void manual_limits(void) {
+    prepare(false);
+    cup_config_t original = cups;
+    const double bad[] = { -1, 0, 4.99, 1995.01, NAN, INFINITY, -INFINITY };
+    for (unsigned i = 0; i < sizeof(bad) / sizeof(*bad); ++i)
+        rejected(manual_cup(1, "默认杯", bad[i]), 0);
+    rejected(cup_action("manual", 1, "默认杯", NULL), 0);
+    cJSON *json = cup_action("manual", 1, "默认杯", NULL);
+    cJSON_AddStringToObject(json, "emptyCupGrams", "25"); rejected(json, 0);
+    json = cup_action("manual", 1, "默认杯", NULL);
+    cJSON_AddNullToObject(json, "emptyCupGrams"); rejected(json, 0);
+    rejected(manual_cup(0, "水瓶", 25), 0); rejected(manual_cup(4, "水瓶", 25), 0);
+    json = manual_cup(1, "默认杯", 25);
+    cJSON_GetObjectItemCaseSensitive(json, "cupId")->valuedouble = 1.5; rejected(json, 0);
+    const char *names[] = { NULL, "", "123456", "水 瓶", "瓶!", "😀" };
+    for (unsigned i = 0; i < sizeof(names) / sizeof(*names); ++i)
+        rejected(manual_cup(2, names[i], 25), 0);
+    rejected(manual_cup(1, "改名了", 25), 0);
+    config.calibrated = false; rejected(manual_cup(2, "水瓶", 25), 0); config.calibrated = true;
+    sensor_ready = false; rejected(manual_cup(2, "水瓶", 25), 0); sensor_ready = true;
+    unsaved_event = true; rejected(manual_cup(2, "水瓶", 25), 0); unsaved_event = false;
+    restart_required = true; rejected(manual_cup(2, "水瓶", 25), 0); restart_required = false;
+    now += 351; rejected(manual_cup(2, "水瓶", 25), 0); last_sample_ms = now;
+    assert(!memcmp(&cups, &original, sizeof(cups)) && !memcmp(&persisted_cups, &original, sizeof(cups)));
+    run_command(cup_action("prepare", 2, "水瓶", NULL), true);
+    rejected(manual_cup(2, "水瓶", 25), 0);
+    run_command(cup_action("cancel", 0, NULL, setup_id), true);
+    samples(525, 40); rejected(manual_cup(2, "水瓶", 25), 0);
+    samples(0, 5); rejected(manual_cup(2, "水瓶", 25), 0);
+    samples(0, 1); run_command(manual_cup(2, "水瓶", 25), true);
+    const double valid[] = { 5, 1995, 25.05 };
+    for (unsigned i = 0; i < sizeof(valid) / sizeof(*valid); ++i) {
+        run_command(manual_cup(2, "水瓶", valid[i]), true);
+        assert(config.empty_cup == (float)(round(valid[i] * 10) / 10));
+        assert(cups_valid(&cups) && cups_valid(&persisted_cups));
+    }
+}
+static void cloud_manual_cup(void) {
+    prepare(false);
+    cJSON *response = cJSON_CreateObject();
+    cJSON *payload = cJSON_AddObjectToObject(response, "command");
+    cJSON_AddStringToObject(payload, "cmd", "cup"); cJSON_AddStringToObject(payload, "id", setup_id);
+    cJSON_AddStringToObject(payload, "bindingId", binding.binding_id);
+    cJSON_AddNumberToObject(payload, "expiresAt", network_epoch_ms() + 120000);
+    cJSON_AddStringToObject(payload, "action", "manual");
+    cJSON_AddNumberToObject(payload, "cupId", 2); cJSON_AddStringToObject(payload, "name", "水瓶");
+    cJSON_AddNumberToObject(payload, "emptyCupGrams", 25);
+    receive_command(response);
+    assert(cloud_command.pending && cloud_command.ok && cups.active_id == 2 && config.empty_cup == 25);
+    samples(525, 40); assert(sample_events == 0 && machine.baseline == 525);
+    unsigned previous = writes;
+    cJSON_GetObjectItemCaseSensitive(payload, "emptyCupGrams")->valuedouble = 55;
+    receive_command(response);
+    assert(writes == (int)previous && config.empty_cup == 25 && machine.baseline == 525);
+    assert(cloud_command_ack(&cloud_command, storage_save_command));
+    receive_command(response);
+    assert(writes == (int)previous && !cloud_command.pending && machine.baseline == 525);
+    samples(0, 10); samples(475, 40);
+    assert(sample_events == 1 && last_change.drink && last_change.amount == 50);
+    cJSON_Delete(response);
+}
 static void multi_cups(void) {
     prepare(false);
     run_command(cup_action("prepare", 2, "保温杯A1", NULL), true);
@@ -560,6 +660,9 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[1], "save-failure")) save_failure();
     else if (!strcmp(argv[1], "pending")) pending_protection();
     else if (!strcmp(argv[1], "cup")) cup_config();
+    else if (!strcmp(argv[1], "manual")) manual_cups();
+    else if (!strcmp(argv[1], "manual-limits")) manual_limits();
+    else if (!strcmp(argv[1], "cloud-manual")) cloud_manual_cup();
     else if (!strcmp(argv[1], "multi")) multi_cups();
     else if (!strcmp(argv[1], "cancel")) cup_cancel();
     else if (!strcmp(argv[1], "cycle")) cup_cycle();
@@ -587,6 +690,9 @@ int main(int argc, char **argv) {
       ['save-failure', '保存失败保留内存、持久配置、称重和重启状态'],
       ['pending', 'pending 禁止改 ID，允许同 ID 更新及仅 URL 更新'],
       ['cup', '空杯保存失败保留旧基准，成功后立即加水只记一次补水'],
+      ['manual', '手动重量保存失败回滚、新增与修改、整瓶水首次放回及重启均不误记'],
+      ['manual-limits', '手动重量校验数字、范围、名称、设备状态与移杯时间，设置中禁止提交'],
+      ['cloud-manual', '手动重量随心跳完整下发，重复命令不改重量或清除已建立的基准'],
       ['multi', '真实采样：设置暂停记录、保存与切换、改名及删除不误记饮水'],
       ['cancel', '真实采样：取消与超时重新建基准，过期设置和非法杯名拒绝'],
       ['cycle', '三杯循环、跳过空位、删除当前杯、单杯无杯及异常拒绝切换'],

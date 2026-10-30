@@ -626,18 +626,32 @@ onBeforeUnmount(() => {
 
     <dialog v-if="session.user && session.deviceId" ref="settingsDialog" class="settings-dialog" aria-labelledby="settings-title" @close="settingsOpen = false">
       <div class="settings-header">
-        <div><h2 id="settings-title">杯垫设置</h2><p>管理自己的杯子，或为杯垫更换 Wi-Fi。</p></div>
-        <button class="settings-close" aria-label="关闭设置" @click="settingsDialog?.close()">✕</button>
+        <h2 id="settings-title">杯垫设置</h2>
+        <button class="settings-close" aria-label="关闭设置" @click="settingsDialog?.close()"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false"><path d="m4 4 8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg></button>
       </div>
-      <DeviceSetup :key="`${session.user.id}:${session.deviceId}:${session.bindingId}`" :online="online" :device-id="session.deviceId" :user-id="session.user.id" :binding-id="session.bindingId" :calibrated="dashboard?.device?.lastSeenAt ? dashboard.device.calibrated : undefined" :empty-cup-grams="dashboard?.device?.emptyCupGrams" :weight-grams="dashboard?.device?.weightGrams" :cups="dashboard?.device?.cups" :active-cup-id="dashboard?.device?.activeCupId" :cup-setup="dashboard?.device?.cupSetup" :cup-present="dashboard?.device?.cupPresent" :active="active && settingsOpen && !unbindBusy" @updated="refresh" @access-error="handleSetupAccessError" />
-      <div class="settings-section">
-        <DeviceOnboarding :key="`wifi:${session.user.id}:${session.deviceId}:${session.bindingId}`" :session="session" :active="active && settingsOpen && !unbindBusy" @completed="provisioningCompleted" @access-error="handleAccessError" @busy="provisioningBusy = $event" />
-      </div>
+      <DeviceSetup :key="`${session.user.id}:${session.deviceId}:${session.bindingId}`" :online="online" :device-id="session.deviceId" :user-id="session.user.id" :binding-id="session.bindingId" :calibrated="dashboard?.device?.lastSeenAt ? dashboard.device.calibrated : undefined" :empty-cup-grams="dashboard?.device?.emptyCupGrams" :weight-grams="dashboard?.device?.weightGrams" :cups="dashboard?.device?.cups" :active-cup-id="dashboard?.device?.activeCupId" :cup-setup="dashboard?.device?.cupSetup" :cup-present="dashboard?.device?.cupPresent" :firmware-version="dashboard?.device?.firmwareVersion" :active="active && settingsOpen && !unbindBusy" @updated="refresh" @access-error="handleSetupAccessError" />
+      <details class="settings-section settings-network">
+        <summary><span><strong>网络连接</strong><small>Wi-Fi 与热点配网</small></span><svg viewBox="0 0 12 12" fill="none" aria-hidden="true" focusable="false"><path d="m4.5 3 3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></summary>
+        <div class="settings-network-body">
+          <DeviceOnboarding :key="`wifi:${session.user.id}:${session.deviceId}:${session.bindingId}`" :session="session" :active="active && settingsOpen && !unbindBusy" @completed="provisioningCompleted" @access-error="handleAccessError" @busy="provisioningBusy = $event" />
+          <details class="hotspot-settings">
+            <summary>兼容方式：通过热点更换 Wi-Fi</summary>
+            <ol>
+              <li>杯垫启动后，长按 BOOT 配网键 3 秒，热点开放 10 分钟。</li>
+              <li>用手机连接屏幕显示的热点，密码也在屏幕上。</li>
+              <li>打开下方配网页，选择新的 2.4 GHz Wi-Fi 并输入密码。</li>
+              <li>等待杯垫屏幕显示 Wi-Fi 与云服务均已连接，再切回手机正常网络。</li>
+            </ol>
+            <a href="http://192.168.4.1" target="_blank" rel="noopener noreferrer">连接杯垫热点后，打开配网页 ↗</a>
+            <p>只更新 Wi-Fi，账号绑定、饮水记录和空杯设置都会保留。新网络连接失败时，杯垫会尝试恢复原 Wi-Fi。</p>
+            <p>热点页不提供服务器地址或设备信任根设置，未配置服务器的旧固件需联系管理员通过 USB 设置。若浏览器拦截本地链接，请连接杯垫热点后输入 192.168.4.1。</p>
+          </details>
+        </div>
+      </details>
       <section class="settings-section unbind-section">
-        <h3>解绑杯垫</h3><p class="setup-description">解绑后杯垫可交给其他账号使用，当前配网授权与未完成命令会作废。你的登录和历史饮水记录会保留。</p>
-        <button v-if="!unbindConfirm" class="settings-button" :disabled="provisioningBusy" @click="unbindConfirm = true">解绑我的杯垫</button>
-        <div v-else class="unbind-confirm" role="group" aria-label="确认解绑当前杯垫">
-          <p>确认解绑 {{ session.deviceId }}？</p>
+        <div class="unbind-heading"><div><h3>设备绑定</h3><p>解绑后可交给其他账号使用</p></div><button v-if="!unbindConfirm" class="settings-button" :disabled="provisioningBusy" @click="unbindConfirm = true">解绑杯垫</button></div>
+        <div v-if="unbindConfirm" class="unbind-confirm" role="group" aria-label="确认解绑当前杯垫">
+          <p>确认解绑 {{ session.deviceId }}？当前配网授权与未完成命令会作废，历史饮水记录会保留。</p>
           <button class="settings-button" :disabled="unbindBusy" @click="unbindConfirm = false">暂不解绑</button>
           <button class="setup-action" :disabled="unbindBusy || provisioningBusy" @click="unbind">{{ unbindBusy ? '正在确认…' : '确认解绑' }}</button>
         </div>
@@ -650,9 +664,65 @@ onBeforeUnmount(() => {
 <style scoped>
 .legacy-setup { border-top:1px solid #e5eadf; margin-top:24px; padding-top:20px; }
 .legacy-setup summary { cursor:pointer; color:#43745d; font-weight:600; }
-.settings-section { padding:22px var(--settings-inline-padding, 26px); border-top:1px solid #e5eadf; }
-.unbind-section h3 { font-size:16px; }
-.unbind-confirm { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
-.unbind-confirm p { width:100%; }
+.settings-close { display:grid; place-items:center; width:40px; height:40px; border-radius:50%; background:#f0f4f1; color:#778a7c; }
+.settings-close svg { width:16px; height:16px; }
+.settings-close,.unbind-section button,.settings-network-body :deep(.setup-action),.settings-network-body :deep(.settings-button) { transition:background .16s ease,box-shadow .16s ease,color .16s ease,transform .16s ease; }
+.settings-close:not(:disabled):hover,.unbind-section button:not(:disabled):hover,.settings-network-body :deep(button:not(:disabled):hover) { filter:none; }
+.settings-close:focus-visible,.unbind-section button:focus-visible,.settings-network-body :deep(button:focus-visible) { outline:2px solid #6f9f82; outline-offset:3px; }
+.settings-close:active,.unbind-section button:not(:disabled):active,.settings-network-body :deep(button:not(:disabled):active) { transform:translateY(1px) scale(.98); box-shadow:none; }
+.settings-section { padding:18px var(--settings-inline-padding, 28px); border-top:1px solid #edf0ed; }
+.settings-network > summary { display:flex; justify-content:space-between; align-items:center; gap:16px; min-height:28px; cursor:pointer; color:#87968a; list-style:none; }
+.settings-network > summary::-webkit-details-marker { display:none; }
+.settings-network > summary > span { display:flex; align-items:baseline; flex-wrap:wrap; gap:6px 16px; }
+.settings-network > summary strong { color:#354c3e; font-size:14px; font-weight:500; }
+.settings-network > summary small { color:#8a978d; font-size:12px; }
+.settings-network > summary > svg { width:14px; height:14px; flex-shrink:0; transition:transform .2s ease; }
+.settings-network[open] > summary > svg { transform:rotate(90deg); }
+.settings-network summary:focus-visible { outline:2px solid #43745d; outline-offset:5px; border-radius:4px; }
+.settings-network-body { margin-top:20px; padding-top:18px; border-top:1px solid #edf0ed; }
+.settings-network-body :deep(.onboarding h2) { font-size:16px; }
+.settings-network-body :deep(.setup-action),.settings-network-body :deep(.settings-button),.unbind-confirm button { min-height:40px; padding:9px 16px; border:1px solid transparent; border-radius:999px; font-weight:500; }
+.settings-network-body :deep(.setup-action) { background:linear-gradient(180deg,#4b8065,#35634d); color:#fff; box-shadow:inset 0 1px 0 #ffffff29,0 2px 5px #244b3526; }
+.settings-network-body :deep(.settings-button) { background:#edf4ef; color:#426951; }
+.hotspot-settings { margin-top:20px; padding:12px; border-radius:8px; background:#f6f8f5; font-size:12px; color:#687d69; line-height:1.8; }
+.hotspot-settings summary { cursor:pointer; color:#526c5c; font-weight:500; }
+.hotspot-settings ol { padding-left:20px; margin:14px 0; }
+.hotspot-settings li { margin:7px 0; }
+.hotspot-settings p { margin-top:12px; }
+.hotspot-settings a { display:inline-flex; align-items:center; min-height:40px; color:#43745d; text-decoration:underline; text-underline-offset:3px; }
+.unbind-heading { display:flex; align-items:center; justify-content:space-between; gap:20px; }
+.unbind-heading > div { display:flex; align-items:baseline; flex-wrap:wrap; gap:6px 16px; }
+.unbind-heading h3 { margin:0; font-size:14px; font-weight:500; color:#687b6b; }
+.unbind-heading p { margin:0; font-size:12px; line-height:1.8; color:#929d90; }
+.unbind-heading > button { flex-shrink:0; padding:8px 14px; color:#a25e4e; background:#fbefea; border:1px solid transparent; border-radius:999px; box-shadow:none; font-size:12px; }
+.unbind-confirm { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-top:16px; padding:16px; border:1px solid #ead8ce; border-radius:10px; background:#fff7f2; }
+.unbind-confirm p { width:100%; font-size:13px; line-height:1.8; color:#866b5c; }
+.unbind-confirm .settings-button { background:#fff; color:#8b776d; }
+.unbind-confirm .setup-action { background:#a96958; color:#fff; }
+.unbind-section button:disabled,.settings-network-body :deep(.setup-action:disabled),.settings-network-body :deep(.settings-button:disabled) { opacity:1; color:#9aa99e; background:#f0f3f0; box-shadow:none; }
 .unbind-section .notice { margin-top:15px; }
+@media(hover:hover) {
+  .settings-close:hover { background:#e6ede8; color:#426951; }
+  .unbind-heading > button:not(:disabled):hover { background:#f7e3da; color:#98523f; }
+  .unbind-confirm .settings-button:not(:disabled):hover { background:#f2eae4; }
+  .unbind-confirm .setup-action:not(:disabled):hover { background:#985947; }
+  .settings-network-body :deep(.setup-action:not(:disabled):hover) { background:linear-gradient(180deg,#558b6e,#3b7055); box-shadow:inset 0 1px 0 #ffffff29,0 3px 8px #244b3529; }
+  .settings-network-body :deep(.settings-button:not(:disabled):hover) { background:#e1ece4; }
+  .settings-network-body :deep(button:not(:disabled):active) { box-shadow:none; }
+}
+@media(max-width:560px) {
+  .settings-dialog .settings-close { position:relative; width:32px; height:32px; min-height:32px; }
+  .settings-close::after { content:''; position:absolute; inset:-6px; }
+  .unbind-heading > button,.unbind-confirm button,.settings-network-body :deep(.setup-action),.settings-network-body :deep(.settings-button) { position:relative; min-height:36px; padding:7px 12px; font-size:12px; }
+  .unbind-section button::after,.settings-network-body :deep(.setup-action::after),.settings-network-body :deep(.settings-button::after) { content:''; position:absolute; inset:-5px -1px; }
+  .unbind-heading > button { padding-inline:8px; background:transparent; }
+  .settings-network > summary { min-height:40px; }
+  .unbind-heading { gap:12px; }
+  .unbind-heading > div { display:block; }
+  .unbind-heading p { margin-top:4px; font-size:11px; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .settings-network > summary > svg,.settings-close,.unbind-section button,.settings-network-body :deep(button) { transition:none; }
+  .settings-close:active,.unbind-section button:not(:disabled):active,.settings-network-body :deep(button:not(:disabled):active) { transform:none; }
+}
 </style>

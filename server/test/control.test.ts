@@ -4,7 +4,8 @@ import { test } from 'node:test';
 import { fixture, heartbeat } from './cloud-fixture.js';
 
 const cups = [{ id: 1, name: '默认杯', emptyCupGrams: 120 }, { id: 2, name: '保温杯A1', emptyCupGrams: 180 }];
-const multiHeartbeat = { ...heartbeat, cups, activeCupId: 1, cupSetup: null, emptyCupGrams: 120 };
+const multiHeartbeat = { ...heartbeat, firmwareVersion: '0.8.0', cups, activeCupId: 1, cupSetup: null, emptyCupGrams: 120 };
+const manualHeartbeat = { ...multiHeartbeat, firmwareVersion: '0.8.1' };
 
 test('多杯命令完整保存参数，规范化重试，同编号更换操作拒绝，确认后状态同步', async t => {
   const f = await fixture(t); const cookie = await f.register(); await f.bind(cookie);
@@ -56,6 +57,65 @@ test('多杯名称、数量、当前杯一致性及操作参数均校验', async
   const empty = { ...multiHeartbeat, cups: [], activeCupId: null, emptyCupGrams: null };
   assert.equal((await f.report('coaster-01', empty)).statusCode, 200);
   assert.deepEqual((await f.web(cookie, '/api/dashboard')).json().device.cups, []);
+});
+
+test('手动重量规范化后保存、下发和重试，设备确认后同步到当前杯子', async t => {
+  const f = await fixture(t); const cookie = await f.register(); await f.bind(cookie);
+  await f.report('coaster-01', manualHeartbeat);
+  const id = randomUUID();
+  const body = { id, action: 'manual', cupId: 3, name: ' 水瓶 ', emptyCupGrams: 25.06 };
+  const first = await f.web(cookie, '/api/control/cup', body);
+  assert.equal(first.statusCode, 200, first.body);
+  assert.equal(first.json().command.status, 'pending');
+  assert.deepEqual((await f.web(cookie, '/api/control/cup', { ...body, name: '水瓶', emptyCupGrams: 25.1 })).json(), first.json());
+  assert.equal((await f.web(cookie, '/api/control/cup', { ...body, emptyCupGrams: 25.2 })).statusCode, 409);
+  const command = (await f.report('coaster-01', manualHeartbeat)).json().command;
+  assert.equal(command.action, 'manual'); assert.equal(command.cupId, 3); assert.equal(command.name, '水瓶');
+  assert.equal(command.emptyCupGrams, 25.1);
+  const updated = [...cups, { id: 3, name: '水瓶', emptyCupGrams: 25.1 }];
+  await f.report('coaster-01', { ...manualHeartbeat, cups: updated, activeCupId: 3, emptyCupGrams: 25.1,
+    commandResult: { id, ok: true, message: '空杯重量已保存' } });
+  assert.equal((await f.web(cookie, `/api/control/commands/${id}`)).json().command.status, 'succeeded');
+  const device = (await f.web(cookie, '/api/dashboard')).json().device;
+  assert.deepEqual(device.cups, updated); assert.equal(device.activeCupId, 3); assert.equal(device.emptyCupGrams, 25.1);
+});
+
+test('手动重量拒绝旧或未知固件，待领取命令在固件降级后也不下发', async t => {
+  const f = await fixture(t); const cookie = await f.register(); await f.bind(cookie);
+  const body = { id: randomUUID(), action: 'manual', cupId: 1, name: '默认杯', emptyCupGrams: 25 };
+  for (const firmwareVersion of ['0.7.99', '0.8.0', 'unknown', '0.8.1-dev']) {
+    await f.report('coaster-01', { ...multiHeartbeat, firmwareVersion });
+    const response = await f.web(cookie, '/api/control/cup', body);
+    assert.equal(response.statusCode, 409);
+    assert.match(response.json().error, /0\.8\.1/);
+  }
+  await f.report('coaster-01', { ...heartbeat, firmwareVersion: '0.8.1' });
+  assert.equal((await f.web(cookie, '/api/control/cup', body)).statusCode, 409);
+  await f.report('coaster-01', manualHeartbeat);
+  assert.equal((await f.web(cookie, '/api/control/cup', body)).statusCode, 200);
+  assert.equal((await f.report('coaster-01', multiHeartbeat)).json().command, null);
+  assert.equal((await f.report('coaster-01', { ...heartbeat, firmwareVersion: '0.8.1' })).json().command, null);
+  assert.equal((await f.report('coaster-01', { ...manualHeartbeat, firmwareVersion: 'unknown' })).json().command, null);
+  assert.equal((await f.report('coaster-01', { ...manualHeartbeat, firmwareVersion: '0.10.0' })).json().command.emptyCupGrams, 25);
+});
+
+test('手动重量严格校验范围、类型和操作参数，并接受两个边界值', async t => {
+  const f = await fixture(t); const cookie = await f.register(); await f.bind(cookie);
+  await f.report('coaster-01', manualHeartbeat);
+  const body = { action: 'manual', cupId: 1, name: '默认杯', emptyCupGrams: 25 };
+  for (const input of [{ emptyCupGrams: undefined }, { emptyCupGrams: null }, { emptyCupGrams: '25' },
+    { emptyCupGrams: true }, { emptyCupGrams: 0 }, { emptyCupGrams: 4.99 }, { emptyCupGrams: 1995.01 },
+    { cupId: undefined }, { cupId: 0 }, { cupId: 4 }, { cupId: 1.5 }, { name: undefined }, { name: '杯 子' },
+    { setupId: randomUUID() }, { action: undefined }, { action: 'prepare' }, { action: 'rename' }]) {
+    const response = await f.web(cookie, '/api/control/cup', { id: randomUUID(), ...body, ...input });
+    assert.equal(response.statusCode, 400, JSON.stringify(input));
+  }
+  for (const emptyCupGrams of [5, 1995]) {
+    const id = randomUUID();
+    assert.equal((await f.web(cookie, '/api/control/cup', { id, ...body, emptyCupGrams })).statusCode, 200);
+    assert.equal((await f.report('coaster-01', manualHeartbeat)).json().command.emptyCupGrams, emptyCupGrams);
+    await f.report('coaster-01', { ...manualHeartbeat, commandResult: { id, ok: false, message: '测试结束' } });
+  }
 });
 
 test('空杯命令由设备心跳领取，设备确认前始终pending，同ID重试只返回原命令', async (t) => {

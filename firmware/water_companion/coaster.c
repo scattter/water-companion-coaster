@@ -503,6 +503,22 @@ static cJSON *cup_command(const cJSON *json)
         return reply(error, "空杯重量已保存，可以加水后开始正常取放");
     }
     if (!id) return reply("杯子编号需为 1–3", NULL);
+    if (!strcmp(action, "manual")) {
+        const cJSON *grams = cJSON_GetObjectItemCaseSensitive(json, "emptyCupGrams");
+        if (!cup_name_valid(name)) return reply("杯名需为一至五个汉字、字母或数字", NULL);
+        if (!cJSON_IsNumber(grams) || !isfinite(grams->valuedouble)
+            || grams->valuedouble < 5 || grams->valuedouble > 1995)
+            return reply("空杯重量需为 5–1995 g", NULL);
+        const cup_t *existing = cups_get(&cups, id);
+        if (existing && strcmp(name, existing->name)) return reply("杯名已变化，请刷新后重新设置", NULL);
+        if (!cup_removed()) return reply("请先拿开杯子", NULL);
+        cup_t *cup = &next.items[id - 1];
+        strcpy(cup->name, name);
+        cup->empty_cup = (float)(round(grams->valuedouble * 10) / 10);
+        next.active_id = id;
+        // 手动设置时瓶中可能已有水；首次放回只建立基准，不能以空瓶重量补记加水。
+        return reply(save_cups(&next, true), "空杯重量已保存，请放回杯子或水瓶，首次放稳后开始记录");
+    }
     if (!strcmp(action, "prepare")) {
         const char *operation_id = field(json, "id");
         if (!operation_id || !provision_uuid(operation_id) || !cup_name_valid(name))

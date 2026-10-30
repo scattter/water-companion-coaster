@@ -50,7 +50,7 @@ html, body { min-width: 280px; }
 .mobile-root .empty-state { padding:24px 0; }
 .mobile-root .page-footer { margin-top:12px; padding:12px 0 0; flex-wrap:wrap; gap:6px; }
 .mobile-root .water-art { width:90px; height:96px; right:20px; }
-.mobile-root .setup-panel { padding:20px var(--settings-inline-padding, 26px); }
+.mobile-root .setup-panel { padding:0 var(--settings-inline-padding, 28px) 20px; }
 .mobile-root .settings-header { padding:16px var(--settings-inline-padding, 26px); }
 .mobile-root .settings-close,.mobile-root .setup-action,.mobile-root .settings-button,.mobile-root .setup-panel button { min-height:44px; }
 @media(max-width:350px) {
