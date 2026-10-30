@@ -68,6 +68,28 @@ const greeting = computed(() => {
 const drinkMl = computed(() => dashboard.value?.totals.drinkMl ?? 0);
 const goalPercent = computed(() => Math.min(100, Math.round(drinkMl.value / DRINK_GOAL_ML * 100)));
 const goalCupsLeft = computed(() => Math.max(0, Math.ceil((DRINK_GOAL_ML - drinkMl.value) / 250)));
+
+// ---------- 主题 ----------
+type ThemeMode = 'default' | 'theater';
+const THEME_STORAGE_KEY = 'coaster-theme';
+const theme = ref<ThemeMode>(document.documentElement.dataset.theme === 'theater' ? 'theater' : 'default');
+const themeMeta = document.querySelector('meta[name="theme-color"]');
+const theaterThemeColor = { light: '#faf6ee', dark: '#23201a' };
+function applyTheme(mode: ThemeMode) {
+  if (mode === 'theater') document.documentElement.dataset.theme = 'theater';
+  else delete document.documentElement.dataset.theme;
+  try { localStorage.setItem(THEME_STORAGE_KEY, mode); } catch { /* 隐私模式等场景忽略 */ }
+  // 跟随当前深浅色更新浏览器工具栏颜色
+  if (themeMeta) {
+    const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    themeMeta.setAttribute('content', mode === 'theater' ? (dark ? theaterThemeColor.dark : theaterThemeColor.light) : dark ? '#191c22' : '#f6f7f3');
+  }
+}
+function toggleTheme() {
+  theme.value = theme.value === 'default' ? 'theater' : 'default';
+  applyTheme(theme.value);
+}
+applyTheme(theme.value);
 const menuBusy = computed(() => authBusy.value || bindingBusy.value || unbindBusy.value || provisioningBusy.value || Boolean(revokePending.value));
 let timer: ReturnType<typeof setInterval> | undefined;
 let pollingVersion: number | null = null;
@@ -498,7 +520,10 @@ onBeforeUnmount(() => {
             <span>{{ session.user.username }}</span>
             <svg class="menu-chevron" viewBox="0 0 12 12" fill="none" aria-hidden="true" focusable="false"><path d="m3 4.5 3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
           </button>
-          <div v-if="menu === 'account'" id="account-menu" class="dropdown-menu" aria-labelledby="account-menu-button"><button :disabled="menuBusy" @click="menuAction('logout')">退出登录</button></div>
+          <div v-if="menu === 'account'" id="account-menu" class="dropdown-menu" aria-labelledby="account-menu-button">
+            <button :disabled="menuBusy" @click="toggleTheme()">{{ theme === 'theater' ? '切换默认主题' : '切换剧场主题' }}</button>
+            <button :disabled="menuBusy" @click="menuAction('logout')">退出登录</button>
+          </div>
         </div>
         <div class="menu-anchor">
           <button id="settings-menu-button" ref="settingsButton" class="menu-trigger" :disabled="menuBusy" :aria-expanded="menu === 'settings'" aria-controls="settings-menu" @click="menu = menu === 'settings' ? null : 'settings'">
@@ -513,6 +538,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div v-else class="topbar-right">
+        <button class="theme-toggle" :class="{ active: theme === 'theater' }" :aria-pressed="theme === 'theater'" title="切换陪伴剧场主题" @click="toggleTheme">剧场</button>
         <span v-if="session.user" class="account-name">{{ session.user.username }}</span>
         <button v-if="!mobile && session.user?.role === 'admin'" class="settings-button" :disabled="provisioningBusy || bindingBusy" @click="page = page === 'admin' ? 'dashboard' : 'admin'; refresh()">{{ page === 'admin' ? '饮水记录' : '管理后台' }}</button>
         <button v-if="session.user && !session.deviceId" class="settings-button" :disabled="bindingBusy" @click="page = page === 'add' ? 'dashboard' : 'add'; refresh()">{{ page === 'add' ? '查看历史' : '添加杯垫' }}</button>

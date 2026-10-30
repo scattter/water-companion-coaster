@@ -57,6 +57,8 @@ button:not(:disabled):hover { filter: brightness(.97); }
   min-height: 40px; padding: 9px 16px; border: 1px solid var(--line); border-radius: 10px;
   background: var(--card); color: var(--acc); font-size: 13px; white-space: nowrap;
 }
+.theme-toggle { min-height: 40px; padding: 9px 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.theme-toggle.active { color: #fff; background: var(--acc); border-color: var(--acc); }
 .setup-action { background: var(--acc); border-color: var(--acc); color: #fff; font-weight: 600; }
 .text-button { background: none; padding: 0; color: var(--acc); font-size: 12px; }
 .logout-button { min-height: 40px; white-space: nowrap; }
@@ -256,6 +258,7 @@ main { padding: 30px 0 20px; }
   .topbar-right { gap: 8px; }
   .account-name { display: none; }
   .settings-button { min-height: 36px; padding: 7px 11px; font-size: 12.5px; border-radius: 9px; }
+  .theme-toggle { min-height: 36px; padding: 7px 10px; }
   .logout-button { min-height: 36px; padding: 7px 2px; }
   main { padding-top: 18px; }
   .hello-heading { flex-direction: column; align-items: flex-start; gap: 4px; margin-bottom: 14px; }
@@ -297,6 +300,34 @@ main { padding: 30px 0 20px; }
   .calibration-prompt h2 { font-size: 14.5px; }
   .calibration-prompt .setup-action { min-height: 34px; padding: 6px 14px; font-size: 12.5px; }
 }
+
+/* ---------- 陪伴剧场主题（html[data-theme="theater"]）---------- */
+/* 换肤不换布局：仅覆盖色板/圆角/质感，来源于 output/design-proposals/方案B-陪伴剧场.html */
+:root[data-theme='theater'] {
+  --bg: light-dark(#faf6ee, #23201a);
+  --card: light-dark(#ffffff, #2c2820);
+  --ink: light-dark(#3d3a34, #f0e9da);
+  --muted: light-dark(#9a937f, #a89e8a);
+  --line: light-dark(#f0e9da, #3d372b);
+  --acc: light-dark(#dd8f1f, #f0b45a);
+  --acc-soft: light-dark(#fdf3e3, #3d3227);
+  --good: light-dark(#3f9e70, #74c9a0);
+  --good-soft: light-dark(#eaf6ef, #24382d);
+  --radius: 20px;
+}
+[data-theme='theater'] body { background: linear-gradient(180deg, light-dark(#fdf9f0, #26221b), var(--bg) 260px); }
+[data-theme='theater'] .panel { box-shadow: 0 14px 34px rgba(150, 130, 90, .08); }
+/* 伙伴卡做成小舞台 */
+[data-theme='theater'] .companion-card { background: linear-gradient(165deg, var(--acc-soft), var(--card) 62%); }
+[data-theme='theater'] .companion-sprite { filter: drop-shadow(0 10px 16px rgba(150, 110, 40, .2)); }
+[data-theme='theater'] .brand-mark { background: linear-gradient(135deg, var(--acc-soft), light-dark(#fbeed3, #46391f)); }
+[data-theme='theater'] .goal-track i { background: linear-gradient(90deg, var(--acc), #f6c26b); }
+[data-theme='theater'] .setup-action { background: linear-gradient(135deg, var(--acc), #f6c26b); border-color: var(--acc); }
+/* 记录列表气泡化 */
+[data-theme='theater'] .event-list { display: flex; flex-direction: column; gap: 8px; }
+[data-theme='theater'] .event-row { border-top: 0; border: 1px solid var(--line); border-radius: 14px; padding: 11px 13px; background: light-dark(#fbf7ee, #2f2a22); }
+[data-theme='theater'] .event-icon { border-radius: 50%; }
+[data-theme='theater'] .empty-icon { border-radius: 50%; }
 
 @media (prefers-reduced-motion: reduce) {
   .settings-dialog[open] { animation: none; }
