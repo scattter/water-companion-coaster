@@ -4,17 +4,18 @@
     android:layout_height="match_parent"
     android:orientation="horizontal"
     android:padding="12dp"
-    android:background="@drawable/widget_medium_background">
+    android:background="@drawable/widget_card_background">
 
     <LinearLayout android:layout_width="0dp" android:layout_height="match_parent"
         android:layout_weight="1" android:orientation="vertical" android:layout_marginEnd="12dp">
         <TextView style="@style/WidgetText" android:layout_width="match_parent" android:layout_height="24dp"
-            android:gravity="center_vertical" android:text="饮水陪伴" android:textStyle="bold" android:textSize="14sp" />
+            android:gravity="center_vertical" android:text="喝吧喝吧" android:textStyle="bold" android:textSize="14sp" />
         <ImageView android:id="@+id/widget_pet" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
             android:layout_marginVertical="4dp" android:src="@drawable/water_cap" android:scaleType="fitCenter"
             android:contentDescription="陪你工作的小水豚" />
+        <!-- 伙伴卡底部的状态行对应 App 里 acc 色的 state-label。 -->
         <TextView style="@style/WidgetFooter" android:layout_width="match_parent" android:layout_height="20dp"
-            android:text="我陪你一起工作" />
+            android:text="我陪你一起工作" android:textColor="@color/widget_accent" />
     </LinearLayout>
 
     <ImageView android:layout_width="1dp" android:layout_height="match_parent"

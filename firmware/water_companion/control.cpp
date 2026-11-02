@@ -11,7 +11,7 @@ static const char PAGE[] = R"HTML(<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>水伴杯垫配网</title>
+<title>喝吧喝吧配网</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#f4f6ef;color:#263d35;font:16px/1.65 system-ui,sans-serif}main{max-width:560px;margin:auto;padding:24px 18px 48px}h1{margin:0;font-size:26px}h2{font-size:18px;margin:0 0 10px}p{margin:10px 0}.hint,small{color:#5d7568;font-size:14px}.card,details{background:#fff;border:1px solid #dce4d7;border-radius:16px;padding:20px;margin-top:16px}summary{cursor:pointer;font-weight:600}.weight{font-size:46px;font-weight:650;font-variant-numeric:tabular-nums}.weight small{font-size:20px}button{font:inherit;border:1px solid #d0ddce;background:#edf3e9;color:#263d35;border-radius:10px;padding:12px 16px;min-height:48px;cursor:pointer;width:100%;margin-top:10px}button.primary{background:#43745d;color:white;border-color:#43745d}button:disabled{opacity:.45;cursor:default}input,select{font:inherit;padding:10px;border:1px solid #cad7c9;border-radius:8px;width:100%;margin:6px 0 8px}label{display:block;margin-top:12px}#notice:empty,#device-error:empty{display:none}#notice,#device-error{padding:12px;border-radius:10px;background:#edf3e9;overflow-wrap:anywhere}#notice[data-error],#device-error{background:#fff0e9;color:#974726}#connection{overflow-wrap:anywhere}ol{padding-left:23px}li{margin:12px 0}:focus-visible{outline:3px solid #82a48b;outline-offset:3px}
 .password-field{display:flex;gap:8px;align-items:center;margin:6px 0 8px}.password-field input{min-width:0;flex:1;margin:0}.password-field button{flex:none;width:auto;margin:0;white-space:nowrap}#network-status{overflow-wrap:anywhere}#network-status[data-connected]{background:#e6f4e9;border:2px solid #43745d}#network-status[data-connected] #network{color:#24543b;font-size:23px;font-weight:700;margin-top:0}#network-status[data-connected] .hint{color:#365f48}#notice{position:fixed;z-index:10;left:16px;right:16px;bottom:20px;max-width:480px;max-height:70vh;overflow:auto;margin:0 auto;padding:20px;background:#fff;border:1px solid #a8c7b1;box-shadow:0 12px 40px #183c3533}#notice p{margin-top:0}#notice[hidden]{display:none}
@@ -38,7 +38,7 @@ static const char PAGE[] = R"HTML(<!doctype html>
 <section class="card" aria-labelledby="binding-title">
 <h2 id="binding-title">绑定你的账号</h2><p id="binding-state" role="status">等待连接云服务…</p>
 <p id="binding-code" class="weight"></p><p id="binding-expiry" class="hint"></p>
-<p><a id="cloud-link" hidden target="_blank" rel="noopener noreferrer">打开水伴网站</a></p>
+<p><a id="cloud-link" hidden target="_blank" rel="noopener noreferrer">打开喝吧喝吧网站</a></p>
 <button id="binding" type="button" disabled>获取 / 刷新绑定码</button>
 <p class="hint">记下绑定码，切回手机正常网络后打开网站，注册或登录，再输入绑定码。换 Wi-Fi 保留原账号和记录，无需重复绑定。</p>
 </section>
@@ -142,7 +142,7 @@ function render(value) {
     : code ? '请在网站登录后输入以下绑定码。' : '点击下方按钮获取绑定码，过期后可重新获取。';
   const url = /^https?:\/\/[^/?#@]+\/?$/.test(value.cloudUrl || '') ? value.cloudUrl : '';
   $('cloud-link').hidden = !url;
-  if (url) { $('cloud-link').href = url; $('cloud-link').textContent = `打开水伴网站：${url}`; }
+  if (url) { $('cloud-link').href = url; $('cloud-link').textContent = `打开喝吧喝吧网站：${url}`; }
   enable();
 }
 function disconnected(error) {

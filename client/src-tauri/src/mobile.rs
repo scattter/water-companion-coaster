@@ -78,5 +78,5 @@ pub fn run() {
         .manage(Mutex::new(Companion::default()))
         .invoke_handler(tauri::generate_handler![mobile_address, mobile_companion])
         .run(tauri::generate_context!())
-        .expect("无法启动饮水陪伴");
+        .expect("无法启动喝吧喝吧");
 }

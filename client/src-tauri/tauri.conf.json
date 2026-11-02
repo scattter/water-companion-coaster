@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "饮水陪伴",
+  "productName": "喝吧喝吧",
   "version": "0.1.0",
   "identifier": "com.watercompanion.client",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "panel",
-        "title": "饮水陪伴",
+        "title": "喝吧喝吧",
         "width": 340,
         "visible": false,
         "focus": false,

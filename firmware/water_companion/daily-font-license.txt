@@ -1,6 +1,6 @@
-水伴日常页字体子集（4 位灰度覆盖率）
+喝吧喝吧日常页字体子集（4 位灰度覆盖率）
 
-中文与单位：Noto Sans SC，字重 550。
+中文与单位：Noto Sans SC，字重 600（网络受限时用 Google Fonts gstatic 静态实例替代可变字体生成，视觉差异可忽略）。
 来源：https://github.com/google/fonts/tree/main/ofl/notosanssc
 Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'
 

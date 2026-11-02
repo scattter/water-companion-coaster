@@ -1,1 +1,7 @@
-<resources><string name="widget_description">水豚陪你记录饮水，支持小、中、大三种布局；长按缩放可查看饮水量、最近记录和近七天趋势。</string></resources>
+<resources>
+    <string name="widget_description">伙伴陪你记录饮水：展示今日饮水量、最近记录与近七天趋势；长按拖动边框可在小、中、大三种布局间切换。</string>
+    <string name="shortcut_add_widget">添加桌面卡片</string>
+    <string name="shortcut_add_widget_long">添加「喝吧喝吧」桌面卡片</string>
+    <string name="shortcut_add_widget_disabled">小组件已禁用</string>
+    <string name="widget_pin_unsupported">当前桌面不支持一键添加，请在桌面小组件列表中选择「喝吧喝吧」。</string>
+</resources>

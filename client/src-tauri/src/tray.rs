@@ -264,13 +264,13 @@ pub fn setup(app: &AppHandle, snapshot: &Snapshot) -> tauri::Result<()> {
     app.manage(frames);
     let details = MenuItem::with_id(app, "details", "饮水详情", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "陪伴设置", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出饮水陪伴", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "退出喝吧喝吧", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&details, &settings, &quit])?;
     TrayIconBuilder::with_id("companion")
         .icon(image)
         .icon_as_template(false)
         .title("— ml")
-        .tooltip("饮水陪伴")
+        .tooltip("喝吧喝吧")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -297,7 +297,7 @@ pub fn setup(app: &AppHandle, snapshot: &Snapshot) -> tauri::Result<()> {
         }));
         TrayIconBuilder::with_id("amount")
             .icon(frame)
-            .tooltip("饮水陪伴 · — ml")
+            .tooltip("喝吧喝吧 · — ml")
             .menu(&menu)
             .show_menu_on_left_click(false)
             .on_tray_icon_event(on_tray_event)
@@ -361,11 +361,11 @@ pub fn render(app: &AppHandle, snapshot: &Snapshot, previous: Option<&Snapshot>)
             || title(old) != title(snapshot)
     }) {
         let text = match snapshot.connection {
-            Connection::Online => "饮水陪伴 · 已同步",
-            Connection::Offline => "饮水陪伴 · 连接中断，显示上次同步数据",
-            Connection::Connecting => "饮水陪伴 · 正在连接",
-            Connection::SignedOut => "饮水陪伴 · 请登录",
-            Connection::Unconfigured => "饮水陪伴 · 请配置服务器",
+            Connection::Online => "喝吧喝吧 · 已同步",
+            Connection::Offline => "喝吧喝吧 · 连接中断，显示上次同步数据",
+            Connection::Connecting => "喝吧喝吧 · 正在连接",
+            Connection::SignedOut => "喝吧喝吧 · 请登录",
+            Connection::Unconfigured => "喝吧喝吧 · 请配置服务器",
         };
         let tooltip = format!("{text} · {}", title(snapshot));
         let _ = tray.set_tooltip(Some(&tooltip));

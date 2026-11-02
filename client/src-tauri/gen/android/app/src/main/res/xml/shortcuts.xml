@@ -1,0 +1,12 @@
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 桌面长按应用图标展示；系统经 LauncherApps 启动，目标 Activity 无需导出。 -->
+    <shortcut android:shortcutId="add_widget" android:enabled="true"
+        android:icon="@drawable/ic_shortcut_widget"
+        android:shortcutShortLabel="@string/shortcut_add_widget"
+        android:shortcutLongLabel="@string/shortcut_add_widget_long"
+        android:shortcutDisabledMessage="@string/shortcut_add_widget_disabled">
+        <intent android:action="com.watercompanion.mobile.ADD_WIDGET"
+            android:targetPackage="com.watercompanion.client"
+            android:targetClass="com.watercompanion.mobile.PinWidgetActivity" />
+    </shortcut>
+</shortcuts>

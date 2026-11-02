@@ -1,10 +1,10 @@
 {
-  "version": "0.1.9",
+  "version": "0.1.10",
   "app": {
     "windows": [
       {
         "label": "main",
-        "title": "饮水陪伴",
+        "title": "喝吧喝吧",
         "visible": true,
         "focus": true,
         "resizable": true,

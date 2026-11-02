@@ -1,0 +1,11 @@
+<resources>
+    <!-- 暗色取自默认主题 dark 值（style.css light-dark 后者），跟随系统夜间模式。 -->
+    <color name="widget_card">#232733</color>
+    <color name="widget_ink">#E8EAF1</color>
+    <color name="widget_muted">#98A0B3</color>
+    <color name="widget_line">#363C4B</color>
+    <color name="widget_accent">#7F9FF0</color>
+    <color name="widget_accent_soft">#2C3A5C</color>
+    <color name="widget_bar">#37456B</color>
+    <color name="widget_shortcut_bg">#2C3A5C</color>
+</resources>

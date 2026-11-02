@@ -172,7 +172,7 @@ onBeforeUnmount(() => {
   <main ref="panel" class="panel-shell" :aria-busy="busy || loading">
     <header class="panel-topbar">
       <div>
-        <p class="brand">饮水陪伴</p>
+        <p class="brand">喝吧喝吧</p>
         <p class="brand-caption">有水喝，有小伙伴</p>
       </div>
       <button v-if="page !== 'dashboard' && snapshot.server" class="quiet-button" :disabled="busy" @click="selectPage('dashboard')">返回</button>

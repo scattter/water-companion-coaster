@@ -2,6 +2,9 @@
     android:id="@+id/widget_record"
     android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="16dp"
     android:gravity="center_vertical">
+    <!-- 记录行前的主色小圆点，呼应 App 记录列表的行内点缀。 -->
+    <View android:layout_width="4dp" android:layout_height="4dp" android:layout_marginEnd="6dp"
+        android:background="@drawable/widget_dot" android:importantForAccessibility="no" />
     <TextView android:id="@+id/widget_record_time" style="@style/WidgetCaption" android:layout_width="0dp"
         android:layout_height="wrap_content" android:layout_weight="1" />
     <TextView android:id="@+id/widget_record_amount" style="@style/WidgetText" android:layout_width="wrap_content"

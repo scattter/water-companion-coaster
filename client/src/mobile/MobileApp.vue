@@ -3,7 +3,6 @@ import { nextTick, onMounted, onBeforeUnmount, ref, shallowRef, watch } from 'vu
 import { addPluginListener, invoke, type PluginListener } from '@tauri-apps/api/core';
 import WebApp from '../../../web/src/App.vue';
 import { platform, type Notice } from '../../../web/src/platform';
-import MobileCompanion from './MobileCompanion.vue';
 import CharacterPicker from '../CharacterPicker.vue';
 import type { Character } from '../types';
 import { restoreCharacter } from './character';
@@ -88,7 +87,7 @@ async function pin() {
   notices.reset('widget');
   try {
     const result = await invoke<{ supported: boolean }>('plugin:coaster-mobile|pinWidget');
-    if (!disposed) notices.show({ source: 'widget', message: result.supported ? '请在系统提示中确认添加；添加后长按组件并拖动边框，可切换小、中、大三种布局。也可从桌面小组件列表添加“饮水陪伴”。' : '请长按桌面，打开小组件列表，选择“饮水陪伴”；添加后拖动组件边框，可切换小、中、大三种布局。' });
+    if (!disposed) notices.show({ source: 'widget', message: result.supported ? '请在系统提示中确认添加；添加后长按组件并拖动边框，可切换小、中、大三种布局。也可长按桌面图标，点「添加桌面卡片」。' : '请长按桌面图标选择「添加桌面卡片」，或打开桌面小组件列表添加“喝吧喝吧”；添加后拖动组件边框，可切换小、中、大三种布局。' });
   } catch (error) { if (!disposed) notices.show({ source: 'widget', message: message(error) }); }
   finally { pinning.value = false; }
 }
@@ -127,16 +126,14 @@ onBeforeUnmount(() => {
 </script>
 <template>
   <div class="mobile-root">
-    <header v-if="!loaded || !server || settings" class="mobile-toolbar"><strong>饮水陪伴</strong><button v-if="server" class="text-button" :disabled="busy" @click="settings = false">返回</button></header>
+    <header v-if="!loaded || !server || settings" class="mobile-toolbar"><strong>喝吧喝吧</strong><button v-if="server" class="text-button" :disabled="busy" @click="settings = false">返回</button></header>
     <section v-if="!loaded" class="mobile-config">正在读取本机设置…</section>
     <section v-else-if="!server || settings" class="panel mobile-config">
       <h1>{{ server ? '应用设置' : '连接你的饮水服务' }}</h1><p>{{ server ? '选择喜欢的小伙伴，也可以修改饮水服务地址。' : '填写服务根地址，登录后可查看记录、配网并添加桌面小组件。' }}</p>
       <form class="account-form" @submit.prevent="configure"><label>服务器地址<input v-model="address" type="text" inputmode="url" autocomplete="url" autocapitalize="none" spellcheck="false" placeholder="https://water.example.com" required :disabled="busy" /></label><p class="field-help">安装版使用 HTTPS，支持域名、IP 和端口，无需添加 /api。切换服务器后需重新登录。</p><button class="setup-action" :disabled="busy">{{ busy ? '正在连接…' : '连接服务器' }}</button></form>
       <CharacterPicker :model-value="character" :disabled="busy" @update:model-value="chooseCharacter" />
     </section>
-    <WebApp v-if="loaded && server" v-show="!settings" :key="server" mobile :active="active && !settings" :widget-busy="pinning" @service-settings="settings = true" @add-widget="pin">
-      <template #companion="{ dashboard, session, online }"><MobileCompanion :dashboard="dashboard" :character="character" :identity="`${server}:${session.user?.id ?? ''}`" :active="active && !settings && online && Boolean(dashboard)" /></template>
-    </WebApp>
+    <WebApp v-if="loaded && server" v-show="!settings" :key="server" mobile :active="active && !settings" :widget-busy="pinning" :character="character" @service-settings="settings = true" @add-widget="pin" />
     <dialog ref="noticeDialog" class="settings-dialog mobile-message-dialog" aria-labelledby="mobile-message-title" aria-describedby="mobile-message-text" @cancel.prevent="dismissNotice">
       <div class="settings-header"><h2 id="mobile-message-title">提示</h2><button type="button" class="settings-close" aria-label="关闭提示" autofocus @click="dismissNotice">✕</button></div>
       <div class="mobile-message-body"><p id="mobile-message-text">{{ notice?.message }}</p></div>

@@ -1,0 +1,6 @@
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 对应 App 卡片样式：panel 背景 + 1px 描边 + 圆角。 -->
+    <solid android:color="@color/widget_card" />
+    <stroke android:width="1dp" android:color="@color/widget_line" />
+    <corners android:radius="16dp" />
+</shape>

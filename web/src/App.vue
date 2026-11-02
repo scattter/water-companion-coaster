@@ -12,7 +12,7 @@ import { currentCup } from '../../shared/cups';
 import { dateInZone, selectableDate, shiftDate } from '../../shared/dates';
 import DrinkTrend from '../../shared/DrinkTrend.vue';
 import '../../shared/date-motion.css';
-const props = withDefaults(defineProps<{ mobile?: boolean; active?: boolean; widgetBusy?: boolean }>(), { mobile: false, active: true, widgetBusy: false });
+const props = withDefaults(defineProps<{ mobile?: boolean; active?: boolean; widgetBusy?: boolean; character?: string }>(), { mobile: false, active: true, widgetBusy: false });
 const emit = defineEmits<{ serviceSettings: []; addWidget: [] }>();
 const session = ref<Session>({ user: null, deviceId: null, bindingId: null });
 const page = ref<'dashboard' | 'add' | 'admin'>('dashboard');
@@ -52,8 +52,22 @@ const companionState = computed<'working' | 'drinking' | 'reminding' | 'sleeping
   if (latest && Date.now() - Date.parse(latest.occurredAt) < 20 * 60 * 1000) return 'drinking';
   return 'working';
 });
-// 与客户端保持一致：默认伙伴形象为小机器人（静态形象），仅水豚有状态帧动画
-const companionSprite = '/companion/characters/robot.png';
+// 伙伴形象跟随用户选择（客户端通过 character prop 传入，纯 web 默认小机器人）。
+// 仅水豚有状态帧动画；其余为单张立绘，场景图需裁去上下留白。
+const COMPANION_CHARACTERS = ['robot', 'capybara', 'cat', 'dog', 'girl', 'boy'] as const;
+type CompanionCharacter = (typeof COMPANION_CHARACTERS)[number];
+const companionCharacter = computed<CompanionCharacter>(() =>
+  (COMPANION_CHARACTERS as readonly string[]).includes(props.character ?? '') ? (props.character as CompanionCharacter) : 'robot',
+);
+const companionSprite = computed(() => {
+  if (companionCharacter.value === 'capybara') return `/companion/${companionState.value === 'idle' ? 'working' : companionState.value}-0.png`;
+  return `/companion/characters/${companionCharacter.value}.png`;
+});
+const companionSpriteStyle = computed(() =>
+  companionCharacter.value === 'capybara' || companionCharacter.value === 'robot'
+    ? undefined
+    : { objectFit: 'cover' as const, objectPosition: 'center 54%' },
+);
 const companionText = computed(() => ({
   working: '正在陪你工作', drinking: '刚陪你喝了一杯', reminding: '提醒你喝口水', sleeping: '打个盹，等你回来', idle: '在这里陪着你',
 }[companionState.value]));
@@ -510,9 +524,33 @@ onBeforeUnmount(() => {
 <template>
   <div class="app-shell">
     <header class="topbar">
-      <a class="brand" :href="mobile ? undefined : '/'" aria-label="水伴首页">
-        <span class="brand-mark" aria-hidden="true"><span></span></span>
-        <span>{{ mobile ? '饮水陪伴' : '水伴' }}<span v-if="!mobile" class="brand-subtitle">有水喝，有小伙伴</span></span>
+      <a class="brand" :href="mobile ? undefined : '/'" aria-label="喝吧喝吧首页">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 96 96" focusable="false">
+            <defs>
+              <linearGradient id="brand-bg" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#5b8df5" />
+                <stop offset="1" stop-color="#3a63d2" />
+              </linearGradient>
+              <clipPath id="brand-cup"><path d="M-12.6,-22 L12.6,-22 Q13.3,-22 13.26,-21.3 L10.9,15 Q10.2,22 4.5,22 L-4.5,22 Q-10.2,22 -10.9,15 L-13.26,-21.3 Q-13.3,-22 -12.6,-22 Z" /></clipPath>
+            </defs>
+            <rect width="96" height="96" rx="22" fill="url(#brand-bg)" />
+            <g transform="translate(26.5,59.5) rotate(20)">
+              <path d="M-12.6,-22 L12.6,-22 Q13.3,-22 13.26,-21.3 L10.9,15 Q10.2,22 4.5,22 L-4.5,22 Q-10.2,22 -10.9,15 L-13.26,-21.3 Q-13.3,-22 -12.6,-22 Z" fill="#ffffff" />
+              <g clip-path="url(#brand-cup)"><g transform="rotate(-20)"><path d="M-24,-7 Q-12,-10 0,-7 T24,-7 L24,32 L-24,32 Z" fill="#1d3f9b" /></g></g>
+            </g>
+            <g transform="translate(69.5,51.5) rotate(-20)">
+              <path d="M-12.6,-22 L12.6,-22 Q13.3,-22 13.26,-21.3 L10.9,15 Q10.2,22 4.5,22 L-4.5,22 Q-10.2,22 -10.9,15 L-13.26,-21.3 Q-13.3,-22 -12.6,-22 Z" fill="#ffffff" />
+              <g clip-path="url(#brand-cup)"><g transform="rotate(20)"><path d="M-24,-7 Q-12,-10 0,-7 T24,-7 L24,32 L-24,32 Z" fill="#1d3f9b" /></g></g>
+            </g>
+            <g fill="#ffffff">
+              <path transform="translate(47.5,23.5) scale(0.78)" d="M0,-9 C1.6,-3.2 3.2,-1.6 9,0 C3.2,1.6 1.6,3.2 0,9 C-1.6,3.2 -3.2,1.6 -9,0 C-3.2,-1.6 -1.6,-3.2 0,-9 Z" />
+              <path transform="translate(37.5,15.5) scale(0.4)" d="M0,-9 C1.6,-3.2 3.2,-1.6 9,0 C3.2,1.6 1.6,3.2 0,9 C-1.6,3.2 -3.2,1.6 -9,0 C-3.2,-1.6 -1.6,-3.2 0,-9 Z" />
+              <path transform="translate(58.5,13) scale(0.34)" d="M0,-9 C1.6,-3.2 3.2,-1.6 9,0 C3.2,1.6 1.6,3.2 0,9 C-1.6,3.2 -3.2,1.6 -9,0 C-3.2,-1.6 -1.6,-3.2 0,-9 Z" />
+            </g>
+          </svg>
+        </span>
+        <span>喝吧喝吧<span class="brand-subtitle">有水喝，有小伙伴</span></span>
       </a>
       <div v-if="mobile" ref="menuRoot" class="topbar-right mobile-navigation">
         <div v-if="session.user" class="menu-anchor">
@@ -549,7 +587,7 @@ onBeforeUnmount(() => {
 
     <main v-if="sessionLoading || sessionError" class="welcome-main">
       <section class="panel account-panel" aria-live="polite">
-        <h1>连接水伴云端</h1>
+        <h1>连接喝吧喝吧云端</h1>
         <p class="setup-description">{{ sessionLoading ? '正在确认登录状态…' : mobile ? '暂时未连接云端，可重新连接。' : sessionError }}</p>
         <button v-if="!sessionLoading" class="setup-action" @click="loadSession">重新连接</button>
       </section>
@@ -558,7 +596,7 @@ onBeforeUnmount(() => {
     <main v-else-if="!session.user" class="welcome-main">
       <section class="panel account-panel" aria-labelledby="account-title">
         <p class="eyebrow">你的饮水日常</p>
-        <h1 id="account-title">{{ authMode === 'login' ? '登录水伴' : '创建水伴账号' }}</h1>
+        <h1 id="account-title">{{ authMode === 'login' ? '登录喝吧喝吧' : '创建喝吧喝吧账号' }}</h1>
         <p class="setup-description">登录后绑定杯垫，在这里查看设备状态与饮水记录。</p>
         <form class="account-form" @submit.prevent="authenticate">
           <label for="account-name">账号<input id="account-name" v-model="username" required minlength="3" maxlength="32" autocomplete="username" title="3–32 位中文、字母、数字或下划线" :disabled="authBusy" /></label>
@@ -624,7 +662,7 @@ onBeforeUnmount(() => {
       <div class="dashboard-grid" :aria-busy="dateLoading">
         <div class="grid-row grid-row-top">
           <section class="panel companion-card" aria-labelledby="companion-title">
-            <img class="companion-sprite" :src="companionSprite" :alt="companionText" draggable="false" />
+            <img class="companion-sprite" :src="companionSprite" :style="companionSpriteStyle" :alt="companionText" draggable="false" />
             <div class="companion-body">
               <h2 id="companion-title">{{ companionText }}</h2>
               <p class="companion-status"><span class="status-dot" :class="{ online }" aria-hidden="true"></span>{{ online ? '杯垫在线' : '杯垫离线' }}<template v-if="dashboard?.device && currentCup(dashboard.device) !== '—'"> · {{ currentCup(dashboard.device) }}</template></p>
@@ -633,7 +671,6 @@ onBeforeUnmount(() => {
                 <div class="goal-track" role="progressbar" aria-label="今日饮水目标进度" :aria-valuenow="goalPercent" aria-valuemin="0" aria-valuemax="100"><i :style="{ width: `${goalPercent}%` }"></i></div>
               </div>
             </div>
-            <slot v-if="mobile" name="companion" :dashboard="isToday && displayDate === today ? dashboard : null" :session="session" :online="!dashboardError" />
           </section>
 
           <section class="panel intake-card" aria-labelledby="intake-title">
@@ -684,7 +721,7 @@ onBeforeUnmount(() => {
           </section>
         </div>
       </div>
-      <footer class="page-footer"><span><span class="footer-dot"></span>自动读取云端记录 · 离线时保留最近同步的数据</span><span>水伴 · {{ dashboard?.timeZone ?? 'Asia/Shanghai' }}</span></footer>
+      <footer class="page-footer"><span><span class="footer-dot"></span>自动读取云端记录 · 离线时保留最近同步的数据</span><span>喝吧喝吧 · {{ dashboard?.timeZone ?? 'Asia/Shanghai' }}</span></footer>
     </main>
 
     <dialog v-if="session.user && session.deviceId" ref="settingsDialog" class="settings-dialog" aria-labelledby="settings-title" @close="settingsOpen = false">

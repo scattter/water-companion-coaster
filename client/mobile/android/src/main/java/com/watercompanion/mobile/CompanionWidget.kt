@@ -150,13 +150,15 @@ class CompanionWidget : AppWidgetProvider() {
                 WidgetSize.COMPACT, WidgetSize.LARGE -> R.layout.companion_widget_large
             }
             val views = RemoteViews(context.packageName, layout)
-            val drinking = size == WidgetSize.COMPACT || size == WidgetSize.LARGE
-            if (character == Character.CAPYBARA && size != WidgetSize.SMALL) {
-                views.setImageViewResource(R.id.widget_pet, if (drinking) R.drawable.water_cap_drinking else R.drawable.water_cap)
-            } else {
-                views.setImageViewBitmap(R.id.widget_pet, pet(context, character))
+            if (size != WidgetSize.SMALL) {
+                val drinking = size == WidgetSize.COMPACT || size == WidgetSize.LARGE
+                if (character == Character.CAPYBARA) {
+                    views.setImageViewResource(R.id.widget_pet, if (drinking) R.drawable.water_cap_drinking else R.drawable.water_cap)
+                } else {
+                    views.setImageViewBitmap(R.id.widget_pet, pet(context, character))
+                }
+                views.setContentDescription(R.id.widget_pet, "陪你喝水的${character.label}")
             }
-            views.setContentDescription(R.id.widget_pet, "陪你喝水的${character.label}")
             val count = data.count.takeIf { size != WidgetSize.SMALL }
             val title = if (count == null) data.title else "${data.title} $count 次"
             val titleText = SpannableString(title).apply {
@@ -176,12 +178,6 @@ class CompanionWidget : AppWidgetProvider() {
             views.setViewVisibility(R.id.widget_refresh_icon, if (progress == null) View.VISIBLE else View.GONE)
             views.setViewVisibility(R.id.widget_refresh_progress, if (progress == null) View.GONE else View.VISIBLE)
             views.setContentDescription(R.id.widget_refresh, progress ?: "刷新饮水数据")
-            if (size == WidgetSize.SMALL) {
-                val density = context.resources.displayMetrics.density
-                // 高度足够时给图案上下相同的空间；最小卡片仍为标题和同步文字留出位置。
-                val bottom = if (bounds.height - 24 - 128 >= 32) 64 else 24
-                views.setViewPadding(R.id.widget_pet, 0, (64 * density).roundToInt(), 0, (bottom * density).roundToInt())
-            }
             if (size == WidgetSize.MEDIUM) {
                 views.setTextViewText(R.id.widget_recent, data.recent.firstOrNull()?.let { "最近 ${it.time} · ${it.amount}" } ?: data.empty)
             }

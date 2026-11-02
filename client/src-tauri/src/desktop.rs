@@ -157,7 +157,7 @@ pub fn run() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("无法启动饮水陪伴客户端");
+        .expect("无法启动喝吧喝吧客户端");
     app.run(|_handle, event| match event {
         RunEvent::ExitRequested {
             code: None, api, ..

@@ -47,8 +47,8 @@ button:not(:disabled):hover { filter: brightness(.97); }
 /* ---------- 顶栏 ---------- */
 .topbar { display: flex; justify-content: space-between; align-items: center; height: 88px; }
 .brand { display: flex; gap: 11px; align-items: center; font-size: 20px; font-weight: 750; letter-spacing: 2px; }
-.brand-mark { width: 36px; height: 39px; display: grid; place-items: center; background: var(--acc-soft); border-radius: 12px; }
-.brand-mark span { width: 15px; height: 21px; background: var(--acc); border-radius: 50% 50% 50% 0; transform: rotate(-45deg); }
+.brand-mark { width: 36px; height: 36px; display: grid; place-items: center; }
+.brand-mark svg { width: 100%; height: 100%; display: block; }
 .brand-subtitle { display: block; font-size: 10px; font-weight: 400; letter-spacing: 1.2px; color: var(--muted); margin-top: 1px; }
 .topbar-right { display: flex; align-items: center; gap: 18px; }
 .account-name { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 13px; }
@@ -252,8 +252,7 @@ main { padding: 30px 0 20px; }
   .app-shell { padding: 0 14px; }
   .topbar { height: 60px; }
   .brand { font-size: 17px; gap: 8px; letter-spacing: 1px; }
-  .brand-mark { width: 30px; height: 33px; border-radius: 10px; }
-  .brand-mark span { width: 12px; height: 17px; }
+  .brand-mark { width: 30px; height: 30px; }
   .brand-subtitle { display: none; }
   .topbar-right { gap: 8px; }
   .account-name { display: none; }
@@ -320,7 +319,6 @@ main { padding: 30px 0 20px; }
 /* 伙伴卡做成小舞台 */
 [data-theme='theater'] .companion-card { background: linear-gradient(165deg, var(--acc-soft), var(--card) 62%); }
 [data-theme='theater'] .companion-sprite { filter: drop-shadow(0 10px 16px rgba(150, 110, 40, .2)); }
-[data-theme='theater'] .brand-mark { background: linear-gradient(135deg, var(--acc-soft), light-dark(#fbeed3, #46391f)); }
 [data-theme='theater'] .goal-track i { background: linear-gradient(90deg, var(--acc), #f6c26b); }
 [data-theme='theater'] .setup-action { background: linear-gradient(135deg, var(--acc), #f6c26b); border-color: var(--acc); }
 /* 记录列表气泡化 */

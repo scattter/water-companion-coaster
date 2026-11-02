@@ -52,7 +52,7 @@
 | 构建标识 | 本机ELF SHA256 `ed3e5fdf71c14c37b356dea3ef2ecd0aa212f0f83410c992233ced35490f7ee1` | Arduino IDE重新编译时哈希可不同，以版本0.6.1与新日志确认加载 |
 | `git diff --check` | 通过 | 本轮没有提交/推送、启动网页服务或修改用户未跟踪文件 |
 
-当前未检测到USB开发板，未烧录或在实物验证修复。烧录保持 Erase All Flash=Disabled、PSRAM=OPI；115200应显示 `水伴固件 0.6.1`、`boot[ready]`。失败时发送 `{"cmd":"diagnostics"}` 返回具体启动阶段、内部堆free/largest/min、PSRAM容量；无需擦除设备编号、token或标定。
+当前未检测到USB开发板，未烧录或在实物验证修复。烧录保持 Erase All Flash=Disabled、PSRAM=OPI；115200应显示 `喝吧喝吧固件 0.6.1`、`boot[ready]`。失败时发送 `{"cmd":"diagnostics"}` 返回具体启动阶段、内部堆free/largest/min、PSRAM容量；无需擦除设备编号、token或标定。
 
 ## 2026-10-14 网页 BLE 配网与管理员设备管理
 

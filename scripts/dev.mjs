@@ -77,7 +77,7 @@ try {
   const { DEVICE_TOKEN, ...webEnv } = env;
   start('网页', [resolve('node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', '5173', '--strictPort'], resolve('web'), webEnv);
   await waitReady('http://127.0.0.1:5173');
-  console.log('\n饮水陪伴杯垫已启动：http://127.0.0.1:5173\n模式：账号登录 / 绑定码 / 云端设备通信 · Ctrl+C 停止全部服务\n');
+  console.log('\n喝吧喝吧杯垫已启动：http://127.0.0.1:5173\n模式：账号登录 / 绑定码 / 云端设备通信 · Ctrl+C 停止全部服务\n');
 } catch (error) {
   console.error(error.message);
   stop(1);

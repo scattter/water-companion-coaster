@@ -4,11 +4,11 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:padding="12dp"
-    android:background="@drawable/widget_large_background">
+    android:background="@drawable/widget_card_background">
 
     <LinearLayout android:layout_width="match_parent" android:layout_height="24dp" android:gravity="center_vertical">
         <TextView style="@style/WidgetText" android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:text="饮水陪伴" android:textStyle="bold" android:textSize="14sp" />
+            android:layout_weight="1" android:text="喝吧喝吧" android:textStyle="bold" android:textSize="14sp" />
         <TextView android:id="@+id/widget_date" style="@style/WidgetCaption" android:layout_width="wrap_content"
             android:layout_height="wrap_content" android:text="饮水小记" android:textSize="10sp" />
         <include layout="@layout/widget_refresh" android:layout_width="36dp" android:layout_height="24dp" />

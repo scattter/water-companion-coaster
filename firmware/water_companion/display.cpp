@@ -113,7 +113,7 @@ static void select_page(int page)
     memset(previous, 0, sizeof(previous));
     memset(pixels, 0, sizeof(pixels));
     for (int y = 0; y < LCD_HEIGHT; y += ROW_HEIGHT) draw_pixels(y, ROW_HEIGHT);
-    if (page != 1) draw_text(12, "水伴杯垫 " FIRMWARE_VERSION, WHITE);
+    if (page != 1) draw_text(12, "喝吧喝吧杯垫 " FIRMWARE_VERSION, WHITE);
 }
 
 struct daily_view_t {
@@ -297,7 +297,7 @@ static daily_view_t daily_view(const device_status_t &device, const network_stat
 
 static void paint_daily(const daily_view_t &view)
 {
-    paint_text(8, 21, "水伴", 13, WHITE);
+    paint_text(8, 21, "喝吧喝吧", 13, WHITE);
     int status_x = LCD_WIDTH - 8 - text_width(view.connection, 12);
     paint_text(status_x, 21, view.connection, 12, view.connection_color);
     for (int y = 13; y < 19; ++y) for (int x = 0; x < 6; ++x) {
@@ -380,7 +380,7 @@ bool display_start(void)
     write_command(0x29);
     delay(120);
     ready = true;
-    draw_text(12, "水伴杯垫 " FIRMWARE_VERSION, WHITE);
+    draw_text(12, "喝吧喝吧杯垫 " FIRMWARE_VERSION, WHITE);
     line(0, "正在启动", AMBER);
     sleep_panel();
     return true;
