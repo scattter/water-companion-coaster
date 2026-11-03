@@ -35,6 +35,9 @@ html, body { min-width: 280px; }
 .mobile-root .intake-number strong { font-size:40px; }
 .mobile-root .estimate-tag { margin-right:0; background:transparent; min-height:32px; padding:4px 8px; margin-top:-8px; margin-bottom:-8px; }
 .mobile-root .trend-panel { min-height:0; }
+/* 移动端始终单列堆叠（不分视口宽度），记录列表恢复自然高度随页面滚动，
+   覆盖 web 样式里仅按视口宽度还原的 .record-scroller 等高规则 */
+.mobile-root .record-scroller { flex:0 0 auto; overflow-y:visible; padding-right:0; scrollbar-gutter:auto; }
 .trend-date-actions { display:flex; align-items:center; gap:10px; }
 .trend-date-actions button { min-height:44px; }
 .calendar-trigger { position:relative; display:grid; place-items:center; min-width:44px; min-height:44px; font-size:12px; color:var(--acc, #3a66d6); background:transparent; overflow:hidden; }

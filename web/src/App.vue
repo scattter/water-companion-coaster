@@ -32,7 +32,9 @@ const bindingError = ref('');
 const today = ref('');
 const selectedDate = ref('');
 const timeZone = ref('Asia/Shanghai');
+const currentTime = ref(Date.now());
 const dashboard = ref<Dashboard | null>(null);
+const recordScroller = ref<HTMLElement | null>(null);
 const dashboardError = ref('');
 const actionError = ref('');
 const feedback = ref('');
@@ -73,7 +75,9 @@ const companionText = computed(() => ({
 }[companionState.value]));
 const companionName = computed(() => session.value.user?.username ?? '');
 const greeting = computed(() => {
-  const hour = Number(new Intl.DateTimeFormat('zh-CN', { timeZone: timeZone.value, hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
+  const parts = new Intl.DateTimeFormat('zh-CN', { timeZone: timeZone.value, hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(currentTime.value));
+  // 中文时间格式可能包含“时”，只读取小时数值。
+  const hour = Number(parts.find(part => part.type === 'hour')?.value);
   if (hour < 6) return '夜深了';
   if (hour < 12) return '早上好';
   if (hour < 18) return '下午好';
@@ -378,6 +382,8 @@ function changeDate(date: string) {
   if (selectedDate.value === date) return;
   selectedDate.value = date;
   dashboardError.value = '';
+  // 日期切换后列表重渲染，回到顶部避免停留在上一天的位置。
+  if (recordScroller.value) recordScroller.value.scrollTop = 0;
   void refreshDashboard();
 }
 
@@ -466,6 +472,7 @@ async function refreshDashboard() {
 }
 
 async function refresh() {
+  currentTime.value = Date.now();
   if (!props.active || !session.value.user || page.value === 'admin' || pollingVersion === sessionVersion) return;
   const version = sessionVersion;
   pollingVersion = version;
@@ -706,17 +713,19 @@ onBeforeUnmount(() => {
           <section class="panel records-panel" aria-labelledby="records-title">
             <div class="card-heading"><h2 id="records-title">饮水记录</h2><span class="record-count">{{ dashboard?.events.length ?? '—' }} 条</span></div>
             <p class="card-caption">{{ displayDate }} · {{ dateLoading ? `正在读取 ${selectedDate}…` : mobile ? '饮水与补水明细' : '保留取放前后的重量，支持撤销误判' }}</p>
-            <div :key="dashboard?.date" class="record-content" :aria-busy="dateLoading || (!dashboard && !dashboardError)">
-              <div v-if="!dashboard" class="empty-state"><span class="empty-icon" aria-hidden="true">≋</span><p>{{ dashboardError ? '暂时无法读取记录' : '正在读取记录…' }}</p></div>
-              <div v-else-if="!dashboard.events.length" class="empty-state"><span class="empty-icon" aria-hidden="true">≋</span><h3>这一天还没有记录</h3><p>杯垫联网并完成空杯设置后，<br />饮水后放回杯子，重量稳定后记录会自动同步。</p></div>
-              <ul v-else class="event-list">
-                <li v-for="event in dashboard.events" :key="event.id" class="event-row" :class="{ revoked: event.revokedAt }">
-                  <span class="event-icon" :class="event.kind" aria-hidden="true">{{ event.kind === 'drink' ? '↘' : '↗' }}</span>
-                  <div class="event-info"><div class="event-title"><strong>{{ event.kind === 'drink' ? '饮水' : '补水' }}</strong><time :datetime="event.occurredAt">{{ time(event.occurredAt) }}</time><span v-if="event.revokedAt" class="revoked-label">已撤销</span></div><p>{{ number(event.beforeGrams) }} g <span aria-label="变为">→</span> {{ number(event.afterGrams) }} g</p></div>
-                  <div class="event-amount"><strong>{{ number(event.amountMl) }}</strong><span> ml</span></div>
-                  <button class="revoke-button" :disabled="Boolean(event.revokedAt) || Boolean(revokePending)" :aria-label="`撤销${time(event.occurredAt)}的${event.kind === 'drink' ? '饮水' : '补水'}记录`" @click="revoke(event)">{{ revokePending === event.id ? '撤销中…' : event.revokedAt ? '已撤销' : '撤销' }}</button>
-                </li>
-              </ul>
+            <div ref="recordScroller" class="record-scroller">
+              <div :key="dashboard?.date" class="record-content" :aria-busy="dateLoading || (!dashboard && !dashboardError)">
+                <div v-if="!dashboard" class="empty-state"><span class="empty-icon" aria-hidden="true">≋</span><p>{{ dashboardError ? '暂时无法读取记录' : '正在读取记录…' }}</p></div>
+                <div v-else-if="!dashboard.events.length" class="empty-state"><span class="empty-icon" aria-hidden="true">≋</span><h3>这一天还没有记录</h3><p>杯垫联网并完成空杯设置后，<br />饮水后放回杯子，重量稳定后记录会自动同步。</p></div>
+                <ul v-else class="event-list">
+                  <li v-for="event in dashboard.events" :key="event.id" class="event-row" :class="{ revoked: event.revokedAt }">
+                    <span class="event-icon" :class="event.kind" aria-hidden="true">{{ event.kind === 'drink' ? '↘' : '↗' }}</span>
+                    <div class="event-info"><div class="event-title"><strong>{{ event.kind === 'drink' ? '饮水' : '补水' }}</strong><time :datetime="event.occurredAt">{{ time(event.occurredAt) }}</time><span v-if="event.revokedAt" class="revoked-label">已撤销</span></div><p>{{ number(event.beforeGrams) }} g <span aria-label="变为">→</span> {{ number(event.afterGrams) }} g</p></div>
+                    <div class="event-amount"><strong>{{ number(event.amountMl) }}</strong><span> ml</span></div>
+                    <button class="revoke-button" :disabled="Boolean(event.revokedAt) || Boolean(revokePending)" :aria-label="`撤销${time(event.occurredAt)}的${event.kind === 'drink' ? '饮水' : '补水'}记录`" @click="revoke(event)">{{ revokePending === event.id ? '撤销中…' : event.revokedAt ? '已撤销' : '撤销' }}</button>
+                  </li>
+                </ul>
+              </div>
             </div>
           </section>
         </div>

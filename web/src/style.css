@@ -180,13 +180,23 @@ main { padding: 30px 0 20px; }
 .calendar-trigger input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
 
 /* 记录卡 */
-.records-panel { padding-bottom: 12px; }
+/* 桌面双栏时与趋势卡等高：行高由趋势卡决定，记录区 flex-basis:0 不撑高卡片，超出部分在卡内滚动 */
+.records-panel { padding-bottom: 12px; display: flex; flex-direction: column; }
+.record-scroller {
+  flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  margin: 12px 0 0; padding-right: 6px; scrollbar-gutter: stable;
+  scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted) 30%, transparent) transparent;
+}
+.record-scroller::-webkit-scrollbar { width: 6px; }
+.record-scroller::-webkit-scrollbar-track { background: transparent; }
+.record-scroller::-webkit-scrollbar-thumb { border-radius: 999px; background: color-mix(in srgb, var(--muted) 30%, transparent); }
+.record-scroller::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--muted) 55%, transparent); }
 .record-count { font-size: 10px; color: var(--muted); border-radius: 5px; padding: 4px 8px; background: var(--bg); white-space: nowrap; }
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: var(--muted); padding: 25px 0 30px; min-height: 170px; }
 .empty-icon { display: grid; place-items: center; width: 38px; height: 38px; background: var(--acc-soft); border-radius: 12px; color: var(--acc); font-size: 24px; margin-bottom: 11px; }
 .empty-state h3 { font-size: 12px; font-weight: 500; }
 .empty-state p { font-size: 11px; line-height: 1.8; margin-top: 6px; }
-.event-list { padding: 0; margin: 12px 0 0; list-style: none; }
+.event-list { padding: 0; margin: 0; list-style: none; }
 .event-row { display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--line); padding: 13px 0; }
 .event-icon { width: 32px; height: 32px; flex-shrink: 0; border-radius: 10px; display: grid; place-items: center; font-size: 19px; }
 .event-icon.drink { background: var(--good-soft); color: var(--good); }
@@ -246,6 +256,8 @@ main { padding: 30px 0 20px; }
   .companion-card { grid-column: 1 / -1; flex-direction: row; text-align: left; align-items: center; gap: 18px; }
   .companion-sprite { width: 112px; height: 92px; }
   .grid-row-bottom { grid-template-columns: 1fr; }
+  /* 单列堆叠时不再与趋势卡对齐高度，恢复自然高度随页面滚动 */
+  .record-scroller { flex: 0 0 auto; overflow-y: visible; padding-right: 0; scrollbar-gutter: auto; }
 }
 
 @media (max-width: 640px) {
